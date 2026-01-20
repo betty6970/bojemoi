@@ -1,0 +1,57 @@
+# Fichier régénéré automatiquement à partir de la stack déployée
+# Date: $(date)
+# Stack: $STACK_NAME
+
+version: '3.8'
+
+services:
+
+  burp-dast:
+    image: localhost:5000/kyiv:latest
+    environment:
+      - BURP_HEADLESS=true
+      - JAVA_OPTS=-Xmx4g
+    volumes:
+      - burp_burp-data:/root/.BurpSuite
+    networks:
+      - backend
+      - frontend
+      - proxy
+    deploy:
+      replicas: 1
+      labels:
+        - com.docker.stack.image=localhost:5000/kyiv:latest
+        - com.docker.stack.namespace=burp
+        - traefik.enable=true
+        - traefik.http.routers.burp.entrypoints=websecure
+        - traefik.http.routers.burp.middlewares=security-headers,vpn-whitelist
+        - traefik.http.routers.burp.rule=Host(`burp.yourdomain.com`)
+        - traefik.http.routers.burp.tls.certresolver=letsencrypt
+        - traefik.http.services.burp.loadbalancer.server.port=8080
+
+  target-app:
+    image: vulnerables/web-dvwa:latest
+    environment:
+      - MYSQL_DATABASE=dvwa
+      - MYSQL_PASSWORD=password
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_USER=dvwa
+    networks:
+      - backend
+    ports:
+      - 28081:80/tcp
+    deploy:
+      replicas: 1
+      labels:
+        - com.docker.stack.image=vulnerables/web-dvwa:latest
+        - com.docker.stack.namespace=burp
+        - traefik.enable=true
+        - traefik.http.routers.burp.entrypoints=websecure
+        - traefik.http.routers.burp.rule=Host(`burp.example.com`)
+        - traefik.http.routers.burp.tls.certresolver=letsencrypt
+        - traefik.http.services.burp.loadbalancer.server.port=8080
+
+networks:
+
+volumes:
+  burp-data:

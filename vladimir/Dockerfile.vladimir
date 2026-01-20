@@ -1,0 +1,44 @@
+# lancer ./cccp.sh vladimir 
+FROM alpine:latest
+
+# Métadonnées
+LABEL maintainer="admin@bojemoi.me"
+LABEL description="Serveur NFS basé sur Alpine Linux pour Docker Swarm"
+LABEL version="1.0"
+
+# Installation des packages NFS et utilitaires
+RUN apk add --no-cache \
+    nfs-utils \
+    rpcbind \
+    bash \
+    supervisor \
+    && mkdir -p /var/lib/nfs/rpc_pipefs \
+    && mkdir -p /var/lib/nfs/v4recovery \
+    && mkdir -p /var/log/supervisor \
+    && mkdir -p /nfs-exports 
+
+# Configuration de rpcbind pour NFS
+RUN echo "rpc_pipefs /var/lib/nfs/rpc_pipefs rpc_pipefs defaults 0 0" >> /etc/fstab
+
+# Création des répertoires de configuration
+RUN mkdir -p /etc/supervisor/conf.d
+
+# Script de démarrage pour NFS
+COPY start-nfs.sh /usr/local/bin/start-nfs.sh
+RUN chmod +x /usr/local/bin/start-nfs.sh
+
+# Configuration supervisor pour gérer les services NFS
+COPY supervisor.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Configuration NFS par défaut
+COPY exports /etc/exports
+
+# Exposition des ports nécessaires pour NFS
+EXPOSE 111/tcp 111/udp 2049/tcp 2049/udp 32765-32768/tcp 32765-32768/udp
+
+# Volume pour les données à partager
+VOLUME ["/nfs-exports"]
+
+# Point d'entrée
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+

@@ -1,0 +1,108 @@
+# genere par chatgtp & code copilot
+import os
+import socket
+import subprocess
+import psycopg2
+import shlex
+
+# Récupération sécurisée des credentials PostgreSQL
+PG_USER = os.getenv("PG_USER", "postgres")
+PG_PASSWORD = os.getenv("PG_PASSWORD","bojemoi")  # Ne pas mettre de valeur par défaut pour plus de sécurité
+PG_DBNAME = os.getenv("PG_DBNAME", "msf")
+PG_HOST = "postgres"
+
+# Récupérer l'adresse IP du serveur PostgreSQL
+def get_postgres_ip():
+    try:
+        return socket.gethostbyname(PG_HOST)
+    except socket.gaierror:
+        print(f"[ERREUR] Impossible de résoudre {PG_HOST}")
+        return None
+
+# Vérifier si PostgreSQL est prêt
+def is_postgres_ready(ip):
+    try:
+        result = subprocess.run(
+            ["pg_isready", "-h", ip, "-U", PG_USER, "-d", PG_DBNAME],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        return result.returncode == 0
+    except Exception as e:
+        print(f"[ERREUR] Vérification PostgreSQL échouée : {e}")
+        return False
+
+# Récupérer un hôte aléatoire depuis la base de données
+def get_random_host():
+    try:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, address FROM hosts ORDER BY RANDOM() LIMIT 1;")
+                return cur.fetchone() or (None, None)
+    except psycopg2.Error as e:
+        print(f"[ERREUR] Problème lors de la récupération d'un hôte : {e}")
+        return None, None
+
+# Exécuter un scan Metasploit
+def run_msf_scan(host, host_id, pg_ip):
+    try:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT port, name FROM services WHERE host_id = %s;", (host_id,))
+                services = cur.fetchall()
+    except psycopg2.Error as e:
+        print(f"[ERREUR] Récupération des services échouée : {e}")
+        return  # On sort proprement de la fonction
+
+    if not services:
+        print(f"[INFO] Aucun service ouvert trouvé pour {host}, scan annulé.")
+        return
+
+    # Exécuter un scan pour chaque service trouvé
+    print(f"[INFO] Scan en cours sur  ({services})")
+    for index_ligne , ligne in enumerate( services):
+            port=ligne[0]
+            service_name=ligne[1]
+            if index_ligne  == 1:
+               command = f"""
+               msfconsole -q -x  "db_connect {PG_USER}:{PG_PASSWORD}@{pg_ip}/{PG_DBNAME};
+               db_nmap -n -script={service_name}* -sS -A -O --reason --traceroute --spoof-mac 0 -f --mtu 16 --data-length 64 --randomize-hosts -PA -PM -Pn {host};
+               quit"
+                """
+            else:
+               command = f"""
+               msfconsole -q -x "db_connect {PG_USER}:{PG_PASSWORD}@{pg_ip}/{PG_DBNAME};
+               db_nmap -n -script={service_name}*  --spoof-mac 0  -f --mtu 16 --data-length 64 --randomize-hosts -PA -PM -Pn {host};
+               quit"
+                """
+
+            print(f"[INFO] Scan en cours sur {host}:{host_id}:{port}:  ({service_name})")
+
+            try:
+               subprocess.run(shlex.split(command), shell=False, check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"[ERREUR] Échec du scan sur {host}:{port} : {e}")
+
+# Boucle principale
+def main():
+    pg_ip = get_postgres_ip()
+    if not pg_ip:
+        return
+
+    if is_postgres_ready(pg_ip):
+        print(f"[INFO] PostgreSQL détecté à {pg_ip}")
+    else:
+        print(f"[ERREUR] Port 5432 ouvert mais PostgreSQL ne répond pas à {pg_ip}")
+        return
+
+    while True:
+        host_id, host = get_random_host()
+        if not host:
+            print("[INFO] Aucun hôte disponible.")
+            break
+
+        print(f"[INFO] Scan de {host} en cours...")
+        run_msf_scan(host, host_id, pg_ip)
+        print(f"[INFO] Scan de {host} terminé.")
+
+if __name__ == "__main__":
+    main()

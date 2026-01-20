@@ -1,0 +1,66 @@
+# Fichier régénéré automatiquement à partir de la stack déployée
+# Date: $(date)
+# Stack: $STACK_NAME
+
+version: '3.8'
+
+services:
+
+  zap-scanner:
+    image: localhost:5000/oblast-1:latest
+    hostname: zap_scanner
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=msf
+      - DB_PASSWORD=bojemoi
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - LOG_LEVEL=INFO
+      - PYTHONUNBUFFERED=1
+      - ZAP_API_KEY=
+      - ZAP_HOST=zaproxy
+      - ZAP_PORT=8090
+    volumes:
+      - owasp_scan_results:/results
+      - owasp_scan_logs:/logs
+    networks:
+      - backend
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/oblast-1:latest
+        - com.docker.stack.namespace=owasp
+
+  zaproxy:
+    image: localhost:5000/oblast:latest
+    hostname: zaproxy
+    networks:
+      - backend
+      - proxy
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/oblast:latest
+        - com.docker.stack.namespace=owasp
+        - traefik.enable=true
+        - traefik.http.routers.zap.entrypoints=websecure
+        - traefik.http.routers.zap.middlewares=security-headers,vpn-whitelist
+        - traefik.http.routers.zap.rule=Host(`zap.bojemoi.me`)
+        - traefik.http.routers.zap.tls.certresolver=letsencrypt
+        - traefik.http.services.zap.loadbalancer.server.port=8090
+
+networks:
+
+volumes:
+  scan_logs:
+  scan_results:

@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""
+Script pour concaténer deux Dockerfiles.
+- Modifie la première ligne FROM du premier fichier en "FROM ... AS builder"
+- Modifie la première ligne FROM du deuxième fichier en "FROM builder"
+"""
+
+import argparse
+import os
+import sys
+import re
+
+
+def read_dockerfile(filepath):
+    """Lit un Dockerfile et retourne son contenu."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print(f"Erreur: Le fichier {filepath} n'existe pas.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Erreur lors de la lecture de {filepath}: {e}")
+        sys.exit(1)
+
+
+def modify_first_from(dockerfile_content, new_from_line):
+    """Modifie la première instruction FROM du Dockerfile."""
+    lines = dockerfile_content.split('\n')
+    modified = False
+    
+    for i, line in enumerate(lines):
+        if line.strip().upper().startswith('FROM ') and not modified:
+            lines[i] = new_from_line
+            modified = True
+            break
+    
+    return '\n'.join(lines)
+
+
+def extract_base_image(dockerfile_content):
+    """Extrait l'image de base de la première instruction FROM."""
+    lines = dockerfile_content.split('\n')
+    for line in lines:
+        line = line.strip()
+        if line.upper().startswith('FROM '):
+            # Extrait tout ce qui suit FROM jusqu'à AS ou fin de ligne
+            match = re.match(r'FROM\s+([^\s]+(?:\s+[^\s]+)*?)(?:\s+AS\s+.*)?$', line, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+    return None
+
+
+def concat_dockerfiles(dockerfile1_path, dockerfile2_path, output_path, stage_name="builder"):
+    """
+    Concatène deux Dockerfiles en modifiant les instructions FROM.
+    
+    Args:
+        dockerfile1_path: Chemin vers le premier Dockerfile
+        dockerfile2_path: Chemin vers le deuxième Dockerfile
+        output_path: Chemin de sortie pour le Dockerfile concaténé
+        stage_name: Nom du stage pour le premier Dockerfile (par défaut: "builder")
+    """
+    
+    # Lecture des fichiers
+    dockerfile1_content = read_dockerfile(dockerfile1_path)
+    dockerfile2_content = read_dockerfile(dockerfile2_path)
+    
+    # Extraction de l'image de base du premier Dockerfile
+    base_image = extract_base_image(dockerfile1_content)
+    
+    if not base_image:
+        print(f"Erreur: Aucune instruction FROM trouvée dans {dockerfile1_path}")
+        sys.exit(1)
+    
+    # Modification du premier Dockerfile : FROM ... AS builder
+    modified_dockerfile1 = modify_first_from(dockerfile1_content, f"FROM {base_image} AS {stage_name}")
+    
+    # Modification du deuxième Dockerfile : FROM builder
+    modified_dockerfile2 = modify_first_from(dockerfile2_content, f"FROM {stage_name}")
+    
+    # Concaténation des deux Dockerfiles
+    concatenated_content = f"{modified_dockerfile1}\n\n{modified_dockerfile2}"
+    
+    # Écriture du fichier de sortie
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(concatenated_content)
+        print(f"✅ Dockerfile concaténé créé avec succès: {output_path}")
+        print(f"   - Premier fichier: {dockerfile1_path} (FROM {base_image} AS {stage_name})")
+        print(f"   - Deuxième fichier: {dockerfile2_path} (FROM {stage_name})")
+    except Exception as e:
+        print(f"Erreur lors de l'écriture du fichier {output_path}: {e}")
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Concatène deux Dockerfiles en modifiant les instructions FROM",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exemples d'utilisation:
+  python dockerfile_concat.py Dockerfile.stage1 Dockerfile.stage2
+  python dockerfile_concat.py -o Dockerfile.final build/Dockerfile runtime/Dockerfile
+  python dockerfile_concat.py --stage-name build Dockerfile.build Dockerfile.runtime
+        """
+    )
+    
+    parser.add_argument(
+        'dockerfile1',
+        help='Chemin vers le premier Dockerfile'
+    )
+    
+    parser.add_argument(
+        'dockerfile2',
+        help='Chemin vers le deuxième Dockerfile'
+    )
+    
+    parser.add_argument(
+        '-o', '--output',
+        default='Dockerfile.concat',
+        help='Nom du fichier de sortie (par défaut: Dockerfile.concat)'
+    )
+    
+    parser.add_argument(
+        '--stage-name',
+        default='builder',
+        help='Nom du stage pour le premier Dockerfile (par défaut: builder)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Vérification de l'existence des fichiers d'entrée
+    if not os.path.exists(args.dockerfile1):
+        print(f"Erreur: Le fichier {args.dockerfile1} n'existe pas.")
+        sys.exit(1)
+    
+    if not os.path.exists(args.dockerfile2):
+        print(f"Erreur: Le fichier {args.dockerfile2} n'existe pas.")
+        sys.exit(1)
+    
+    # Concaténation des Dockerfiles
+    concat_dockerfiles(
+        args.dockerfile1,
+        args.dockerfile2,
+        args.output,
+        args.stage_name
+    )
+
+
+if __name__ == "__main__":
+    main()

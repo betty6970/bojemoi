@@ -1,0 +1,53 @@
+# Dockerfile pour OWASP ZAP avec PostgreSQL
+FROM ghcr.io/zaproxy/zaproxy:stable 
+
+# Passer en utilisateur root pour les installations
+USER root
+
+# Variables d'environnement
+ENV POSTGRES_JDBC_VERSION=42.7.1
+ENV ZAP_HOME=/zap
+ENV ZAP_LIB_DIR=${ZAP_HOME}/lib
+
+# Installation du driver PostgreSQL
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends wget && \
+    mkdir -p /zap/lib && \
+    wget -q -O /zap/lib/postgresql.jar \
+    https://jdbc.postgresql.org/download/postgresql-42.7.3.jar && \
+    chown -R zap:zap /zap/lib && \
+    chmod 644 /zap/lib/postgresql.jar && \
+    apt-get remove -y wget && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Créer un script d'initialisation
+COPY --chown=zap:zap init-db.sh /zap/init-db.sh
+RUN chmod +x /zap/init-db.sh
+# Cr..er le r..pertoire de configuration
+RUN mkdir -p ${ZAP_HOME}/db
+# Copier le fichier de configuration db.propertie
+COPY db.properties ${ZAP_HOME}/db/db.properties  
+# D..finir les permissions appropri..es
+RUN chown -R zap:zap ${ZAP_HOME}/lib ${ZAP_HOME}/
+RUN chmod 644 ${ZAP_HOME}/db/db.properties
+
+USER zap
+
+# Configuration de la connexion PostgreSQL (optionnel)
+ENV ZAP_DB_TYPE=postgresql
+ENV ZAP_DB_HOST=postgres
+ENV ZAP_DB_PORT=5432
+ENV ZAP_DB_NAME=zaproxy
+ENV ZAP_DB_USER=zapuser
+ENV ZAP_DB_PASSWORD=zappass
+
+EXPOSE 8090
+# Point d'entrée par défaut
+
+ENTRYPOINT ["/zap/init-db.sh"]
+CMD ["-daemon", "-host", "0.0.0.0", "-port", "8090", \
+#     "-config", "api.addrs.addr.name=.*", \
+#     "-config", "api.addrs.addr.regex=true", \
+     "-config", "api.disablekey=true"]
+

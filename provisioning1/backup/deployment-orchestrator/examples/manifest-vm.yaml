@@ -1,0 +1,33 @@
+version: "1.0"
+deployment_type: vm
+environment: production
+
+metadata:
+  description: "VM de production pour serveur web nginx"
+  owner: "ops-team"
+  project: "web-infrastructure"
+
+vm_config:
+  name: "web-prod-01"
+  template: "Ubuntu-22.04-Template"
+  vcpus: 4
+  memory_mb: 8192
+  disk_gb: 50
+  network: "production-network"
+  
+  # Configuration cloud-init
+  cloud_init_role: "webserver"
+  cloud_init_params:
+    hostname: "web-prod-01.bojemoi.lab"
+    domain: "bojemoi.lab"
+    packages:
+      - nginx
+      - certbot
+      - python3-certbot-nginx
+    
+  # Tags pour organisation
+  tags:
+    environment: "production"
+    role: "webserver"
+    managed_by: "orchestrator"
+    backup: "daily"

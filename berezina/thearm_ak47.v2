@@ -1,0 +1,241 @@
+#!/bin/ash
+
+# Improved Alpine Linux PostgreSQL Network Scanner
+# Description: Scans network for PostgreSQL servers and performs nmap operations
+
+set -euo pipefail  # Exit on error, undefined vars, pipe failures
+
+# Configuration
+readonly HOME_DIR="/opt/bojemoi"
+readonly POSTGRES_USER="postgres"
+readonly POSTGRES_PASSWORD="bojemoi"
+readonly DEFAULT_DB="msf"
+readonly IP2LOCATION_DB="ip2location"
+readonly POSTGRES_HOST="postgres"
+readonly POSTGRES_PORT="5432"
+
+# Set environment
+export HOME="$HOME_DIR"
+export PGPASSWORD="$POSTGRES_PASSWORD"
+
+# Logging functions
+log_info() {
+    echo "[INFO] $(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+
+log_error() {
+    echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+}
+
+log_warning() {
+    echo "[WARNING] $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2
+}
+
+# Function to check if required commands are available
+check_dependencies() {
+    local deps="ping psql pg_isready msfconsole"
+    local missing=""
+    
+    for dep in $deps; do
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            missing="$missing $dep"
+        fi
+    done
+    
+    if [ -n "$missing" ]; then
+        log_error "Missing dependencies:$missing"
+        log_error "Please install missing packages and try again"
+        exit 1
+    fi
+}
+
+# Function to resolve PostgreSQL server IP
+resolve_postgres_ip() {
+    local postgres_ip
+    
+    log_info "Resolving PostgreSQL server IP for host: $POSTGRES_HOST"
+    
+    if ! ping -c 1 -W 1 "$POSTGRES_HOST" >/dev/null 2>&1; then
+        log_error "Cannot reach PostgreSQL host: $POSTGRES_HOST"
+        return 1
+    fi
+    
+    # Extract IP from ping output more reliably
+    postgres_ip=$(ping -c 1 -W 1 "$POSTGRES_HOST" 2>/dev/null | head -n 1 | sed -n 's/.*(\([0-9.]*\)).*/\1/p')
+    
+    if [ -z "$postgres_ip" ]; then
+        log_error "Failed to extract IP address from ping output"
+        return 1
+    fi
+    
+    echo "$postgres_ip"
+}
+
+# Function to test PostgreSQL connection
+test_postgres_connection() {
+    local ip="$1"
+    local db="${2:-$DEFAULT_DB}"
+    
+    log_info "Testing PostgreSQL connection to $ip:$POSTGRES_PORT"
+    
+    if pg_isready -h "$ip" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$db" >/dev/null 2>&1; then
+        log_info "PostgreSQL server is ready at $ip:$POSTGRES_PORT"
+        return 0
+    else
+        log_error "PostgreSQL server not responding at $ip:$POSTGRES_PORT"
+        return 1
+    fi
+}
+
+# Function to execute SQL query
+execute_sql() {
+    local ip="$1"
+    local database="$2"
+    local query="$3"
+    
+    echo "$query" | psql -h "$ip" -U "$POSTGRES_USER" -d "$database" -t 2>/dev/null
+}
+
+# Function to get next CIDR block
+get_next_cidr() {
+    local ip="$1"
+    local query="SELECT cidr_z FROM ip2location_db1 WHERE country_code LIKE 'RU' AND nmap = '0' ORDER BY RANDOM() LIMIT 1;"
+    
+    local result
+    result=$(execute_sql "$ip" "$IP2LOCATION_DB" "$query")
+    
+    if [ -z "$result" ]; then
+        log_warning "No more CIDR blocks available for scanning"
+        return 1
+    fi
+    
+    # Clean up whitespace
+    echo "$result" | tr -d ' \t\n\r'
+}
+
+# Function to update CIDR status
+update_cidr_status() {
+    local ip="$1"
+    local cidr="$2"
+    local status="$3"
+    
+    local query="UPDATE ip2location_db1 SET nmap = '$status', date_nmap = CURRENT_TIMESTAMP WHERE cidr_z >>= '$cidr';"
+    
+    log_info "Updating CIDR $cidr status to $status"
+    
+    if ! execute_sql "$ip" "$IP2LOCATION_DB" "$query" >/dev/null; then
+        log_error "Failed to update CIDR status for $cidr"
+        return 1
+    fi
+}
+
+# Function to perform nmap scan via msfconsole
+perform_nmap_scan() {
+    local postgres_ip="$1"
+    local cidr="$2"
+    
+    local msfconsole_commands="db_connect postgres:${POSTGRES_PASSWORD}@${postgres_ip}/${DEFAULT_DB};"
+    msfconsole_commands+="db_nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f --mtu 16 --data-length 64 --randomize-hosts -PA -PM -Pn ${cidr};"
+    msfconsole_commands+="quit"
+    
+    log_info "Starting nmap scan for CIDR: $cidr"
+    
+    if ! msfconsole -q -x "$msfconsole_commands"; then
+        log_error "Nmap scan failed for CIDR: $cidr"
+        return 1
+    fi
+    
+    log_info "Nmap scan completed for CIDR: $cidr"
+}
+
+# Function to handle cleanup on script exit
+cleanup() {
+    local exit_code=$?
+    log_info "Script exiting with code: $exit_code"
+    
+    # Add any cleanup operations here if needed
+    # For example, reset any "in progress" CIDR blocks back to available
+    
+    exit $exit_code
+}
+
+# Main scanning loop
+main_scan_loop() {
+    local postgres_ip="$1"
+    local scan_count=0
+    
+    log_info "Starting main scanning loop"
+    
+    while true; do
+        local cidr
+        
+        # Get next CIDR block to scan
+        if ! cidr=$(get_next_cidr "$postgres_ip"); then
+            log_info "No more CIDR blocks to scan. Exiting."
+            break
+        fi
+        
+        log_info "Processing CIDR: $cidr (scan #$((++scan_count)))"
+        
+        # Mark CIDR as in progress
+        if ! update_cidr_status "$postgres_ip" "$cidr" "1"; then
+            log_error "Failed to mark CIDR as in progress: $cidr"
+            continue
+        fi
+        
+        # Perform the actual scan
+        if perform_nmap_scan "$postgres_ip" "$cidr"; then
+            # Mark CIDR as completed
+            if ! update_cidr_status "$postgres_ip" "$cidr" "2"; then
+                log_error "Failed to mark CIDR as completed: $cidr"
+            fi
+        else
+            log_error "Scan failed for CIDR: $cidr"
+            # Optionally reset status back to 0 for retry
+            # update_cidr_status "$postgres_ip" "$cidr" "0"
+        fi
+        
+        # Brief pause between scans to avoid overwhelming the system
+        sleep 2
+    done
+}
+
+# Main function
+main() {
+    local postgres_ip
+    
+    # Set up signal handlers for cleanup
+    trap cleanup EXIT INT TERM
+    
+    log_info "Starting PostgreSQL network scanner"
+    
+    # Check dependencies
+    check_dependencies
+    
+    # Resolve PostgreSQL server IP
+    if ! postgres_ip=$(resolve_postgres_ip); then
+        log_error "Failed to resolve PostgreSQL server IP"
+        exit 1
+    fi
+    
+    # Test PostgreSQL connections
+    if ! test_postgres_connection "$postgres_ip" "$DEFAULT_DB"; then
+        log_error "Cannot connect to default database: $DEFAULT_DB"
+        exit 1
+    fi
+    
+    if ! test_postgres_connection "$postgres_ip" "$IP2LOCATION_DB"; then
+        log_error "Cannot connect to IP2Location database: $IP2LOCATION_DB"
+        exit 1
+    fi
+    
+    log_info "PostgreSQL server found and verified at: $postgres_ip"
+    
+    # Start the main scanning loop
+    main_scan_loop "$postgres_ip"
+    
+    log_info "Scanning completed successfully"
+}
+
+# Run main function
+main "$@"

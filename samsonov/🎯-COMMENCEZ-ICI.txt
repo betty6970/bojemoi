@@ -1,0 +1,218 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║               🎯 ORCHESTRATEUR DE PENTESTING 🎯                          ║
+║                    INSTALLATION ULTRA-SIMPLE                              ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Serveur : 88.175.11.58:22121
+Répertoire : /opt/bojemoi/pentest-orchestrator
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                  🚀 INSTALLATION EN 2 COMMANDES                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Sur VOTRE MACHINE :
+──────────────────
+scp -P 22121 install-orchestrator.sh 88.175.11.58:/tmp/
+
+Sur LE SERVEUR :
+────────────────
+ssh -p 22121 88.175.11.58
+bash /tmp/install-orchestrator.sh
+
+✨ C'EST TOUT ! Le script fait TOUT automatiquement ! ✨
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                     📦 FICHIERS À TÉLÉCHARGER                             ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+OBLIGATOIRE :
+─────────────
+🤖 install-orchestrator.sh          - Script d'installation autonome
+   → Fait tout automatiquement !
+
+RECOMMANDÉ (pour version complète) :
+────────────────────────────────────
+📦 pentest-orchestrator.tar.gz      - Application complète (24 Ko)
+   → Tous les plugins (ZAP, Burp, Masscan, Metasploit, Faraday)
+   → Documentation complète
+
+OPTIONNEL (guides) :
+────────────────────
+📖 INSTALLATION-AUTONOME.txt        - Guide détaillé du script
+📋 COMMANDES.txt                    - Commandes ready-to-copy
+📖 GUIDE-DEPLOIEMENT.txt            - Installation manuelle
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    ⚡ MÉTHODE RAPIDE (RECOMMANDÉE)                        ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Téléchargez uniquement : install-orchestrator.sh
+
+Puis lancez sur le serveur :
+
+    bash /tmp/install-orchestrator.sh
+
+Le script va :
+✅ Créer /opt/bojemoi/pentest-orchestrator
+✅ Installer les dépendances
+✅ Configurer les permissions
+✅ Tester l'installation
+✅ Afficher les prochaines étapes
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                  🎓 MÉTHODE COMPLÈTE (AVEC TOUT)                          ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Téléchargez : 
+- install-orchestrator.sh
+- pentest-orchestrator.tar.gz
+
+Copiez sur le serveur :
+scp -P 22121 *.{sh,tar.gz} 88.175.11.58:/tmp/
+
+Lancez :
+ssh -p 22121 88.175.11.58
+cd /tmp
+bash install-orchestrator.sh
+
+Puis extrayez la version complète :
+cd /opt/bojemoi/pentest-orchestrator
+tar -xzf /tmp/pentest-orchestrator.tar.gz --strip-components=1
+python3 main.py --status
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                        ✅ CE QUE VOUS OBTENEZ                             ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+📦 Application complète
+   → 2 875 lignes de Python
+   → Architecture modulaire avec plugins dynamiques
+
+🔧 6 plugins intégrés
+   → OWASP ZAP (spider, active scan)
+   → Burp Suite Pro (passive, active scan)
+   → Masscan (port scanning ultra-rapide)
+   → Metasploit (vulns, exploits)
+   → Faraday (hub central)
+   → Monitoring (Prometheus/Loki/Grafana)
+
+🎯 3 séquences de scan
+   → full : scan complet (masscan + ZAP + metasploit)
+   → web : applications web (ZAP + Burp)
+   → network : réseaux (masscan + metasploit)
+
+📊 Intégration monitoring
+   → Métriques Prometheus
+   → Logs Loki
+   → Alertes Alertmanager
+   → Annotations Grafana
+
+🐳 Déploiement Docker Swarm
+   → Stack complet fourni
+   → API REST pour CI/CD
+
+📚 Documentation complète
+   → 26 Ko de docs
+   → Guides pas-à-pas
+   → Exemples d'utilisation
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                      🎮 PREMIERS TESTS                                    ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Après installation :
+
+cd /opt/bojemoi/pentest-orchestrator
+
+# Voir le statut
+python3 main.py --status
+
+# Lister les fonctions
+python3 main.py --list
+
+# Exemples interactifs
+python3 examples.py
+
+# Scan de test
+python3 main.py -w demo -t http://testphp.vulnweb.com -s web
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    ⚙️  CONFIGURATION MINIMALE                             ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Éditez 3 fichiers pour pointer vers vos services Docker :
+
+1. nano plugins/plugin_zap.py
+   ZAP_PROXY = "http://owasp-zap:8080"
+   ZAP_API_KEY = "votre-clé"
+
+2. nano plugins/plugin_faraday.py
+   FARADAY_URL = "http://faraday:5985"
+   FARADAY_USER = "faraday"
+   FARADAY_PASS = "votre-password"
+
+3. nano plugins/plugin_metasploit.py
+   MSF_RPC_URL = "http://metasploit:55553/api"
+   MSF_RPC_USER = "msf"
+   MSF_RPC_PASS = "votre-password"
+
+Puis : python3 main.py --reload
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                      📞 BESOIN D'AIDE ?                                   ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Consultez dans l'ordre :
+1. INSTALLATION-AUTONOME.txt  - Guide du script autonome
+2. GUIDE-DEPLOIEMENT.txt      - Installation manuelle détaillée
+3. COMMANDES.txt              - Toutes les commandes
+
+Dans pentest-orchestrator/ après extraction :
+- README.md                   - Doc technique complète
+- QUICKSTART.md               - Démarrage en 5 minutes
+- SUMMARY.md                  - Résumé et exemples
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    🔐 SÉCURITÉ - IMPORTANT                                ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+⚠️  AVANT UTILISATION :
+   ✓ Changez TOUS les mots de passe par défaut
+   ✓ Sécurisez l'accès aux APIs (firewall, VPN)
+   ✓ Utilisez UNIQUEMENT sur systèmes autorisés
+   ✓ Ne commitez JAMAIS les credentials
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    📊 STATISTIQUES                                        ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+Code Python      : 2 875 lignes
+Documentation    : 26 Ko
+Plugins          : 6
+Fonctions        : 30+
+Tests            : 5 exemples inclus
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    🎉 RÉSUMÉ ULTRA-RAPIDE                                 ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+1. Téléchargez : install-orchestrator.sh
+
+2. Copiez et lancez :
+   scp -P 22121 install-orchestrator.sh 88.175.11.58:/tmp/
+   ssh -p 22121 88.175.11.58 "bash /tmp/install-orchestrator.sh"
+
+3. Testez :
+   ssh -p 22121 88.175.11.58
+   cd /opt/bojemoi/pentest-orchestrator
+   python3 main.py --status
+
+C'EST TOUT ! 🎉
+
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                    Bon pentesting ! 🔒                                   ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝

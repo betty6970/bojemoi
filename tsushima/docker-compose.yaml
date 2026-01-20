@@ -1,0 +1,26 @@
+network:
+  backend:
+    external: true
+
+services:
+  masscan:
+    image: localhost:5000/tsushima:latest  # ou votre image personnalisée
+    container_name: tsushima 
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    network_mode: "host"  # Accès direct au réseau de l'hôte
+    volumes:
+      - ./results:/output:rw
+      - ./config:/config:ro
+    environment:
+      - TARGETS=${TARGETS:-192.168.1.0/24}
+      - PORTS=${PORTS:-22,80,443,5432}
+      - RATE=${RATE:-10000}
+    command: >
+#      ash -c " masscan  $${TARGETS}  -p $${PORTS}  --rate $${RATE}  --output-format json  --output-filename /output/scan_$$(date +%Y%m%d_%H%M%S).json "
+    
+
+volumes:
+  portainer_data:

@@ -1,0 +1,44 @@
+# Dockerfile pour OWASP ZAP avec PostgreSQL
+FROM ghcr.io/zaproxy/zaproxy:stable 
+
+# Passer en utilisateur root pour les installations
+USER root
+
+# Variables d'environnement
+ENV POSTGRES_JDBC_VERSION=42.7.1
+ENV ZAP_HOME=/zap
+ENV ZAP_LIB_DIR=${ZAP_HOME}/lib
+
+# Créer le répertoire lib s'il n'existe pas
+RUN mkdir -p ${ZAP_LIB_DIR}
+
+# Télécharger et installer le driver PostgreSQL JDBC
+RUN wget -O ${ZAP_LIB_DIR}/postgresql-${POSTGRES_JDBC_VERSION}.jar \
+    https://jdbc.postgresql.org/download/postgresql-${POSTGRES_JDBC_VERSION}.jar
+
+# Vérifier que le fichier a été téléchargé
+RUN ls -la ${ZAP_LIB_DIR}/postgresql-${POSTGRES_JDBC_VERSION}.jar
+
+# Créer le répertoire de configuration
+RUN mkdir -p ${ZAP_HOME}/db
+
+# Copier le fichier de configuration db.properties
+COPY db.properties ${ZAP_HOME}/db/db.properties
+
+# Définir les permissions appropriées
+RUN chown -R zap:zap ${ZAP_HOME}/lib ${ZAP_HOME}/db
+RUN chmod 644 ${ZAP_HOME}/db/db.properties
+RUN chmod 644 ${ZAP_LIB_DIR}/postgresql-${POSTGRES_JDBC_VERSION}.jar
+
+# Revenir à l'utilisateur zap
+USER zap
+
+# Variables d'environnement pour PostgreSQL
+ENV DATABASE_URL=jdbc:postgresql://postgres:5432/zapdb
+ENV DATABASE_USERNAME=postgres
+ENV DATABASE_PASSWORD=bojemoi
+
+# Point d'entrée par défaut
+ENTRYPOINT ["/zap/zap.sh"]
+CMD ["-daemon", "-host", "0.0.0.0", "-port", "8090", "-config", "database.driver=org.postgresql.Driver" \
+    "-config","api.addrs.addr.name=10.0.0.0/8"]

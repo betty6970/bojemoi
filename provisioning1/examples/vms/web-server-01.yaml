@@ -1,0 +1,15 @@
+name: web-server-01
+template: "Ubuntu 22.04"
+vcpus: 4
+memory_gb: 8
+disk_gb: 100
+cloud_init: base-ubuntu
+network:
+  network_name: "Production"
+  ip_address: "192.168.1.100"
+  gateway: "192.168.1.1"
+  netmask: "255.255.255.0"
+tags:
+  environment: production
+  role: web-server
+

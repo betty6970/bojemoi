@@ -1,0 +1,99 @@
+#ckerfile Alpine Linux avec IP2Location + Masscan + MSF
+FROM alpine:latest
+
+LABEL maintainer="Security Team"
+LABEL description="Alpine container with IP2Location, Masscan, and MSF integration"
+
+# Variables d'environnement
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Installer les dépendances système
+RUN apk update && apk add --no-cache \
+    python3 \
+    python3-dev \
+    py3-pip \
+    git \
+    gcc \
+    musl-dev \
+    make \
+    libpcap-dev \
+    postgresql-dev \
+    linux-headers \
+    build-base \
+    curl \
+    wget \
+    net-tools \
+    iproute2 \
+    bind-tools \
+    tcpdump \
+    nmap \
+    openvpn \
+    py3-psycopg2 \
+    py3-ipaddress \
+    py3-requests \
+    py3-dotenv \
+    && rm -rf /var/cache/apk/*
+
+# Créer un utilisateur non-root
+USER root
+RUN addgroup -g 2000 scanner && \
+    adduser -D -s /bin/sh -u 2000 -G scanner scanner &&\
+    addgroup scanner root
+
+# Installer Masscan depuis les sources
+WORKDIR /tmp
+RUN git clone https://github.com/robertdavidgraham/masscan.git && \
+    cd masscan && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/masscan
+#lancer openvpn
+ 
+
+# Installer Metasploit Framework
+RUN apk add --no-cache ruby ruby-dev ruby-bundler && \
+    gem install metasploit-framework --no-document
+
+# Créer les répertoires de travail
+RUN mkdir -p /app /var/log /tmp/masscan_results && \
+    chown -R scanner:scanner /app /var/log /tmp/masscan_results
+
+# Copier le script principal
+COPY --chown=scanner:scanner masscan_msf_script.py /app/
+COPY --chown=scanner:scanner requirements.txt /app/
+COPY --chown=scanner:scanner entrypoint.sh /app/
+
+# Rendre le script exécutable
+RUN chmod +x /app/masscan_msf_script.py /app/entrypoint.sh
+
+# Définir le répertoire de travail
+WORKDIR /app
+
+# Changer vers l'utilisateur non-root
+USER scanner
+
+# Variables d'environnement par défaut
+ENV TARGET_COUNTRY=FR
+ENV SCAN_PORTS=22,80,443,3389,5985,8080
+ENV SCAN_RATE=1000
+ENV MAX_CIDRS=5
+ENV IP2LOCATION_DB_HOST=postgres
+ENV IP2LOCATION_DB_PORT=5432
+ENV IP2LOCATION_DB_NAME=ip2location
+ENV IP2LOCATION_DB_USER=postgres
+ENV IP2LOCATION_DB_PASSWORD=bojemoi
+ENV MSF_DB_HOST=postgres
+ENV MSF_DB_PORT=5432
+ENV MSF_DB_NAME=msf
+ENV MSF_DB_USER=postgres
+ENV MSF_DB_PASSWORD=bojemoi
+
+
+# Point d'entrée
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Commande par défaut
+USER root
+CMD ["python3", "/app/masscan_msf_script.py"]

@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Karacho Project - Blockchain Service
+This script provides a daemon service for the Karacho blockchain system.
+"""
+
+import os
+import sys
+import time
+import signal
+import argparse
+import logging
+import subprocess
+from pathlib import Path
+import daemon
+from daemon import pidfile
+
+# Configuration
+DEFAULT_API_PORT = 5000
+DEFAULT_LOG_FILE = "/var/log/karacho/blockchain.log"
+DEFAULT_PID_FILE = "/var/run/karacho/blockchain.pid"
+DEFAULT_API_SCRIPT = Path(__file__).parent / "blockchain_postgres_api.py"
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('karacho-service')
+
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='Karacho Blockchain Service')
+    
+    parser.add_argument('--port', type=int, default=DEFAULT_API_PORT,
+                        help=f'API port (default: {DEFAULT_API_PORT})')
+    parser.add_argument('--log-file', type=str, default=DEFAULT_LOG_FILE,
+                        help=f'Log file path (default: {DEFAULT_LOG_FILE})')
+    parser.add_argument('--pid-file', type=str, default=DEFAULT_PID_FILE,
+                        help=f'PID file path (default: {DEFAULT_PID_FILE})')
+    parser.add_argument('--api-script', type=str, default=str(DEFAULT_API_SCRIPT),
+                        help=f'Path to API script (default: {DEFAULT_API_SCRIPT})')
+    parser.add_argument('--foreground', action='store_true',
+                        help='Run in foreground (non-daemon mode)')
+    parser.add_argument('--debug', action='store_true',
+                        help='Enable debug mode')
+    
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # Start command
+    start_parser = subparsers.add_parser('start', help='Start the service')
+    
+    # Stop command
+    stop_parser = subparsers.add_parser('stop', help='Stop the service')
+    
+    # Restart command
+    restart_parser = subparsers.add_parser('restart', help='Restart the service')
+    
+    # Status command
+    status_parser = subparsers.add_parser('status', help='Check service status')
+    
+    return parser.parse_args()
+
+
+def setup_directories(log_file, pid_file):
+    """
+    Set up necessary directories for logs and PID file.
+    
+    Args:
+        log_file: Path to log file
+        pid_file: Path to PID file
+    """
+    log_dir = os.path.dirname(log_file)
+    pid_dir = os.path.dirname(pid_file)
+    
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(pid_dir, exist_ok=True)
+
+
+def start_service(args):
+    """
+    Start the blockchain service.
+    
+    Args:
+        args: Command line arguments
+    """
+    setup_directories(args.log_file, args.pid_file)
+    
+    # Check if service is already running
+    if os.path.exists(args.pid_file):
+        try:
+            with open(args.pid_file, 'r') as f:
+                pid = int(f.read().strip())
+            
+            # Check if process with this PID exists
+            os.kill(pid, 0)
+            print(f"Service is already running with PID {pid}")
+            return
+        except (OSError, ValueError):
+            # PID file exists but process does not, or file is invalid
+            os.remove(args.pid_file)
+    
+    # Set up environment variables
+    env = os.environ.copy()
+    env['PORT'] = str(args.port)
+    if args.debug:
+        env['DEBUG'] = 'true'
+    
+    # Start service
+    if args.foreground:
+        # Run in foreground
+        setup_logging(args.log_file, args.debug)
+        logger.info("Starting blockchain service in foreground mode...")
+        run_service(args.api_script, args.port, env)
+    else:
+        # Run as daemon
+        print(f"Starting blockchain service in daemon mode...")
+        print(f"Logging to {args.log_file}")
+        print(f"PID file: {args.pid_file}")
+        
+        with daemon.DaemonContext(
+            pidfile=daemon.pidfile.PIDLockFile(args.pid_file),
+            stdout=open(args.log_file, 'a+'),
+            stderr=open(args.log_file, 'a+'),
+            signal_map={
+                signal.SIGTERM: lambda signum, frame: sys.exit(0),
+                signal.SIGINT: lambda signum, frame: sys.exit(0),
+            }
+        ):
+            setup_logging(args.log_file, args.debug)
+            logger.info("Starting blockchain service...")
+            run_service(args.api_script, args.port, env)
+
+
+def setup_logging(log_file, debug):
+    """
+    Set up logging configuration.
+    
+    Args:
+        log_file: Path to log file
+        debug: Whether debug logging is enabled
+    """
+    level = logging.DEBUG if debug else logging.INFO
+    
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(level)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    ))
+    
+    logger.setLevel(level)
+    logger.addHandler(file_handler)
+
+
+def run_service(api_script, port, env):
+    """
+    Run the blockchain API service.
+    
+    Args:
+        api_script: Path to API script
+        port: Port to run API on
+        env: Environment variables
+    """
+    logger.info(f"Starting API server on port {port}...")
+    
+    try:
+        # Check if script exists and is executable
+        script_path = Path(api_script)
+        if not script_path.exists():
+            logger.error(f"API script not found: {api_script}")
+            sys.exit(1)
+        
+        if not os.access(api_script, os.X_OK):
+            logger.warning(f"API script is not executable, using python interpreter")
+            cmd = [sys.executable, api_script]
+        else:
+            cmd = [api_script]
+        
+        # Run API server
+        process = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True
+        )
+        
+        logger.info(f"API server started with PID {process.pid}")
+        
+        # Monitor process output
+        while True:
+            line = process.stdout.readline()
+            if not line and process.poll() is not None:
+                break
+            if line:
+                logger.info(line.strip())
+        
+        # Process has exited
+        exit_code = process.poll()
+        logger.error(f"API server exited unexpectedly with code {exit_code}")
+        sys.exit(exit_code)
+        
+    except Exception as e:
+        logger.exception(f"Error running API server: {str(e)}")
+        sys.exit(1)
+
+
+def stop_service(args):
+    """
+    Stop the blockchain service.
+    
+    Args:
+        args: Command line arguments
+    """
+    if not os.path.exists(args.pid_file):
+        print("Service is not running")
+        return
+    
+    try:
+        with open(args.pid_file, 'r') as f:
+            pid = int(f.read().strip())
+        
+        # Send SIGTERM to process
+        print(f"Stopping service with PID {pid}...")
+        os.kill(pid, signal.SIGTERM)
+        
+        # Wait for process to terminate
+        for _ in range(10):
+            try:
+                os.kill(pid, 0)
+                time.sleep(0.5)
+            except OSError:
+                # Process has terminated
+                print("Service stopped")
+                os.remove(args.pid_file)
+                return
+        
+        # Force kill if still running
+        print("Service did not terminate gracefully, sending SIGKILL...")
+        os.kill(pid, signal.SIGKILL)
+        os.remove(args.pid_file)
+        print("Service forcibly stopped")
+        
+    except (IOError, OSError, ValueError) as e:
+        print(f"Error stopping service: {str(e)}")
+        if os.path.exists(args.pid_file):
+            os.remove(args.pid_file)
+
+
+def check_status(args):
+    """
+    Check the status of the blockchain service.
+    
+    Args:
+        args: Command line arguments
+    """
+    if not os.path.exists(args.pid_file):
+        print("Service is not running")
+        return
+    
+    try:
+        with open(args.pid_file, 'r') as f:
+            pid = int(f.read().strip())
+        
+        # Check if process is running
+        os.kill(pid, 0)
+        print(f"Service is running with PID {pid}")
+        
+        # Get process uptime and memory usage if psutil is available
+        try:
+            import psutil
+            process = psutil.Process(pid)
+            uptime = time.time() - process.create_time()
+            memory_mb = process.memory_info().rss / (1024 * 1024)
+            
+            # Format uptime
+            days, remainder = divmod(uptime, 86400)
+            hours, remainder = divmod(remainder, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            
+            uptime_str = ""
+            if days > 0:
+                uptime_str += f"{int(days)}d "
+            if hours > 0 or days > 0:
+                uptime_str += f"{int(hours)}h "
+            if minutes > 0 or hours > 0 or days > 0:
+                uptime_str += f"{int(minutes)}m "
+            uptime_str += f"{int(seconds)}s"
+            
+            print(f"Uptime: {uptime_str}")
+            print(f"Memory usage: {memory_mb:.2f} MB")
+        except ImportError:
+            pass
+        
+    except (IOError, OSError, ValueError) as e:
+        print(f"Error checking service status: {str(e)}")
+        if os.path.exists(args.pid_file):
+            print("PID file exists but process is not running")
+            os.remove(args.pid_file)
+            print("Cleaned up stale PID file")
+
+
+def main():
+    """Main entry point."""
+    args = parse_args()
+    
+    if args.command == 'start':
+        start_service(args)
+    elif args.command == 'stop':
+        stop_service(args)
+    elif args.command == 'restart':
+        stop_service(args)
+        time.sleep(1)
+        start_service(args)
+    elif args.command == 'status':
+        check_status(args)
+    else:
+        print("Please specify a command: start, stop, restart, status")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

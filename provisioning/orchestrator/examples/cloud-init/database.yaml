@@ -1,0 +1,51 @@
+#cloud-config
+# Example cloud-init template for database server
+
+hostname: {{ hostname }}
+fqdn: {{ fqdn }}
+
+# Users
+users:
+  - name: admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1... # Add your SSH key here
+
+# Packages
+packages:
+  - curl
+  - postgresql-15
+  - postgresql-contrib
+
+# Package update/upgrade
+package_update: true
+package_upgrade: true
+
+# Write files
+write_files:
+  - path: /etc/postgresql/15/main/postgresql.conf
+    append: true
+    content: |
+      # Custom configuration for {{ environment }}
+      listen_addresses = '*'
+      max_connections = 100
+      shared_buffers = 256MB
+
+  - path: /etc/environment
+    content: |
+      ENVIRONMENT={{ environment }}
+      VM_NAME={{ vm_name }}
+      DB_NAME={{ db_name | default('bojemoi') }}
+
+# Run commands
+runcmd:
+  - systemctl enable postgresql
+  - systemctl start postgresql
+  - sudo -u postgres psql -c "CREATE DATABASE {{ db_name | default('bojemoi') }};"
+  - sudo -u postgres psql -c "CREATE USER dbuser WITH ENCRYPTED PASSWORD 'changeme';"
+  - sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE {{ db_name | default('bojemoi') }} TO dbuser;"
+  - echo "Database {{ vm_name }} initialized in {{ environment }} environment" > /var/log/cloud-init-complete.log
+
+# Final message
+final_message: "Database server {{ vm_name }} ready after $UPTIME seconds"

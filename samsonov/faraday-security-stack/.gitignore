@@ -1,0 +1,81 @@
+# Variables d'environnement sensibles
+.env.local
+.env.production
+*.key
+*.pem
+*.crt
+
+# Résultats de scans
+results/
+*.xml
+*.json
+*.csv
+*.html
+reports/
+
+# Backups
+backups/
+*.sql
+*.dump
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker volumes (ne pas commit)
+postgres_data/
+faraday_data/
+zap_data/
+metasploit_data/
+burp_data/
+masscan_results/
+
+# Temporaires
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+
+# Certificats SSL
+configs/nginx/certs/
+*.crt
+*.key
+*.pem
+
+# Credentials
+credentials.txt
+passwords.txt
+secrets/

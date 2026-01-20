@@ -1,0 +1,31 @@
+#!/bin/ash
+#  rm bojemoiBuild.sh; wget http://bojemoi.me/docker/bojemoiBuild.sh ; chmod +x bojemoiBuild.sh ; ./bojemoiBuild.sh base bojmoi 
+if [ $(id -u) -ne 0 ]; then
+    echo "Vous n'êtes pas root."
+else
+    echo "Vous êtes root."
+    exit 1
+fi
+# Vérifier si un argument est fourni
+if [ -z "$1" ]; then
+    echo "Aucun argument fourni. Usage: $0 arg1 arg2 ..."
+    exit 1
+fi
+
+echo "--------------------------------------------------------------------------------------------------------------------"
+echo " etape 3 : vous venez d'installer cloud-init                                                                        "
+echo " maintemamt vous installez le build de l'image metasploit et la creation du stack bojemoi avec les services de base "
+echo "--------------------------------------------------------------------------------------------------------------------"
+rm -rf /opt/bojemoi/berezina
+rm -rf /opt/bojemoi/karacho
+mkdir /opt/bojemoi/berezina
+mkdir /opt/bojemoi/karacho
+mkdir /opt/bojemoi/berezina/list_vpn
+cd /opt/bojemoi
+wget -r -nH -np --cut-dirs=2  --reject="*.html?C=*;O=*" http://bojemoi.me/docker/berezina -P berezina
+wget -r -nH -np --cut-dirs=2  --reject="*.html?C=*;O=*"  http://bojemoi.me/docker/karacho -P karacho
+wget -r -nH -np --cut-dirs=1    http://bojemoi.me/docker/*.yaml 
+# deploiement du stack  
+for stack in "$@"; do
+  docker stack deploy -c service-$stack.yaml $stack
+done

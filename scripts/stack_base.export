@@ -1,0 +1,431 @@
+# Fichier régénéré automatiquement à partir de la stack déployée
+# Date: $(date)
+# Stack: $STACK_NAME
+
+version: '3.8'
+
+services:
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    volumes:
+      - /opt/bojemoi/volumes/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - base_alertmanager_data:/alertmanager
+    networks:
+      - monitoring
+    ports:
+      - 9093:9093/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=prom/alertmanager:latest
+        - com.docker.stack.namespace=base
+
+  alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - /opt/bojemoi/volumes/alloy/config/config.alloy:/etc/alloy/alloy.config:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - shared_logs:/rsync/logs
+    networks:
+      - monitoring
+      - rsync_network
+    ports:
+      - 12345:12345/tcp
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=grafana/alloy:latest
+        - com.docker.stack.namespace=base
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    volumes:
+      - /:/rootfs
+      - /var/run:/var/run
+      - /sys:/sys
+      - /var/lib/docker/:/var/lib/docker
+      - /dev/disk/:/dev/disk
+    networks:
+      - monitoring
+    ports:
+      - 8081:8080/tcp
+    deploy:
+      replicas: 1
+      labels:
+        - com.docker.stack.image=gcr.io/cadvisor/cadvisor:latest
+        - com.docker.stack.namespace=base
+
+  dnsmask:
+    image: jpillora/dnsmasq:latest
+    volumes:
+      - /opt/bojemoi/volumes/dnsmask/dnsmask.conf:/etc/dnsmasq.conf
+      - /opt/bojemoi/volumes/dnsmask/dnsmask.d:/etc/dnsmasq.d
+    networks:
+      - default
+    ports:
+      - 53:53/udp
+      - 53:53/tcp
+      - 8082:8080/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=jpillora/dnsmasq
+        - com.docker.stack.namespace=base
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_DATABASE_HOST=postgres:5432
+      - GF_DATABASE_NAME=grafana
+      - GF_DATABASE_PASSWORD=bojemoi
+      - GF_DATABASE_SSL_MODE=disable
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_USER=postgres
+      - GF_SECURITY_ADMIN_PASSWORD=admin_password
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - base_grafana_data:/var/lib/grafana
+      - /opt/bojemoi/volumes/grafana/provisioning/:/etc/grafana/provisioning/
+    networks:
+      - backend
+      - monitoring
+      - proxy
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=grafana/grafana:latest
+        - com.docker.stack.namespace=base
+        - traefik.enable=true
+        - traefik.http.routers.grafana.entrypoints=websecure
+        - traefik.http.routers.grafana.middlewares=security-headers
+        - traefik.http.routers.grafana.rule=Host(`grafana.bojemoi.me`)
+        - traefik.http.routers.grafana.tls.certresolver=letsencrypt
+        - traefik.http.services.grafana.loadbalancer.server.port=3000
+
+  loki:
+    image: grafana/loki:latest
+    volumes:
+      - /opt/bojemoi/volumes/grafana/loki/loki-config.yml:/etc/loki/local-config.yml:ro
+      - base_loki_data:/loki
+    networks:
+      - monitoring
+      - proxy
+    ports:
+      - 3100:3100/tcp
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=grafana/loki:latest
+        - com.docker.stack.namespace=base
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    hostname: {{.Node.Hostname}}
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs
+    networks:
+      - monitoring
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=prom/node-exporter:latest
+        - com.docker.stack.namespace=base
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=root
+    volumes:
+      - base_pgadmin-data:/var/lib/pgadmin
+    networks:
+      - backend
+    ports:
+      - 5050:80/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=dpage/pgadmin4
+        - com.docker.stack.namespace=base
+
+  postfix:
+    image: boky/postfix:latest
+    environment:
+      - ALLOWED_SENDER_DOMAINS=bojemoi.me
+      - HOSTNAME=mail.example.com
+    volumes:
+      - base_postfix_data:/var/spool/postfix
+    networks:
+      - monitoring
+    ports:
+      - 25:25/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - com.docker.stack.image=boky/postfix:latest
+        - com.docker.stack.namespace=base
+        - prometheus.enable=false
+
+  postgres:
+    image: postgres:latest
+    environment:
+      - POSTGRES_DB=msf
+      - POSTGRES_PASSWORD=bojemoi
+      - POSTGRES_USER=postgres
+    volumes:
+      - bojemoi:/var/lib/postgresql/
+    networks:
+      - backend
+    ports:
+      - 5432:5432/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - com.docker.stack.image=postgres:latest
+        - com.docker.stack.namespace=base
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - prometheus_data:/prometheus
+      - /opt/bojemoi/volumes/prometheus:/etc/prometheus:ro
+    networks:
+      - monitoring
+      - proxy
+      - rsync_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=prom/prometheus:latest
+        - com.docker.stack.namespace=base
+        - traefik.enable=true
+        - traefik.http.routers.prometheus.entrypoints=websecure
+        - traefik.http.routers.prometheus.middlewares=security-headers,dashboard-auth
+        - traefik.http.routers.prometheus.rule=Host(`prometheus.bojemoi.me`)
+        - traefik.http.routers.prometheus.tls.certresolver=letsencrypt
+        - traefik.http.services.prometheus.loadbalancer.server.port=9090
+
+  registry:
+    image: registry:2
+    volumes:
+      - registry:/var/lib/registry
+    networks:
+      - default
+    ports:
+      - 5000:5000/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=registry:2
+        - com.docker.stack.namespace=base
+
+  rsync-master:
+    image: localhost:5000/koursk-2:latest
+    hostname: rsync-master
+    environment:
+      - DATA_PATH=/opt/bojemoi
+      - MODULE=swarm_data
+      - REMOTE_HOSTS=rsync-slave
+      - RSYNC_MODE=master
+      - SYNC_INTERVAL=300
+    volumes:
+      - /opt/bojemoi:/opt/bojemoi
+      - base_ssh_keys:/root/.ssh:ro
+      - shared_logs:/var/log/rsync
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - rsync_network
+    ports:
+      - 8080:8080/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '.10'
+          memory: 512M
+        reservations:
+          cpus: '.10'
+          memory: 100M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/koursk-2:latest
+        - com.docker.stack.namespace=base
+
+  rsync-slave:
+    image: localhost:5000/koursk:latest
+    hostname: rsync-slave-
+    environment:
+      - DATA_PATH=/opt/bojemoi
+      - MASTER_HOST=rsync-master
+      - RSYNC_MODE=slave
+    volumes:
+      - /opt/bojemoi:/opt/bojemoi
+      - base_ssh_keys:/root/.ssh
+      - shared_logs:/var/log/rsync
+    networks:
+      - rsync_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '.10'
+          memory: 512M
+        reservations:
+          cpus: '.10'
+          memory: 100M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/koursk:latest
+        - com.docker.stack.namespace=base
+
+  suricata:
+    image: localhost:5000/stalingrad:latest
+    hostname: suricata{{.Node.Hostname}}
+    environment:
+      - SURICATA_OPTIONS=-i eth0 --set stream.reassembly.depth=0 --set detect.profile=low
+    volumes:
+      - base_suricata_logs:/var/log/suricata
+    networks:
+      - default
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/stalingrad:latest
+        - com.docker.stack.namespace=base
+
+  suricata-exporter:
+    image: israellogz/suricata_exporter:latest
+    networks:
+      - default
+    ports:
+      - 9917:9917/tcp
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=israellogz/suricata_exporter
+        - com.docker.stack.namespace=base
+
+  traefik:
+    image: traefik:v2.10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - base_traefik-certificates:/letsencrypt
+      - base_traefik-logs:/var/log/traefik
+    networks:
+      - proxy
+    ports:
+      - 80:80/tcp
+      - 443:443/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - com.docker.stack.image=traefik:v2.10
+        - com.docker.stack.namespace=base
+        - traefik.enable=true
+        - traefik.http.middlewares.dashboard-auth.basicauth.users=admin:$apr1$8EVjn/nj$GiLUZqcbueTFeD23SuB6x0
+        - traefik.http.routers.dashboard.entrypoints=websecure
+        - traefik.http.routers.dashboard.middlewares=dashboard-auth,security-headers
+        - traefik.http.routers.dashboard.rule=Host(`traefik.yourdomain.com`)
+        - traefik.http.routers.dashboard.service=api@internal
+        - traefik.http.routers.dashboard.tls.certresolver=letsencrypt
+        - traefik.http.services.dashboard.loadbalancer.server.port=8080
+
+networks:
+  backend:
+    attachable: true
+  default:
+  frontend:
+    attachable: true
+  monitoring:
+    attachable: true
+  proxy:
+    attachable: true
+  rsync_network:
+    attachable: true
+
+volumes:
+  alertmanager_data:
+  grafana_data:
+  loki_data:
+  pgadmin-data:
+  postfix_data:
+  ssh_keys:
+  suricata_logs:
+  traefik-certificates:
+  traefik-logs:

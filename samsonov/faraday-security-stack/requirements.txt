@@ -1,0 +1,20 @@
+# Dépendances Python pour les scripts d'intégration
+
+# API Faraday
+requests>=2.31.0
+
+# API ZAP
+python-owasp-zap-v2.4>=0.0.21
+
+# Parsing XML pour Metasploit
+lxml>=4.9.0
+
+# Utilitaires
+urllib3>=1.26.0
+certifi>=2023.0.0
+
+# Logging amélioré
+colorama>=0.4.6
+
+# Gestion JSON
+simplejson>=3.19.0

@@ -1,0 +1,149 @@
+ð Dockerfile transformÃ©:
+--------------------------------------------------
+# Phase 1: Builder
+#
+# NOTE: THIS DOCKERFILE IS GENERATED VIA "apply-templates.sh"
+#
+# PLEASE DO NOT EDIT IT DIRECTLY.
+#
+
+FROM alpine:3.22 AS builder
+
+# skip installing gem documentation with `gem install`/`gem update`
+RUN set -eux; \
+MKDIR -p /usr/local/etc; \
+ECHO 'gem: --no-document' >> /usr/local/etc/gemrc
+
+ENV LANG C.UTF-8
+
+# https://www.ruby-lang.org/en/news/2025/04/18/ruby-3-5-0-preview1-released/
+ENV RUBY_VERSION 3.5.0-preview1
+ENV RUBY_DOWNLOAD_URL https://cache.ruby-lang.org/pub/ruby/3.5/ruby-3.5.0-preview1.tar.xz
+ENV RUBY_DOWNLOAD_SHA256 c6cc1e9f23fe4719b024b8305345ca0cff4e1bc159f3ebff86cb5b87969863aa
+
+# some of ruby's build scripts are written in ruby
+#   we purge system ruby later to make sure our final image uses what we just built
+RUN set -eux; \
+\ 
+APK add --no-cache --virtual .ruby-builddeps \
+AUTOCONF \
+BZIP2 \
+BZIP2-DEV \
+CA-CERTIFICATES \
+COREUTILS \
+DPKG-DEV dpkg \
+G++ \
+GCC \
+GDBM-DEV \
+GLIB-DEV \
+GMP-DEV \
+LIBC-DEV \
+LIBFFI-DEV \
+LIBXML2-DEV \
+LIBXSLT-DEV \
+LINUX-HEADERS \
+MAKE \
+NCURSES-DEV \
+OPENSSL \
+OPENSSL-DEV \
+PATCH \
+PROCPS \
+YAML-DEV \
+ZLIB-DEV \
+RUBY \
+TAR \
+XZ \
+YAML-DEV \
+ZLIB-DEV \
+; \
+\ 
+RUSTARCH=; \
+APKARCH="$(APK --print-arch)"; \
+CASE "$apkArch" in \
+'X86_64') rustArch='x86_64-unknown-linux-musl'; rustupUrl='https://static.rust-lang.org/rustup/archive/1.27.1/x86_64-unknown-linux-musl/rustup-init'; rustupSha256='1455d1df3825c5f24ba06d9dd1c7052908272a2cae9aa749ea49d67acbe22b47' ;; \
+'AARCH64') rustArch='aarch64-unknown-linux-musl'; rustupUrl='https://static.rust-lang.org/rustup/archive/1.27.1/aarch64-unknown-linux-musl/rustup-init'; rustupSha256='7087ada906cd27a00c8e0323401a46804a03a742bd07811da6dead016617cc64' ;; \
+ESAC; \
+\ 
+IF [ -n "$rustArch" ]; then \
+MKDIR -p /tmp/rust; \
+\ 
+WGET -O /tmp/rust/rustup-init "$rustupUrl"; \
+ECHO "$rustupSha256 */tmp/rust/rustup-init" | sha256sum --check --strict; \
+CHMOD +x /tmp/rust/rustup-init; \
+\ 
+EXPORT RUSTUP_HOME='/tmp/rust/rustup' CARGO_HOME='/tmp/rust/cargo'; \
+EXPORT PATH="$CARGO_HOME/bin:$PATH"; \
+/TMP/RUST/RUSTUP-INIT -y --no-modify-path --profile minimal --default-toolchain '1.84.0' --default-host "$rustArch"; \
+\ 
+RUSTC --version; \
+CARGO --version; \
+FI; \
+\ 
+WGET -O ruby.tar.xz "$RUBY_DOWNLOAD_URL"; \
+ECHO "$RUBY_DOWNLOAD_SHA256 *ruby.tar.xz" | sha256sum --check --strict; \
+\ 
+MKDIR -p /usr/src/ruby; \
+TAR -xJf ruby.tar.xz -C /usr/src/ruby --strip-components=1; \
+RM ruby.tar.xz; \
+\ 
+CD /usr/src/ruby; \
+\ 
+# https://github.com/docker-library/ruby/issues/196
+# https://bugs.ruby-lang.org/issues/14387#note-13 (patch source)
+# https://bugs.ruby-lang.org/issues/14387#note-16 ("Therefore ncopa's patch looks good for me in general." -- only breaks glibc which doesn't matter here)
+WGET -O 'thread-stack-fix.patch' 'https://bugs.ruby-lang.org/attachments/download/7081/0001-thread_pthread.c-make-get_main_stack-portable-on-lin.patch'; \
+ECHO '3ab628a51d92fdf0d2b5835e93564857aea73e0c1de00313864a94a6255cb645 *thread-stack-fix.patch' | sha256sum --check --strict; \
+PATCH -p1 -i thread-stack-fix.patch; \
+RM thread-stack-fix.patch; \
+\ 
+AUTOCONF; \
+GNUARCH="$(DPKG-ARCHITECTURE --query DEB_BUILD_GNU_TYPE)"; \
+./CONFIGURE \
+--BUILD="$GNUARCH" \
+--DISABLE-INSTALL-DOC \
+--ENABLE-SHARED \
+${RUSTARCH:+--ENABLE-YJIT} \
+; \
+MAKE -j "$(nproc)"; \
+MAKE install; \
+\ 
+RM -rf /tmp/rust; \
+RUNDEPS="$( \
+SCANELF --needed --nobanner --format '%n#p' --recursive /usr/local \
+| tr ',' '\n' \
+| sort -u \
+| awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
+)"; \
+APK add --no-network --virtual .ruby-rundeps $runDeps; \
+APK del --no-network .ruby-builddeps; \
+\ 
+CD /; \
+RM -r /usr/src/ruby; \
+# verify we have no "ruby" packages installed
+IF \
+APK --no-network list --installed \
+| grep -v '^[.]ruby-' \
+| grep -i ruby \
+; then \
+EXIT 1; \
+FI; \
+[ "$(command -v ruby)" = '/usr/local/bin/ruby' ]; \
+# rough smoke test
+RUBY --version; \
+GEM --version; \
+BUNDLE --version
+
+# don't create ".bundle" in all our apps
+ENV GEM_HOME /usr/local/bundle
+ENV BUNDLE_SILENCE_ROOT_WARNING=1 \
+BUNDLE_APP_CONFIG="$GEM_HOME" 
+ENV PATH $GEM_HOME/bin:$PATH
+RUN set -eux; \
+MKDIR "$GEM_HOME"; \
+# adjust permissions of GEM_HOME for running "gem install" as an arbitrary user
+CHMOD 1777 "$GEM_HOME"
+
+
+# Phase 2: Runtime
+FROM alpine:3.22
+CMD [ "irb" ]

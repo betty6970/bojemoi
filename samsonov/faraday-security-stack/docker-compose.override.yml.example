@@ -1,0 +1,44 @@
+# docker-compose.override.yml
+# Configuration pour le développement local
+# Ce fichier est automatiquement chargé par docker-compose
+
+version: '3.8'
+
+services:
+  # Configuration de développement pour Faraday
+  faraday:
+    environment:
+      FARADAY_DEBUG: "true"
+      FARADAY_LOG_LEVEL: DEBUG
+    volumes:
+      # Montage des scripts en mode dev pour hot-reload
+      - ./scripts:/scripts:rw
+      - ./configs/faraday:/configs:rw
+
+  # Configuration de développement pour ZAP
+  zap:
+    environment:
+      ZAP_DEBUG: "true"
+    volumes:
+      - ./scripts/zap:/zap/scripts:rw
+      - ./configs/zap:/zap/configs:rw
+
+  # Configuration de développement pour Metasploit
+  metasploit:
+    volumes:
+      - ./scripts/metasploit:/scripts:rw
+      - ./configs/metasploit:/configs:rw
+
+  # Activer les logs détaillés pour Nginx
+  nginx:
+    environment:
+      NGINX_DEBUG: "true"
+    volumes:
+      - ./logs/nginx:/var/log/nginx:rw
+
+# Configuration réseau pour le développement
+networks:
+  faraday-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: faraday-dev

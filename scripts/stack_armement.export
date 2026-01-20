@@ -1,0 +1,113 @@
+# Fichier régénéré automatiquement à partir de la stack déployée
+# Date: $(date)
+# Stack: $STACK_NAME
+
+version: '3.8'
+
+services:
+
+  ak47-service:
+    image: localhost:5000/borodino:latest
+    environment:
+      - ARME_TYPE=ak47
+      - TARGET=container1
+    networks:
+      - backend
+    deploy:
+      replicas: 15
+      resources:
+        limits:
+          cpus: '.50'
+          memory: 512M
+        reservations:
+          cpus: '.10'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/borodino:latest
+        - com.docker.stack.namespace=armement
+
+  bm12-service:
+    image: localhost:5000/borodino:latest
+    environment:
+      - ARME_TYPE=bm12
+      - TARGET=container1
+    networks:
+      - backend
+    deploy:
+      replicas: 15
+      resources:
+        limits:
+          cpus: '.50'
+          memory: 512M
+        reservations:
+          cpus: '.10'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/borodino:latest
+        - com.docker.stack.namespace=armement
+
+  karacho-blockchain:
+    image: localhost:5000/karacho:latest
+    environment:
+      - DB_NAME=karacho
+      - DB_PASS=bojemoi
+      - DB_USER=postgres
+      - DEBUG=false
+      - MSF_DB_NAME=msf
+      - PORT=5100
+      - POSTGRES_HOST=postgres
+      - SECRET_KEY=your_secret_key_here
+      - TOKEN_EXPIRY=3600
+    volumes:
+      - armement_karacho-logs:/var/log/karacho
+      - armement_karacho-run:/var/run/karacho
+    networks:
+      - backend
+    ports:
+      - 5100:5100/tcp
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 2048M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/karacho:latest
+        - com.docker.stack.namespace=armement
+
+  uzi-service:
+    image: localhost:5000/borodino:latest
+    environment:
+      - ARME_TYPE=uzi
+      - TARGET=container1
+    networks:
+      - backend
+    deploy:
+      replicas: 5
+      resources:
+        limits:
+          cpus: '.50'
+          memory: 512M
+        reservations:
+          cpus: '.10'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/borodino:latest
+        - com.docker.stack.namespace=armement
+
+networks:
+
+volumes:
+  karacho-logs:
+  karacho-run:

@@ -1,0 +1,199 @@
+# .gitlab-ci.yml for Pentest Orchestrator
+# This pipeline builds, tests, and deploys your pentest tools to Docker Swarm
+
+stages:
+  - build
+  - test
+  - deploy
+  - monitor
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  REGISTRY: registry.bojemoi.lab.local
+  IMAGE_NAME: ${REGISTRY}/pentest/orchestrator
+  FARADAY_URL: "http://faraday.bojemoi.lab.local"
+
+# Build Docker images for pentest tools
+build:orchestrator:
+  stage: build
+  tags:
+    - docker
+    - swarm
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $REGISTRY
+    - docker build -t ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} -t ${IMAGE_NAME}:latest .
+    - docker push ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}
+    - docker push ${IMAGE_NAME}:latest
+  only:
+    - main
+    - develop
+
+build:zap-plugin:
+  stage: build
+  tags:
+    - docker
+  script:
+    - cd tools/zap
+    - docker build -t ${REGISTRY}/pentest/zap-custom:${CI_COMMIT_SHORT_SHA} .
+    - docker push ${REGISTRY}/pentest/zap-custom:${CI_COMMIT_SHORT_SHA}
+  only:
+    changes:
+      - tools/zap/**/*
+
+build:metasploit:
+  stage: build
+  tags:
+    - docker
+  script:
+    - cd tools/metasploit
+    - docker build -t ${REGISTRY}/pentest/metasploit-custom:${CI_COMMIT_SHORT_SHA} .
+    - docker push ${REGISTRY}/pentest/metasploit-custom:${CI_COMMIT_SHORT_SHA}
+  only:
+    changes:
+      - tools/metasploit/**/*
+
+# Run tests
+test:security-scan:
+  stage: test
+  tags:
+    - docker
+  script:
+    - docker run --rm ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} python -m pytest tests/
+    - docker run --rm ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} bandit -r src/
+  only:
+    - main
+    - develop
+
+test:config-validation:
+  stage: test
+  tags:
+    - docker
+  script:
+    - docker run --rm ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} python -m orchestrator.validate_config
+  only:
+    - main
+    - develop
+
+# Deploy to swarm
+deploy:staging:
+  stage: deploy
+  tags:
+    - docker
+    - swarm
+  environment:
+    name: staging
+    url: https://pentest-staging.bojemoi.lab.local
+  script:
+    # Update the orchestrator service with new image
+    - docker service update --image ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} pentest_orchestrator || true
+    
+    # If service doesn't exist, create it
+    - |
+      if ! docker service ls | grep -q pentest_orchestrator; then
+        docker service create \
+          --name pentest_orchestrator \
+          --network pentest_internal \
+          --network traefik_public \
+          --env FARADAY_URL=${FARADAY_URL} \
+          --label "traefik.enable=true" \
+          --label "traefik.http.routers.orchestrator.rule=Host(\`pentest-staging.bojemoi.lab.local\`)" \
+          --label "traefik.http.services.orchestrator.loadbalancer.server.port=8000" \
+          ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}
+      fi
+  only:
+    - develop
+
+deploy:production:
+  stage: deploy
+  tags:
+    - docker
+    - swarm
+  environment:
+    name: production
+    url: https://pentest.bojemoi.lab.local
+  script:
+    - docker service update --image ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} pentest_orchestrator_prod
+  only:
+    - main
+  when: manual
+
+# Update monitoring configurations
+deploy:grafana-dashboards:
+  stage: monitor
+  tags:
+    - docker
+  script:
+    - |
+      # Copy Grafana dashboards to provisioning directory
+      docker run --rm \
+        -v grafana_dashboards:/dashboards \
+        ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} \
+        sh -c "cp -r /app/monitoring/grafana/*.json /dashboards/"
+    
+    # Reload Grafana configuration
+    - docker service update --force monitoring_grafana
+  only:
+    changes:
+      - monitoring/grafana/**/*
+    refs:
+      - main
+
+deploy:prometheus-rules:
+  stage: monitor
+  tags:
+    - docker
+  script:
+    - |
+      # Update Prometheus alert rules
+      docker run --rm \
+        -v prometheus_rules:/rules \
+        ${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA} \
+        sh -c "cp -r /app/monitoring/prometheus/*.yml /rules/"
+    
+    # Reload Prometheus
+    - docker exec $(docker ps -qf "name=monitoring_prometheus") kill -HUP 1
+  only:
+    changes:
+      - monitoring/prometheus/**/*
+    refs:
+      - main
+
+# Automated pentest execution (scheduled)
+pentest:scheduled-scan:
+  stage: deploy
+  tags:
+    - docker
+    - swarm
+  script:
+    - |
+      docker run --rm \
+        --network pentest_internal \
+        -e FARADAY_URL=${FARADAY_URL} \
+        -e FARADAY_TOKEN=${FARADAY_API_TOKEN} \
+        ${IMAGE_NAME}:latest \
+        python -m orchestrator.run --target ${SCAN_TARGET} --profile weekly
+  only:
+    - schedules
+  variables:
+    SCAN_TARGET: "internal-app.bojemoi.lab.local"
+
+# Backup GitLab artifacts to Faraday
+backup:artifacts:
+  stage: monitor
+  tags:
+    - docker
+  script:
+    - |
+      # Archive CI artifacts and send to Faraday
+      docker run --rm \
+        -v ${CI_PROJECT_DIR}:/workspace \
+        ${IMAGE_NAME}:latest \
+        python -m orchestrator.backup --artifacts /workspace/artifacts
+  artifacts:
+    paths:
+      - artifacts/
+    expire_in: 30 days
+  only:
+    - main
+  when: always

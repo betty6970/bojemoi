@@ -1,0 +1,41 @@
+services:
+  owasp-zap:
+    image: owasp-zap
+    container_name: owasp-zap
+    ports:
+      - "8080:8080"  # Port principal ZAP
+      - "8090:8090"  # Port alternatif
+    environment:
+      - ZAP_HOST=0.0.0.0
+      - ZAP_PORT=8080
+      - TARGET_URL=${TARGET_URL:-https://example.com}
+      - REPORT_FORMAT=html
+    volumes:
+      - zap-data:/home/zap/.ZAP
+      - ./reports:/home/zap/reports
+      - ./scripts:/home/zap/scripts
+    networks:
+      - zap-network
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/JSON/core/view/version/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Service pour interface web (optionnel)
+
+volumes:
+  zap-data:
+    driver: local
+
+networks:
+  backend:
+    external: true
+  zap-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

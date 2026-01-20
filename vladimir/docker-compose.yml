@@ -1,0 +1,22 @@
+services:
+  nfs-server:
+    image: localhost:5000/vladimir:latest
+    network_mode: host
+    container_name: nfs-server
+    restart: unless-stopped
+    privileged: true
+    environment:
+      # Définir les exports NFS
+      SHARED_DIRECTORY: /nfsshare
+    ports:
+      # Ports NFS standards
+      - "2049:2049"     # NFS
+      - "111:111"       # RPC Portmapper
+      - "32765:32765"   # mountd
+      - "32766:32766"   # statd
+      - "32767:32767"   # lockd
+    volumes:
+      # Montage du répertoire local vers le conteneur
+      - ./nfs-data:/nfsshare
+      # Montage optionnel pour la configuration des exports
+      - ./exports:/etc/exports:ro

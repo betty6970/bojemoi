@@ -1,0 +1,8 @@
+*.py[cod]
+*$py.class
+*.so
+.git/
+.gitignore
+README.md
+.env
+*.log

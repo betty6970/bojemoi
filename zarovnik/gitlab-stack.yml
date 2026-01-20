@@ -1,0 +1,190 @@
+version: '3.8'
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    hostname: gitlab.bojemoi.lab.local
+    networks:
+      - gitlab_internal
+      - traefik_public
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://gitlab.bojemoi.lab.local'
+        
+        # Registry configuration
+        registry_external_url 'https://registry.bojemoi.lab.local'
+        gitlab_rails['registry_enabled'] = true
+        
+        # GitLab Rails settings
+        gitlab_rails['time_zone'] = 'Europe/Paris'
+        gitlab_rails['gitlab_email_from'] = 'gitlab@bojemoi.lab.local'
+        gitlab_rails['gitlab_email_reply_to'] = 'noreply@bojemoi.lab.local'
+        
+        # Disable unused services to save resources
+        prometheus['enable'] = false
+        grafana['enable'] = false
+        alertmanager['enable'] = false
+        
+        # PostgreSQL settings
+        postgresql['shared_buffers'] = "256MB"
+        postgresql['max_worker_processes'] = 8
+        
+        # Sidekiq settings (background jobs)
+        sidekiq['max_concurrency'] = 10
+        
+        # Puma settings (web server)
+        puma['worker_processes'] = 2
+        puma['per_worker_max_memory_mb'] = 1024
+        
+        # Backup settings
+        gitlab_rails['backup_keep_time'] = 604800  # 7 days
+        gitlab_rails['backup_path'] = "/var/opt/gitlab/backups"
+        
+        # SMTP settings (configure if needed)
+        # gitlab_rails['smtp_enable'] = true
+        # gitlab_rails['smtp_address'] = "smtp.example.com"
+        # gitlab_rails['smtp_port'] = 587
+        
+        # LFS (Large File Storage)
+        gitlab_rails['lfs_enabled'] = true
+        
+        # Container Registry
+        registry['enable'] = true
+        registry['registry_http_addr'] = "0.0.0.0:5000"
+        
+        # Nginx settings
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false  # Traefik handles TLS
+        nginx['proxy_set_headers'] = {
+          "X-Forwarded-Proto" => "https",
+          "X-Forwarded-Ssl" => "on"
+        }
+        
+        # Registry Nginx
+        registry_nginx['enable'] = true
+        registry_nginx['listen_port'] = 5050
+        registry_nginx['listen_https'] = false
+        registry_nginx['proxy_set_headers'] = {
+          "X-Forwarded-Proto" => "https",
+          "X-Forwarded-Ssl" => "on"
+        }
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+      labels:
+        # Main GitLab interface
+        - traefik.enable=true
+        - traefik.http.routers.gitlab.rule=Host(`gitlab.bojemoi.lab.local`)
+        - traefik.http.routers.gitlab.entrypoints=websecure
+        - traefik.http.routers.gitlab.tls=true
+        - traefik.http.services.gitlab.loadbalancer.server.port=80
+        
+        # Container Registry
+        - traefik.http.routers.gitlab-registry.rule=Host(`registry.bojemoi.lab.local`)
+        - traefik.http.routers.gitlab-registry.entrypoints=websecure
+        - traefik.http.routers.gitlab-registry.tls=true
+        - traefik.http.services.gitlab-registry.loadbalancer.server.port=5050
+    healthcheck:
+      test: ["CMD", "/opt/gitlab/bin/gitlab-healthcheck", "--fail"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 300s
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:alpine
+    hostname: gitlab-runner.bojemoi.lab.local
+    networks:
+      - gitlab_internal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab_runner_config:/etc/gitlab-runner
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    depends_on:
+      - gitlab
+
+  # PostgreSQL backup service (optional but recommended)
+  gitlab-backup:
+    image: alpine:latest
+    networks:
+      - gitlab_internal
+    volumes:
+      - gitlab_data:/var/opt/gitlab
+      - gitlab_backups:/backups
+    deploy:
+      mode: replicated
+      replicas: 0  # Run manually or via cron
+      restart_policy:
+        condition: none
+    command: >
+      sh -c "
+        echo 'Backup service ready. Scale to 1 to run backup.'
+        sleep infinity
+      "
+
+networks:
+  gitlab_internal:
+    driver: overlay
+    internal: true
+  traefik_public:
+    external: true
+
+volumes:
+  gitlab_config:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=YOUR_NFS_SERVER,rw,nolock,soft
+      device: ":/path/to/gitlab/config"
+  
+  gitlab_logs:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=YOUR_NFS_SERVER,rw,nolock,soft
+      device: ":/path/to/gitlab/logs"
+  
+  gitlab_data:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=YOUR_NFS_SERVER,rw,nolock,soft
+      device: ":/path/to/gitlab/data"
+  
+  gitlab_runner_config:
+    driver: local
+  
+  gitlab_backups:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=YOUR_NFS_SERVER,rw,nolock,soft
+      device: ":/path/to/gitlab/backups"

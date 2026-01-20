@@ -1,0 +1,71 @@
+#!/sbin/openrc-run
+
+name="Blockchain_Journaling_Service"
+description="Karacho Blockchain Journaling Service"
+
+# Define dependencies
+depend() {
+    need net
+    # Other dependencies as needed
+}
+
+# Configuration file location
+cfgfile="/etc/$RC_SVCNAME/$RC_SVCNAME.conf"
+
+# Command to run
+command="python3 "
+command_args="/usr/local/bin/blockchain_postgres_api.py"
+command_user="yoh"
+
+# PID file
+pidfile="/run/$RC_SVCNAME/$RC_SVCNAME.pid"
+
+# For background services
+command_background="yes"
+
+# Pre-start function for setup tasks
+start_pre() {
+    checkpath --directory --owner $command_user:$command_user --mode 0775 \
+        /run/$RC_SVCNAME /var/log/$RC_SVCNAME
+}
+
+start() {
+    ebegin "Démarrage de ${RC_SVCNAME}"
+    
+    
+    # Démarrer le service
+    start-stop-daemon --start \
+        --pidfile "${pidfile}" \
+        --background \
+        --exec ${command}  ${command_args} 
+    
+    eend $?
+}
+
+stop() {
+    ebegin "Arrêt de ${RC_SVCNAME}"
+    
+    start-stop-daemon --stop \
+        --pidfile "${pidfile}" \
+        --retry TERM/30/KILL/5 
+    
+    eend $?
+}
+
+restart() {
+    # Arrêter puis démarrer le service
+    stop
+    sleep 2
+    start
+}
+
+status() {
+    if service_started "${RC_SVCNAME}"; then
+        einfo "${RC_SVCNAME} est en cours d'exécution"
+        return 0
+    else
+        einfo "${RC_SVCNAME} n'est pas en cours d'exécution"
+        return 1
+    fi
+}
+

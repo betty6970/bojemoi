@@ -1,0 +1,51 @@
+# Fichier régénéré automatiquement à partir de la stack déployée
+# Date: $(date)
+# Stack: $STACK_NAME
+
+version: '3.8'
+
+services:
+
+  faraday:
+    image: faradaysec/faraday:latest
+    environment:
+      - PGSQL_DBNAME=faraday
+      - PGSQL_HOST=postgres
+      - PGSQL_PASSWD=bojemoi
+      - PGSQL_USER=postgres
+      - REDIS_SERVER=redis
+    command: [/entrypoint.sh ]
+    volumes:
+      - faraday_faraday_data:/home/faraday/.faraday
+    networks:
+      - backend
+      - proxy
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      labels:
+        - com.docker.stack.image=faradaysec/faraday:latest
+        - com.docker.stack.namespace=faraday
+        - traefik.enable=true
+        - traefik.http.routers.faraday.entrypoints=websecure
+        - traefik.http.routers.faraday.middlewares=security-headers,vpn-whitelist
+        - traefik.http.routers.faraday.rule=Host(`faraday.bojemoi.me`)
+        - traefik.http.routers.faraday.tls.certresolver=letsencrypt
+        - traefik.http.services.faraday.loadbalancer.server.port=5985
+
+  redis:
+    image: redis:6.2-alpine
+    networks:
+      - backend
+    ports:
+      - null:6379/tcp
+    deploy:
+      replicas: 1
+      labels:
+        - com.docker.stack.image=redis:6.2-alpine
+        - com.docker.stack.namespace=faraday
+
+networks:
+  proxy:

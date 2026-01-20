@@ -1,0 +1,16 @@
+services:
+  vpn-client:
+    image: alpine:latest 
+    stdin_open: true    # équivalent à -i
+    tty: true     
+    command:  sh -c "tail -f /dev/null"
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    volumes:
+      - /etc/openvpn/:/etc/openvpn
+#    deploy:
+#      placement:
+#        constraints:
+#          - node.labels.vpn-node == true

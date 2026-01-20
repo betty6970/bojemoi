@@ -1,0 +1,129 @@
+
+services:
+  vpn-gateway:
+    image: dperson/openvpn-client
+    networks:
+      - vpn-internal
+    # Utilisation des configs Docker au lieu de volumes
+    configs:
+      - source: vpn_client_config
+        target: /vpn/client.ovpn
+        mode: 0600
+    secrets:
+      - source: vpn_credentials
+        target: /vpn/auth.txt
+        mode: 0600
+    environment:
+      - VPN_AUTH_FILE=/vpn/auth.txt
+      - FIREWALL=''
+      - ROUTE_1=0.0.0.0/0
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.disable_ipv6=0
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.vpn-node == true
+      restart_policy:
+        condition: on-failure 
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: [ "curl", "-sf", "--max-time", "5", "https://ipinfo.io/ip"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Applications utilisant le VPN
+  web-app:
+    image: nginx:alpine
+    depends_on:
+      - vpn-gateway
+    network_mode: "service:vpn-gateway"
+    configs:
+      - source: nginx_config
+        target: /etc/nginx/nginx.conf
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  api-worker:
+    image: python:3.9-alpine
+    depends_on:
+      - vpn-gateway
+    network_mode: "service:vpn-gateway"
+    command:  [" sh"," -c "," pip install requests ",
+        "python"," -c " ,"
+        import requests
+        import time
+        while True:
+            try:
+                r = requests.get('https://ipinfo.io/json')
+                print('IP via VPN:', r.json().get('ip'))
+                time.sleep(60)
+            except Exception as e:
+                print('Erreur:', e)
+                time.sleep(10)
+        "]
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+
+  vpn-monitor:
+    image: alpine:latest
+    networks:
+      - vpn-internal
+    command: 
+      - "sh"
+      - "-c"
+      - |
+        apk add --no-cache curl &&
+        while true; do
+          echo "=== VPN Status Check - $$(date) ==="
+          VPN_IP=$$(curl -s --max-time 10 https://ipinfo.io/ip)
+          echo "IP via VPN: $$VPN_IP"
+          echo "Timestamp: $$(date)"
+          sleep 300
+        done
+
+    depends_on:
+      - vpn-gateway
+    network_mode: "service:vpn-gateway"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure 
+
+networks:
+  vpn-internal:
+    driver: overlay
+    attachable: true
+
+# Configs Docker - pas besoin de créer des répertoires manuellement
+configs:
+  vpn_client_config:
+    file: ./config/client.ovpn
+  nginx_config:
+    file: ./config/nginx.conf
+
+# Secrets Docker pour les credentials
+secrets:
+  vpn_credentials:
+    file: ./secrets/vpn-auth.txt

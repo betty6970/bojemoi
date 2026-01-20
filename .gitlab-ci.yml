@@ -1,0 +1,60 @@
+stages:
+  - validate
+  - deploy
+  - verify
+
+variables:
+  SWARM_MANAGER: "manager.bojemoi.lab.local"
+
+validate_stacks:
+  stage: validate
+  image: docker:24-cli
+  script:
+    - echo "Validating all stack files..."
+    - for stack in *.yml; do
+        echo "Checking $stack";
+        docker compose -f "$stack" config > /dev/null || exit 1;
+      done
+    - echo "✓ All stacks validated"
+  only:
+    - main
+    - merge_requests
+
+deploy_stack:
+  stage: deploy
+  image: docker:24-cli
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $SWARM_MANAGER >> ~/.ssh/known_hosts
+  script:
+    - |
+      if [ -n "$STACK_NAME" ]; then
+        echo "Deploying stack: $STACK_NAME"
+        scp ${STACK_NAME}.yml $SWARM_MANAGER:/tmp/
+        ssh $SWARM_MANAGER "docker stack deploy -c /tmp/${STACK_NAME}.yml ${STACK_NAME} --prune --resolve-image always"
+      else
+        echo "STACK_NAME variable not set"
+        exit 1
+      fi
+  only:
+    - main
+  when: manual
+
+verify_services:
+  stage: verify
+  image: docker:24-cli
+  before_script:
+    - apk add --no-cache openssh-client curl
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $SWARM_MANAGER >> ~/.ssh/known_hosts
+  script:
+    - ssh $SWARM_MANAGER "docker service ls"
+    - echo "Services deployed successfully"
+  needs:
+    - deploy_stack
+  allow_failure: true

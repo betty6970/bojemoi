@@ -1,0 +1,76 @@
+# Use Alpine Linux as the base image
+FROM alpine:latest
+
+
+# Maintainer information
+LABEL maintainer="Betty Bombers <betty.boombers@proton.me>"
+
+# Update and install dependencies
+RUN apk update && apk add --no-cache \
+    bash \
+    build-base \
+    curl \
+    git \
+    ruby \
+    ruby-dev \
+    libffi-dev \
+    openssl \
+    openssl-dev \
+    postgresql-dev \
+    python3 \
+    python3 py3-pip \
+    py3-psycopg2 \
+    py3-requests \
+    py3-msgpack \
+    py3-psutil \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    readline-dev \
+    sqlite-dev \
+    zlib-dev \
+    ncurses \
+    libpcap-dev \
+    postgresql-client \
+    nmap \
+    nmap-scripts \
+    openvpn \
+    gcompat && \
+    rm -rf /var/cache/apk/*
+
+# Set the working directory
+WORKDIR /opt/metasploit
+# Add Metasploit to PATH
+ENV PATH="/opt/metasploit:$PATH"
+ENV HOME='/opt/metasploit'
+
+# Clone the Metasploit Framework repository
+# RUN git clone  --config core.compression=0 https://github.com/rapid7/metasploit-framework.git . && \
+RUN cd /opt/metasploit && \
+       git clone   https://github.com/rapid7/metasploit-framework.git . && \
+       gem install mini_portile2 -v 2.8.8 && \
+       gem install psych && \ 
+       gem install bundler && \
+       bundle install 
+
+# Expose the port commonly used by Metasploit (e.g., msfrpcd)
+#EXPOSE 55553
+
+USER root
+
+RUN chmod 0777 . 
+RUN chown postgres:root  /opt/metasploit/ || :
+
+RUN adduser postgres -g root || : 
+
+#USER postgres:root 
+COPY --chown=postgres:root  --chmod=777  thearm_* /usr/bin/
+
+WORKDIR /etc/openvpn
+COPY --chmod=777 ./list_vpn/fr.protonvpn.tcp.ovpn /etc/openvpn/
+
+COPY --chmod=777 ./list_vpn/toto.txt /etc/openvpn/
+
+ 
+
+#CMD ["/usr/bin/ak47"]

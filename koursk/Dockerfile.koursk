@@ -1,0 +1,50 @@
+# dockerfike pour rsync slave
+FROM alpine:latest 
+
+# Installation des packages nécessaires
+RUN apk add --no-cache \
+    rsync \
+    openssh-client \
+    bash \
+    curl \
+    inotify-tools \
+    tzdata \
+    && rm -rf /var/cache/apk/*
+
+# Configuration du timezone
+ENV TZ=Europe/Paris
+
+# Création des répertoires
+RUN mkdir -p  /scripts \
+             /var/log/rsync \
+             /root/.ssh
+
+# Configuration SSH
+RUN echo "Host *" >> /root/.ssh/config && \
+    echo "    StrictHostKeyChecking no" >> /root/.ssh/config && \
+    echo "    UserKnownHostsFile /dev/null" >> /root/.ssh/config && \
+    chmod 600 /root/.ssh/config
+
+# Copie des scripts
+COPY scripts/ /scripts/
+RUN chmod +x /scripts/*.sh
+
+# Configuration rsync
+COPY configs/rsyncd.conf /etc/rsyncd.conf
+
+# Variables d'environnement par défaut
+ENV RSYNC_MODE=master \
+    SYNC_INTERVAL=300 \
+    REMOTE_HOSTS="" \
+    MASTER_HOST="" \
+    RSYNC_OPTIONS="-avz --delete --progress"
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD /scripts/healthcheck.sh
+
+# Exposition du port rsync daemon
+EXPOSE 873
+
+# Point d'entrée
+ENTRYPOINT ["/scripts/entrypoint.sh"]

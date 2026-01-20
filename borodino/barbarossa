@@ -1,0 +1,466 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Script pour rechercher les images Ruby Alpine sur DockerHub
+et afficher le Dockerfile correspondant depuis GitHub
+Version 100% compatible ASCII
+"""
+
+import requests
+import json
+import re
+from typing import List, Dict, Optional
+import sys
+
+class DockerImageExplorer:
+    def __init__(self):
+        # URLs correctes pour DockerHub
+        self.dockerhub_api = "https://hub.docker.com/v2"
+        self.github_api = "https://api.github.com"
+        self.session = requests.Session()
+        # Ajouter un User-Agent pour eviter les blocages
+        self.session.headers.update({
+            'User-Agent': 'Ruby-Alpine-Explorer/1.0'
+        })
+        
+        # Configuration GitHub optionnelle
+        self.setup_github_auth()
+        
+    def setup_github_auth(self):
+        """Configure l'authentification GitHub si disponible"""
+        import os
+        
+        # Chercher le token GitHub dans les variables d'environnement
+        github_token = os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN')
+        
+        if github_token:
+            self.session.headers.update({
+                'Authorization': f'token {github_token}',
+                'Accept': 'application/vnd.github.v3+json'
+            })
+            print("[+] Token GitHub detecte - authentification activee")
+        else:
+            print("[i] Pas de token GitHub - utilisation de l'API publique (limite: 60 req/h)")
+            print("[i] Pour plus de requetes, definissez GITHUB_TOKEN dans vos variables d'environnement")
+        
+    def get_ruby_alpine_images(self) -> List[Dict]:
+        """Retourne les images Ruby Alpine connues"""
+        images = []
+        
+        # 1. Image officielle Ruby avec tags Alpine
+        try:
+            official_ruby = self.get_official_ruby_info()
+            if official_ruby:
+                images.append(official_ruby)
+        except Exception as e:
+            print(f"[!] Erreur recuperation image officielle: {e}")
+        
+        # 2. Recherche d'autres images Ruby Alpine populaires
+        try:
+            other_images = self.search_dockerhub_ruby_alpine()
+            images.extend(other_images)
+        except Exception as e:
+            print(f"[!] Erreur recherche autres images: {e}")
+        
+        # 3. Fallback avec images connues
+        if not images:
+            images = self.get_known_ruby_alpine_images()
+        
+        return images
+    
+    def get_official_ruby_info(self) -> Optional[Dict]:
+        """Recupere les informations de l'image officielle Ruby"""
+        try:
+            url = f"{self.dockerhub_api}/repositories/library/ruby/"
+            response = self.session.get(url)
+            response.raise_for_status()
+            data = response.json()
+            
+            return {
+                'name': 'ruby',
+                'namespace': 'library',
+                'full_name': 'library/ruby',
+                'description': data.get('description', 'Ruby official image with Alpine Linux variants'),
+                'star_count': data.get('star_count', 0),
+                'pull_count': data.get('pull_count', 0),
+                'is_official': True
+            }
+        except Exception as e:
+            print(f"[!] Erreur recuperation Ruby officiel: {e}")
+            return None
+    
+    def get_all_image_tags(self, namespace: str, repository: str) -> List[Dict]:
+        """Recupere tous les tags d'une image DockerHub avec details"""
+        try:
+            url = f"{self.dockerhub_api}/repositories/{namespace}/{repository}/tags/"
+            params = {'page_size': 100}
+            
+            all_tags = []
+            page = 1
+            
+            while True:
+                print(f"    Recuperation page {page} des tags...")
+                response = self.session.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+                
+                tags = data.get('results', [])
+                all_tags.extend(tags)
+                
+                # Verifier s'il y a une page suivante
+                next_url = data.get('next')
+                if not next_url or len(tags) == 0:
+                    break
+                
+                url = next_url
+                page += 1
+                
+                # Limiter pour eviter trop de requetes
+                if page > 10:
+                    print("    [!] Limite de 10 pages atteinte")
+                    break
+            
+            # Filtrer et trier les tags Alpine
+            alpine_tags = []
+            other_tags = []
+            
+            for tag in all_tags:
+                tag_name = tag.get('name', '')
+                if 'alpine' in tag_name.lower():
+                    alpine_tags.append(tag)
+                else:
+                    other_tags.append(tag)
+            
+            # Trier par date de derniere mise a jour (plus recent en premier)
+            alpine_tags.sort(key=lambda x: x.get('last_updated', ''), reverse=True)
+            other_tags.sort(key=lambda x: x.get('last_updated', ''), reverse=True)
+            
+            # Retourner les tags Alpine en premier, puis quelques autres
+            result = alpine_tags + other_tags[:10]
+            
+            print(f"    [+] {len(alpine_tags)} tags Alpine et {len(other_tags)} autres tags trouves")
+            return result
+            
+        except Exception as e:
+            print(f"[!] Erreur recuperation tags: {e}")
+            return []
+    
+    def search_dockerhub_ruby_alpine(self) -> List[Dict]:
+        """Recherche d'autres images Ruby Alpine sur DockerHub"""
+        try:
+            # URL correcte pour la recherche DockerHub
+            url = "https://hub.docker.com/v2/search/repositories/"
+            params = {
+                'query': 'ruby alpine',
+                'page_size': 20
+            }
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            filtered_images = []
+            for repo in data.get('results', []):
+                name = repo.get('name', '').lower()
+                description = repo.get('description', '').lower()
+                namespace = repo.get('namespace', '')
+                
+                # Exclure l'image officielle (deja traitee)
+                if namespace == 'library' and name == 'ruby':
+                    continue
+                
+                if ('ruby' in name or 'ruby' in description) and \
+                   ('alpine' in name or 'alpine' in description):
+                    
+                    repo['full_name'] = f"{namespace}/{name}"
+                    repo['is_official'] = False
+                    filtered_images.append(repo)
+            
+            return filtered_images[:10]  # Limiter a 10 images
+            
+        except Exception as e:
+            print(f"[!] Erreur recherche DockerHub: {e}")
+            return []
+    
+    def get_known_ruby_alpine_images(self) -> List[Dict]:
+        """Images Ruby Alpine connues en fallback"""
+        return [
+            {
+                'name': 'ruby',
+                'namespace': 'library',
+                'full_name': 'library/ruby',
+                'description': 'Ruby official image - Alpine Linux variants available',
+                'star_count': 2000,
+                'pull_count': 1000000000,
+                'alpine_tags': ['3.3-alpine', '3.2-alpine', '3.1-alpine', 'alpine'],
+                'is_official': True
+            },
+            {
+                'name': 'ruby-alpine',
+                'namespace': 'alpine',
+                'full_name': 'alpine/ruby',
+                'description': 'Ruby Alpine Linux based lightweight image',
+                'star_count': 50,
+                'pull_count': 10000000,
+                'alpine_tags': ['latest', '3.3', '3.2'],
+                'is_official': False
+            }
+        ]
+    
+    def search_dockerfile_in_github(self, image_info: Dict) -> Optional[Dict]:
+        """Recherche le Dockerfile sur GitHub"""
+        image_name = image_info.get('name', '')
+        is_official = image_info.get('is_official', False)
+        
+        print(f"[*] Recherche du Dockerfile pour {image_info.get('full_name')} sur GitHub...")
+        
+        # Strategies de recherche differentes selon le type d'image
+        if is_official and image_name == 'ruby':
+            queries = [
+                "repo:docker-library/ruby filename:Dockerfile alpine",
+                "repo:docker-library/ruby path:3.3/alpine filename:Dockerfile",
+                "repo:docker-library/ruby path:alpine filename:Dockerfile"
+            ]
+        else:
+            queries = [
+                f"filename:Dockerfile {image_name} alpine",
+                f"repo:{image_info.get('namespace')}/{image_name} filename:Dockerfile",
+                f"filename:Dockerfile ruby alpine {image_name}"
+            ]
+        
+        for i, query in enumerate(queries, 1):
+            try:
+                url = f"{self.github_api}/search/code"
+                params = {
+                    'q': query,
+                    'sort': 'indexed',
+                    'per_page': 3
+                }
+                
+                print(f"    Tentative {i}/{len(queries)}: {query[:50]}...")
+                
+                response = self.session.get(url, params=params)
+                
+                # Gerer les limites de taux
+                if response.status_code == 403:
+                    remaining = response.headers.get('X-RateLimit-Remaining', '0')
+                    reset_time = response.headers.get('X-RateLimit-Reset', 'unknown')
+                    
+                    if 'rate limit' in response.text.lower():
+                        print(f"[!] Limite de taux GitHub atteinte. Remaining: {remaining}")
+                        print(f"[!] Reset time: {reset_time}")
+                        print("[i] Conseil: definissez GITHUB_TOKEN pour 5000 req/h au lieu de 60")
+                        break
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get('total_count', 0) > 0:
+                    # Prendre le premier resultat le plus pertinent
+                    best_match = data['items'][0]
+                    print(f"    [+] Dockerfile trouve dans: {best_match.get('repository', {}).get('full_name', 'N/A')}")
+                    return best_match
+                else:
+                    print(f"    [-] Aucun resultat pour cette requete")
+                    
+            except requests.RequestException as e:
+                print(f"[!] Erreur recherche GitHub (tentative {i}): {e}")
+                continue
+        
+        return None
+    
+    def get_dockerfile_content(self, github_file: Dict) -> Optional[str]:
+        """Recupere le contenu du Dockerfile depuis GitHub"""
+        download_url = github_file.get('download_url')
+        if not download_url:
+            return None
+        
+        try:
+            response = self.session.get(download_url)
+            response.raise_for_status()
+            return response.text
+            
+        except requests.RequestException as e:
+            print(f"[!] Erreur telechargement Dockerfile: {e}")
+            return None
+    
+    def display_images(self, images: List[Dict]) -> None:
+        """Affiche la liste des images trouvees"""
+        print(f"\n[+] {len(images)} images Ruby Alpine trouvees :")
+        print("=" * 80)
+        
+        for i, image in enumerate(images, 1):
+            name = image.get('name', 'N/A')
+            namespace = image.get('namespace', 'N/A')
+            full_name = image.get('full_name', f"{namespace}/{name}")
+            description = image.get('description', 'Pas de description')
+            stars = image.get('star_count', 0)
+            pulls = image.get('pull_count', 0)
+            is_official = image.get('is_official', False)
+            alpine_tags = image.get('alpine_tags', [])
+            
+            official_badge = " [OFFICIELLE]" if is_official else ""
+            
+            print(f"{i:2d}. {full_name}{official_badge}")
+            print(f"    * {stars} stars | {pulls:,} pulls")
+            print(f"    > {description[:100]}{'...' if len(description) > 100 else ''}")
+            
+            if alpine_tags:
+                print(f"    Tags Alpine: {', '.join(alpine_tags[:5])}")
+                if len(alpine_tags) > 5:
+                    print(f"         ... et {len(alpine_tags) - 5} autres")
+            
+            print()
+    
+    def display_dockerfile(self, dockerfile_content: str, github_file: Dict) -> None:
+        """Affiche le contenu du Dockerfile"""
+        print("\n" + "=" * 80)
+        print("DOCKERFILE TROUVE")
+        print("=" * 80)
+        print(f"Source: {github_file.get('html_url', 'N/A')}")
+        print(f"Repository: {github_file.get('repository', {}).get('full_name', 'N/A')}")
+        print(f"Chemin: {github_file.get('path', 'N/A')}")
+        print(f"Taille: {github_file.get('size', 'N/A')} bytes")
+        print("-" * 80)
+        
+        # Afficher le contenu avec numerotation des lignes
+        lines = dockerfile_content.split('\n')
+        for i, line in enumerate(lines, 1):
+            print(f"{i:3d} | {line}")
+        
+        print("=" * 80)
+        
+        # Analyse rapide du Dockerfile
+        self.analyze_dockerfile(dockerfile_content)
+    
+    def analyze_dockerfile(self, dockerfile_content: str) -> None:
+        """Analyse rapide du Dockerfile"""
+        lines = dockerfile_content.split('\n')
+        
+        # Rechercher des informations importantes
+        base_image = None
+        ruby_version = None
+        alpine_version = None
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('FROM '):
+                base_image = line.replace('FROM ', '').split()[0]
+                if ':' in base_image:
+                    tag = base_image.split(':')[1]
+                    if 'alpine' in tag:
+                        alpine_version = tag
+                    if re.search(r'\d+\.\d+', tag):
+                        ruby_version = re.search(r'\d+\.\d+', tag).group()
+        
+        print("ANALYSE DU DOCKERFILE :")
+        print("-" * 40)
+        if base_image:
+            print(f"Image de base: {base_image}")
+        if ruby_version:
+            print(f"Version Ruby: {ruby_version}")
+        if alpine_version:
+            print(f"Version Alpine: {alpine_version}")
+        
+        # Compter les instructions
+        instructions = {}
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                instruction = line.split()[0].upper()
+                instructions[instruction] = instructions.get(instruction, 0) + 1
+        
+        if instructions:
+            print(f"Instructions: {', '.join([f'{k}({v})' for k, v in instructions.items()])}")
+        
+        print("-" * 40)
+    
+    def run(self):
+        """Methode principale du script"""
+        print("Docker Ruby Alpine Image Explorer")
+        print("=" * 60)
+        print("Script pour rechercher les images Ruby Alpine et leurs Dockerfiles")
+        print()
+        
+        # Afficher les infos sur l'authentification GitHub
+        import os
+        github_token = os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN')
+        if not github_token:
+            print("[i] CONSEIL: Pour eviter les limites GitHub API (60 req/h),")
+            print("    definissez un token GitHub dans GITHUB_TOKEN")
+            print("    Voir: https://github.com/settings/tokens")
+            print()
+        
+        # 1. Recuperer les images Ruby Alpine
+        print("[*] Recherche des images Ruby Alpine...")
+        images = self.get_ruby_alpine_images()
+        
+        if not images:
+            print("[!] Aucune image trouvee.")
+            return
+        
+        # 2. Afficher les images
+        self.display_images(images)
+        
+        # 3. Selection interactive
+        while True:
+            try:
+                choice = input(f"\n[?] Choisissez une image (1-{len(images)}) ou 'q' pour quitter: ").strip()
+                
+                if choice.lower() == 'q':
+                    print("[+] Au revoir!")
+                    return
+                
+                index = int(choice) - 1
+                if 0 <= index < len(images):
+                    selected_image = images[index]
+                    break
+                else:
+                    print(f"[!] Veuillez entrer un nombre entre 1 et {len(images)}")
+                    
+            except ValueError:
+                print("[!] Veuillez entrer un nombre valide")
+        
+        # 4. Afficher les informations de l'image selectionnee
+        full_name = selected_image.get('full_name', 'N/A')
+        print(f"\n[+] Image selectionnee: {full_name}")
+        
+        # 5. Rechercher et afficher le Dockerfile
+        dockerfile_info = self.search_dockerfile_in_github(selected_image)
+        
+        if dockerfile_info:
+            dockerfile_content = self.get_dockerfile_content(dockerfile_info)
+            if dockerfile_content:
+                self.display_dockerfile(dockerfile_content, dockerfile_info)
+            else:
+                print("[!] Impossible de recuperer le contenu du Dockerfile")
+        else:
+            print("[!] Aucun Dockerfile trouve sur GitHub")
+            
+            # Suggestions alternatives
+            print("\n[i] Suggestions:")
+            if selected_image.get('is_official'):
+                print("   - Verifiez: https://github.com/docker-library/ruby")
+            print(f"   - DockerHub: https://hub.docker.com/r/{full_name}")
+            print(f"   - Recherche GitHub: https://github.com/search?q={selected_image.get('name')}+dockerfile")
+            
+            if not github_token:
+                print("\n[i] Si vous avez atteint la limite GitHub API:")
+                print("   - Attendez 1 heure pour reset automatique")
+                print("   - Ou configurez GITHUB_TOKEN pour 5000 req/h")
+
+def main():
+    """Fonction principale"""
+    explorer = DockerImageExplorer()
+    
+    try:
+        explorer.run()
+    except KeyboardInterrupt:
+        print("\n\n[+] Script interrompu par l'utilisateur")
+    except Exception as e:
+        print(f"\n[!] Erreur inattendue: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

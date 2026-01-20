@@ -1,0 +1,32 @@
+import requests
+import time
+
+def check_new_ruby_image():
+    url = "https://hub.docker.com/v2/repositories/library/ruby/tags"
+    response = requests.get(url)
+    tags = response.json()['results']
+
+    # Charge le dernier tag vérifié à partir d'un fichier
+    try:
+        with open('last_checked_tag.txt', 'r') as file:
+            last_checked_tag = file.read().strip()
+    except FileNotFoundError:
+        last_checked_tag = None
+
+    # Vérifie les nouveaux tags
+    new_tags = [tag['name'] for tag in tags if tag['name'] != last_checked_tag]
+
+    if new_tags:
+        print("Nouveaux tags Ruby trouvés:", new_tags)
+        
+        # Mets à jour le fichier avec le dernier tag vérifié
+        with open('last_checked_tag.txt', 'w') as file:
+            file.write(new_tags[0])
+
+    else:
+        print("Aucun nouveau tag Ruby trouvé.")
+
+while True:
+    check_new_ruby_image()
+    time.sleep(3600)  # Vérifie toutes les heures
+

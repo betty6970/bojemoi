@@ -1,0 +1,18 @@
+volumes:
+  shared_logs:
+    external: true
+services:
+  nfs-client:
+    image: localhost:5000/vladimir:latest
+    privileged: true
+    container_name: nfs-client	
+    restart: unless-stopped
+    ports:
+      # Ports NFS standards
+      - "2049:2049"     # NFS
+      - "111:111"       # RPC Portmapper
+      - "32765:32765"   # mountd
+      - "32766:32766"   # statd
+      - "32767:32767"   # lockd
+    volumes:
+      - shared_logs:/mnt:rw

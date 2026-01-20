@@ -1,0 +1,45 @@
+version: "1.0"
+deployment_type: container
+environment: staging
+
+metadata:
+  description: "Container de staging pour API backend"
+  owner: "dev-team"
+  project: "api-backend"
+
+container_config:
+  name: "api-backend-staging"
+  image: "registry.bojemoi.lab/api-backend"
+  tag: "staging-latest"
+  
+  # Variables d'environnement
+  env_vars:
+    NODE_ENV: "staging"
+    DATABASE_URL: "postgresql://postgres.bojemoi.lab:5432/api_staging"
+    REDIS_URL: "redis://redis.bojemoi.lab:6379"
+    LOG_LEVEL: "debug"
+    API_PORT: "3000"
+  
+  # Mapping de ports
+  ports:
+    - "3000:3000"
+  
+  # Volumes
+  volumes:
+    - "/var/log/api-backend:/app/logs"
+    - "/etc/api-backend/config.json:/app/config.json:ro"
+  
+  # Réseau
+  networks:
+    - "bojemoi_network"
+  
+  # Politique de redémarrage
+  restart_policy: "unless-stopped"
+  
+  # Labels pour monitoring
+  labels:
+    environment: "staging"
+    service: "api-backend"
+    prometheus.scrape: "true"
+    prometheus.port: "3000"
+    prometheus.path: "/metrics"

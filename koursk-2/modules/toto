@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+import docker
+import json
+from datetime import datetime
+
+class DockerContainerAnalyzer:
+    def __init__(self):
+        try:
+            self.client = docker.from_env()
+            self.client.ping()  # Test de connexion
+        except Exception as e:
+            print(f"Erreur connexion Docker: {e}")
+            self.client = None
+    
+    def get_containers_table(self, include_stopped=False):
+        """Crée un tableau complet des containers avec noms DNS."""
+        if not self.client:
+            return []
+            
+        try:
+            containers = self.client.containers.list()
+            table = []
+            
+            for container in containers:
+                row = self._extract_container_info(container)
+                table.append(row)
+                
+            return table
+            
+        except Exception as e:
+            print(f"Erreur récupération containers: {e}")
+            return []
+    
+    def _extract_container_info(self, container):
+        """Extrait toutes les informations importantes d'un container."""
+        try:
+            info = {
+                'id': container.short_id,
+                'name': container.name,
+                'image': self._get_image_name(container),
+                'status': container.status,
+                'created': container.attrs['Created'],
+                'command': ' '.join(container.attrs['Config']['Cmd'] or []),
+                'ports': self._parse_ports(container),
+                'networks': self._get_network_info(container),
+                'dns_names': self._get_dns_names(container),
+                'hostname': container.attrs['Config']['Hostname']
+            }
+            
+            return info
+            
+        except Exception as e:
+            return {'error': str(e), 'id': getattr(container, 'id', 'unknown')}
+    
+    def _get_image_name(self, container):
+        """Obtient le nom complet de l'image."""
+        try:
+            if container.image.tags:
+                return container.image.tags[0]
+            else:
+                return container.image.short_id
+        except:
+            return 'unknown'
+    
+    def _parse_ports(self, container):
+        """Parse les informations de ports."""
+        ports = {}
+        try:
+            for container_port, host_configs in container.ports.items():
+                if host_configs:
+                    ports[container_port] = [
+                        f"{config['HostIp']}:{config['HostPort']}" 
+                        for config in host_configs
+                    ]
+                else:
+                    ports[container_port] = ['not_exposed']
+        except:
+            pass
+        return ports
+    
+    def _get_network_info(self, container):
+        """Obtient les informations réseau."""
+        networks = {}
+        try:
+            network_settings = container.attrs['NetworkSettings']['Networks']
+            for net_name, net_info in network_settings.items():
+                networks[net_name] = {
+                    'ip_address': net_info.get('IPAddress'),
+                    'gateway': net_info.get('Gateway'),
+                    'aliases': net_info.get('Aliases', [])
+                }
+        except:
+            pass
+        return networks
+    
+    def _get_dns_names(self, container):
+        """Extrait tous les noms DNS possibles."""
+        dns_names = [container.name]
+        
+        try:
+            # Ajouter les alias réseau
+            networks = container.attrs['NetworkSettings']['Networks']
+            for net_name, net_info in networks.items():
+                aliases = net_info.get('Aliases', [])
+                dns_names.extend(aliases)
+                
+            # Supprimer les doublons
+            dns_names = list(set(filter(None, dns_names)))
+            
+        except:
+            pass
+            
+        return dns_names
+
+# Installation requise : pip install docker
+
+# Usage
+if __name__ == '__main__':
+    analyzer = DockerContainerAnalyzer()
+    containers = analyzer.get_containers_table()
+    
+    print(json.dumps(containers, indent=2, default=str))

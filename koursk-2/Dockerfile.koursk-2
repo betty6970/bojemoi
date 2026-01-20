@@ -1,0 +1,29 @@
+# dockerfili oour rsync master
+FROM alpine:latest 
+
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    rsync \
+    py3-schedule \
+    py3-prometheus-client \
+    py3-docker-py \
+    py3-psutil
+
+
+# Création des répertoires nécessaires
+RUN for dir in /scripts /config /data /var/log/rsync; do \
+        mkdir -p "$dir"; \
+    done
+
+COPY scripts/ /scripts/
+COPY config/ /config/
+COPY modules/  /usr/lib/python3.12/site-packages/
+
+# Application des permissions en une seule couche
+RUN find /scripts -name "*.sh" -exec chmod +x {} \; && \
+     find /scripts -name "*.py" -exec chmod +x {} \;
+
+EXPOSE 8080
+
+CMD ["/scripts/rsync-start.sh"]

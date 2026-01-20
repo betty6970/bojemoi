@@ -1,0 +1,53 @@
+version: "1.0"
+deployment_type: swarm_service
+environment: production
+
+metadata:
+  description: "Service Swarm pour application frontend"
+  owner: "platform-team"
+  project: "frontend-app"
+
+swarm_config:
+  name: "frontend-prod"
+  image: "registry.bojemoi.lab/frontend-app"
+  tag: "v2.4.1"
+  replicas: 3
+  
+  # Variables d'environnement
+  env_vars:
+    NODE_ENV: "production"
+    API_URL: "https://api.bojemoi.lab"
+    CDN_URL: "https://cdn.bojemoi.lab"
+    SENTRY_DSN: "https://sentry.bojemoi.lab/project-id"
+  
+  # Mapping de ports
+  ports:
+    - "80:8080"
+    - "443:8443"
+  
+  # Réseau Swarm
+  networks:
+    - "ingress"
+    - "bojemoi_network"
+  
+  # Contraintes de placement
+  constraints:
+    - "node.role==worker"
+    - "node.labels.region==eu-west"
+  
+  # Labels
+  labels:
+    environment: "production"
+    service: "frontend"
+    traefik.enable: "true"
+    traefik.http.routers.frontend.rule: "Host(`www.bojemoi.lab`)"
+    traefik.http.services.frontend.loadbalancer.server.port: "8080"
+  
+  # Configuration de mise à jour (rolling update)
+  update_config:
+    parallelism: 1
+    delay: 30
+    failure_action: "rollback"
+    monitor: 60000000000  # 60 secondes en nanosecondes
+    max_failure_ratio: 0.1
+    order: "start-first"

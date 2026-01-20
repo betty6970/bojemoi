@@ -1,0 +1,34 @@
+FROM alpine:latest
+
+# Install NFS utilities and dependencies
+RUN apk add --no-cache \
+    nfs-utils \
+    rpcbind \
+    bash \
+    curl
+
+# Create mount point directory
+RUN mkdir -p /mnt/nfs
+
+# Create a non-root user for better security
+RUN addgroup -g 1000 nfsuser && \
+    adduser -D -u 1000 -G nfsuser nfsuser
+
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Set environment variables with defaults
+ENV NFS_SERVER=""
+ENV NFS_PATH=""
+ENV MOUNT_POINT="/mnt/nfs"
+ENV NFS_OPTIONS="rw,hard,intr,rsize=8192,wsize=8192,timeo=14"
+
+# Expose rpcbind port (if needed for some NFS configurations)
+EXPOSE 111
+
+# Use the entrypoint script
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default command
+CMD ["tail", "-f", "/dev/null"]

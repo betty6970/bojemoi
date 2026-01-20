@@ -1,0 +1,18 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+aiohttp==3.11.10
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+python-multipart==0.0.18
+jinja2==3.1.5
+pyyaml==6.0.2
+docker==7.1.0
+gitpython==3.1.43
+requests==2.32.3
+cryptography==44.0.0  # grosse évolution
+python-jwt 
+prometheus-client==0.21.0
+structlog==24.4.0
+

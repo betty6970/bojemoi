@@ -1,0 +1,138 @@
+#!/bin/ash
+
+# Script pour créer et pousser une image Docker vers un registry local
+# Usage: ./build_and_push.sh <nom_du_service>
+
+set -e  # Arrêter le script en cas d'erreur
+
+# Configuration
+REGISTRY_HOST="localhost:5000"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+VERSION="latest"
+
+# Fonction d'aide
+show_help() {
+    echo "Usage: $0 <nom_du_service>"
+    echo ""
+    echo "Ce script construit une image Docker et la pousse vers le registry local."
+    echo ""
+    echo "Arguments:"
+    echo "  nom_du_service    Nom du service/image à créer"
+    echo ""
+    echo "Variables d'environnement optionnelles:"
+    echo "  REGISTRY_HOST     Registry de destination (défaut: localhost:5000)"
+    echo "  VERSION           Version du tag (défaut: latest)"
+    echo ""
+    echo "Exemple:"
+    echo "  $0 mon-api"
+    echo "  VERSION=v1.0.0 $0 mon-api"
+}
+
+# Vérifier les arguments
+if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    show_help
+    exit 0
+fi
+
+SERVICE_NAME="$1"
+
+# Validation du nom du service
+if [[ ! "$SERVICE_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+    echo "❌ Erreur: Le nom du service doit contenir uniquement des lettres, chiffres, tirets, points et underscores"
+    exit 1
+fi
+
+# Vérifier si Docker est installé et accessible
+if ! command -v docker &> /dev/null; then
+    echo "❌ Erreur: Docker n'est pas installé ou n'est pas dans le PATH"
+    exit 1
+fi
+# Vérifiet si le repertoire  existe
+if [ ! -d "${SERVICE_NAME}" ]; then
+    echo "❌ Erreur: repertoire  non trouvé "
+    echo "Assurez-vous d'être dans le répertoire ./${SERVICE_NAME}"
+    exit 1
+fi
+cd ${SERVICE_NAME}
+# Vérifier si le eockerfile existe
+if [ ! -f "Dockerfile.${SERVICE_NAME}" ]; then
+    echo "❌ Erreur: Dockerfile non trouvé dans le répertoire courant"
+    echo "Assurez-vous d'être dans le répertoire contenant le Dockerfile"
+    exit 1
+fi
+
+# Définir les tags
+LOCAL_TAG="${SERVICE_NAME}:${VERSION}"
+REGISTRY_TAG="${REGISTRY_HOST}/${SERVICE_NAME}:${VERSION}"
+TIMESTAMP_TAG="${REGISTRY_HOST}/${SERVICE_NAME}:${TIMESTAMP}"
+
+echo "🔨 Construction de l'image Docker..."
+echo "   Service: ${SERVICE_NAME}"
+echo "   Tag local: ${LOCAL_TAG}"
+echo "   Tag registry: ${REGISTRY_TAG}"
+echo "   Tag timestamp: ${TIMESTAMP_TAG}"
+echo ""
+
+# Construction de l'image
+echo "📦 Construction de l'image ${LOCAL_TAG}..."
+if docker build --no-cache -f Dockerfile.${SERVICE_NAME} -t "${LOCAL_TAG}" .; then
+    echo "✅ Image construite avec succès"
+else
+    echo "❌ Erreur lors de la construction de l'image"
+    exit 1
+fi
+
+# Tagger pour le registry
+echo "🏷️  Ajout des tags pour le registry..."
+docker tag "${LOCAL_TAG}" "${REGISTRY_TAG}"
+docker tag "${LOCAL_TAG}" "${TIMESTAMP_TAG}"
+
+# Vérifier si le registry est accessible
+echo "🔍 Vérification de l'accessibilité du registry ${REGISTRY_HOST}..."
+if ! curl -4 -s "http://${REGISTRY_HOST}/v2/" > /dev/null; then
+    echo "⚠️  Attention: Le registry ${REGISTRY_HOST} ne semble pas accessible"
+    echo "   Assurez-vous qu'il est démarré avec: docker run -d -p 5000:5000 --name registry registry:2"
+    read -p "Voulez-vous continuer quand même? [y/N]: " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "❌ Opération annulée"
+        exit 1
+    fi
+fi
+
+# Push vers le registry
+echo "🚀 Push vers le registry..."
+echo "   Pushing ${REGISTRY_TAG}..."
+if docker push "${REGISTRY_TAG}"; then
+    echo "✅ Push ${REGISTRY_TAG} réussi"
+else
+    echo "❌ Erreur lors du push ${REGISTRY_TAG}"
+    exit 1
+fi
+
+echo "   Pushing ${TIMESTAMP_TAG}..."
+if docker push "${TIMESTAMP_TAG}"; then
+    echo "✅ Push ${TIMESTAMP_TAG} réussi"
+else
+    echo "❌ Erreur lors du push ${TIMESTAMP_TAG}"
+    exit 1
+fi
+
+# Résumé
+echo ""
+echo "🎉 Opération terminée avec succès!"
+echo ""
+echo "📋 Résumé:"
+echo "   Image locale: ${LOCAL_TAG}"
+echo "   Images dans le registry:"
+echo "     - ${REGISTRY_TAG}"
+echo "     - ${TIMESTAMP_TAG}"
+echo ""
+echo "💡 Pour utiliser l'image:"
+echo "   docker pull ${REGISTRY_TAG}"
+echo "   docker run ${REGISTRY_TAG}"
+echo ""
+echo "🔍 Pour voir les images dans le registry:"
+echo "   curl http://${REGISTRY_HOST}/v2/_catalog"
+echo "   curl http://${REGISTRY_HOST}/v2/${SERVICE_NAME}/tags/list"
+

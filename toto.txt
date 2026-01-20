@@ -1,0 +1,16 @@
+Updating service base_rsync-slave (id: d7dsuu4gbsxa1css97frl16vv)
+Updating service base_registry (id: teputgqg1cdsrxua1q78e4hsq)
+Updating service base_node-exporter (id: my1y9rjhjvnd0fbxfdsqjv9y6)
+Updating service base_suricata (id: ipbfc7vgeh0ezoe3uf16sqnpv)
+Updating service base_suricata-exporter (id: h9h6i6o8nxvgifindqt5gkbth)
+Updating service base_alertmanager (id: j7obk0q2aes6n07ve60i8k9ns)
+Creating service base_nginx
+Updating service base_grafana (id: h30h0dk9pxi76yi675znqe8ou)
+Updating service base_rsync-master (id: 1u5whz9iauiavgb420zyedpyr)
+Updating service base_cadvisor (id: 6722xyzpnhpnsiih2dqk0ql8y)
+Updating service base_postgres (id: bekxh96u2qvsssid1uqiwkss9)
+Updating service base_postfix (id: znx19fqowbhaqqvz8kwtqnfpl)
+Updating service base_loki (id: tl94p5hu8fuhdcm82x7dxk04s)
+Updating service base_pgadmin (id: sl2riyhus5lsu9x3xao13d5yc)
+Updating service base_prometheus (id: dmcvhmudnzkn2x0gnnt4qq4lz)
+

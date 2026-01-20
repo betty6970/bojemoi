@@ -1,0 +1,91 @@
+# Dockerfile pour le scanner ZAP sous Alpine Linux
+FROM alpine:latest
+
+# Métadonnées
+LABEL maintainer="Security Team"
+LABEL description="Scanner ZAP pour services web avec Alpine Linux"
+LABEL version="1.0"
+
+# Variables d'environnement par défaut
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Variables de configuration de la base de données
+ENV DB_HOST=postgres
+ENV DB_PORT=5432
+ENV DB_NAME=msf
+ENV DB_USER=postgres
+ENV DB_PASSWORD=bojemoi
+
+# Variables de configuration ZAP
+ENV ZAP_HOST=zaproxy
+ENV ZAP_PORT=8090
+ENV ZAP_API_KEY=""
+
+# Créer un utilisateur non-root pour la sécurité
+RUN addgroup -g 1000 scanner && \
+    adduser -D -s /bin/sh -u 1000 -G scanner scanner
+
+# Installer les dépendances système
+RUN apk update && \
+    apk add --no-cache \
+        python3 \
+        py3-pip \
+        py3-setuptools \
+        py3-wheel \
+        postgresql-dev \
+        gcc \
+        musl-dev \
+        python3-dev \
+        libffi-dev \
+        openssl-dev \
+        curl \
+        ca-certificates  \
+        py3-psycopg2  \
+        py3-requests  \
+        py3-urllib3  \
+        py3-certifi  \
+        py3-charset-normalizer  \
+        py3-idna \
+    # Nettoyer le cache
+    rm -rf /var/cache/apk/*
+
+# Créer les répertoires de travail
+RUN mkdir -p /app /results /logs && \
+    chown -R scanner:scanner /app /results /logs
+
+# Définir le répertoire de travail
+WORKDIR /app
+
+# Copier le fichier requirements.txt
+COPY requirements.txt .
+
+
+# Copier le script principal
+COPY zap_scanner.py .
+
+# Copier le script d'entrée
+COPY entrypoint.sh .
+
+# Rendre les scripts exécutables
+RUN chmod +x zap_scanner.py entrypoint.sh
+
+# Changer les permissions pour l'utilisateur scanner
+RUN chown -R scanner:scanner /app
+
+# Passer à l'utilisateur non-root
+USER scanner
+
+# Vérification de santé
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python3 -c "import sys; sys.exit(0)" || exit 1
+
+# Volumes pour les résultats et logs
+VOLUME ["/results", "/logs"]
+
+# Point d'entrée
+#ENTRYPOINT ["./entrypoint.sh"]
+
+# Commande par défaut
+CMD ["python3", "zap_scanner.py"]

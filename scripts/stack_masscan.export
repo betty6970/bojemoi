@@ -1,0 +1,42 @@
+# Fichier régénéré automatiquement à partir de la stack déployée
+# Date: $(date)
+# Stack: $STACK_NAME
+
+version: '3.8'
+
+services:
+
+  masscan-scanner:
+    image: localhost:5000/tsushima:latest
+    environment:
+      - IP2LOCATION_DB_HOST=postgres
+      - IP2LOCATION_DB_NAME=ip2location
+      - IP2LOCATION_DB_PASSWORD=bojemoi
+      - IP2LOCATION_DB_PORT=5432
+      - IP2LOCATION_DB_USER=postgres
+      - MAX_CIDRS=50
+      - MSF_DB_HOST=postgres
+      - MSF_DB_NAME=msf
+      - MSF_DB_PASSWORD=bojemoi
+      - MSF_DB_PORT=5432
+      - MSF_DB_USER=postgres
+      - SCAN_PORTS=22,80,443,3389,5985,8080,8443
+      - SCAN_RATE=10000
+      - TARGET_COUNTRY=RU
+      - TARGET_ISP=
+    volumes:
+      - /etc/openvpn/:/etc/openvpn/
+    networks:
+      - backend
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+      labels:
+        - com.docker.stack.image=localhost:5000/tsushima:latest
+        - com.docker.stack.namespace=masscan
+
+networks:

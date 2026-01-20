@@ -1,0 +1,56 @@
+#cloud-config
+# Example cloud-init template for web server
+
+hostname: {{ hostname }}
+fqdn: {{ fqdn }}
+
+# Users
+users:
+  - name: admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1... # Add your SSH key here
+
+# Packages
+packages:
+  - curl
+  - git
+  - nginx
+  - docker
+  - docker-compose
+
+# Package update/upgrade
+package_update: true
+package_upgrade: true
+
+# Write files
+write_files:
+  - path: /etc/nginx/sites-available/default
+    content: |
+      server {
+          listen 80;
+          server_name {{ vm_name }};
+          
+          location / {
+              proxy_pass http://localhost:8080;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+          }
+      }
+
+  - path: /etc/environment
+    content: |
+      ENVIRONMENT={{ environment }}
+      VM_NAME={{ vm_name }}
+
+# Run commands
+runcmd:
+  - systemctl enable nginx
+  - systemctl start nginx
+  - systemctl enable docker
+  - systemctl start docker
+  - echo "VM {{ vm_name }} initialized in {{ environment }} environment" > /var/log/cloud-init-complete.log
+
+# Final message
+final_message: "Cloud-init completed for {{ vm_name }} after $UPTIME seconds"

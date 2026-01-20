@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""
+Script pour comprendre l'API Docker Hub et obtenir les informations réelles disponibles
+IMPORTANT: Les Dockerfiles ne sont PAS stockés sur Docker Hub !
+"""
+
+import requests
+import json
+import time
+from typing import List, Dict, Optional
+
+class DockerHubRealityCheck:
+    def __init__(self):
+        self.base_url = "https://hub.docker.com/v2/repositories/library/ruby"
+        self.session = requests.Session()
+    
+    def test_endpoints(self) -> Dict:
+        """
+        Teste différents endpoints pour voir ce qui est vraiment disponible
+        """
+        endpoints_to_test = {
+            "repository_info": f"{self.base_url}",
+            "tags_list": f"{self.base_url}/tags",
+            "tag_detail": f"{self.base_url}/tags/latest",
+            "dockerfile_endpoint": f"{self.base_url}/tags/latest/dockerfile",
+            "buildhistory": f"{self.base_url}/buildhistory",
+        }
+        
+        results = {}
+        
+        print("=== TEST DES ENDPOINTS DOCKER HUB API ===")
+        print("Repository: library/ruby")
+        print("=" * 60)
+        
+        for name, url in endpoints_to_test.items():
+            print(f"\nTest: {name}")
+            print(f"URL: {url}")
+            
+            try:
+                response = self.session.get(url, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    results[name] = {
+                        'status': 'SUCCESS',
+                        'data': data,
+                        'keys': list(data.keys()) if isinstance(data, dict) else None
+                    }
+                    print(f"✓ Status: {response.status_code} - Données reçues")
+                    if isinstance(data, dict):
+                        print(f"  Clés disponibles: {list(data.keys())}")
+                else:
+                    results[name] = {
+                        'status': 'ERROR',
+                        'code': response.status_code,
+                        'message': response.text[:200]
+                    }
+                    print(f"✗ Status: {response.status_code}")
+                    
+            except Exception as e:
+                results[name] = {
+                    'status': 'EXCEPTION',
+                    'error': str(e)
+                }
+                print(f"✗ Exception: {e}")
+        
+        return results
+    
+    def get_available_tag_info(self, limit: int = 5) -> List[Dict]:
+        """
+        Récupère les informations réellement disponibles pour les tags
+        """
+        url = f"{self.base_url}/tags"
+        params = {'page_size': limit}
+        
+        try:
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            tags = data.get('results', [])
+            
+            print(f"\n=== INFORMATIONS RÉELLES DISPONIBLES ===")
+            print(f"Échantillon de {len(tags)} tags:")
+            print("=" * 60)
+            
+            detailed_tags = []
+            
+            for tag in tags:
+                tag_info = {
+                    'name': tag.get('name'),
+                    'full_size': tag.get('full_size'),
+                    'last_updated': tag.get('last_updated'),
+                    'tag_status': tag.get('tag_status'),
+                    'digest': tag.get('digest'),
+                    'images': []
+                }
+                
+                # Informations sur les images/architectures
+                for img in tag.get('images', []):
+                    img_info = {
+                        'architecture': img.get('architecture'),
+                        'os': img.get('os'),
+                        'size': img.get('size'),
+                        'digest': img.get('digest'),
+                        'status': img.get('status')
+                    }
+                    tag_info['images'].append(img_info)
+                
+                detailed_tags.append(tag_info)
+                
+                print(f"\nTag: {tag_info['name']}")
+                print(f"  Taille: {self._format_size(tag_info['full_size'])}")
+                print(f"  Mis à jour: {tag_info['last_updated'][:19] if tag_info['last_updated'] else 'N/A'}")
+                print(f"  Architectures: {', '.join([img['architecture'] for img in tag_info['images']])}")
+            
+            return detailed_tags
+            
+        except Exception as e:
+            print(f"Erreur lors de la récupération des tags: {e}")
+            return []
+    
+    def find_dockerfile_sources(self) -> Dict:
+        """
+        Explique où trouver réellement les Dockerfiles
+        """
+        dockerfile_sources = {
+            "official_ruby_dockerfiles": {
+                "description": "Repository officiel des Dockerfiles Ruby",
+                "url": "https://github.com/docker-library/ruby",
+                "structure": "Organisé par version Ruby et variante (debian, alpine, etc.)",
+                "access_method": "Git clone ou GitHub API"
+            },
+            "docker_library_official_images": {
+                "description": "Meta-repository pour toutes les images officielles",
+                "url": "https://github.com/docker-library/official-images",
+                "ruby_manifest": "https://github.com/docker-library/official-images/blob/master/library/ruby",
+                "access_method": "Contient les liens vers les Dockerfiles spécifiques"
+            },
+            "docker_registry_api": {
+                "description": "API du Docker Registry (différent de Docker Hub)",
+                "url": "https://registry.hub.docker.com/v2/",
+                "access_method": "Manifests, layers, mais PAS les Dockerfiles"
+            }
+        }
+        
+        print(f"\n=== OÙ TROUVER LES DOCKERFILES RUBY ===")
+        print("=" * 60)
+        
+        for source_name, info in dockerfile_sources.items():
+            print(f"\n{source_name.upper().replace('_', ' ')}:")
+            print(f"  Description: {info['description']}")
+            print(f"  URL: {info['url']}")
+            if 'structure' in info:
+                print(f"  Structure: {info['structure']}")
+            if 'ruby_manifest' in info:
+                print(f"  Manifest Ruby: {info['ruby_manifest']}")
+            print(f"  Accès: {info['access_method']}")
+        
+        return dockerfile_sources
+    
+    def _format_size(self, size_bytes: int) -> str:
+        """Convertit les bytes en format lisible"""
+        if not size_bytes:
+            return "0 B"
+        
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} TB"
+
+class GitHubDockerfilesFetcher:
+    """
+    Classe pour récupérer les Dockerfiles depuis le repository GitHub officiel
+    """
+    def __init__(self):
+        self.base_url = "https://api.github.com/repos/docker-library/ruby"
+        self.session = requests.Session()
+    
+    def get_dockerfile_tree(self) -> Dict:
+        """
+        Récupère l'arborescence des Dockerfiles depuis GitHub
+        """
+        url = f"{self.base_url}/git/trees/master?recursive=1"
+        
+        try:
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            tree = data.get('tree', [])
+            
+            # Filtrer pour ne garder que les Dockerfiles
+            dockerfiles = []
+            for item in tree:
+                path = item.get('path', '')
+                if path.endswith('Dockerfile') or 'Dockerfile' in path:
+                    dockerfiles.append({
+                        'path': path,
+                        'sha': item.get('sha'),
+                        'url': item.get('url'),
+                        'download_url': f"https://raw.githubusercontent.com/docker-library/ruby/master/{path}"
+                    })
+            
+            print(f"\n=== DOCKERFILES TROUVÉS SUR GITHUB ===")
+            print(f"Repository: docker-library/ruby")
+            print(f"Total Dockerfiles: {len(dockerfiles)}")
+            print("=" * 60)
+            
+            # Grouper par version/variante
+            grouped = {}
+            for df in dockerfiles:
+                parts = df['path'].split('/')
+                if len(parts) >= 2:
+                    version_variant = '/'.join(parts[:-1])  # Tout sauf le nom du fichier
+                    if version_variant not in grouped:
+                        grouped[version_variant] = []
+                    grouped[version_variant].append(df)
+            
+            for group, files in sorted(grouped.items()):
+                print(f"\n{group}:")
+                for file in files:
+                    print(f"  - {file['path']}")
+            
+            return {
+                'total_dockerfiles': len(dockerfiles),
+                'dockerfiles': dockerfiles,
+                'grouped': grouped
+            }
+            
+        except Exception as e:
+            print(f"Erreur lors de la récupération depuis GitHub: {e}")
+            return {}
+    
+    def download_dockerfile(self, dockerfile_path: str) -> Optional[str]:
+        """
+        Télécharge le contenu d'un Dockerfile spécifique
+        """
+        url = f"https://raw.githubusercontent.com/docker-library/ruby/master/{dockerfile_path}"
+        
+        try:
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            return response.text
+        except Exception as e:
+            print(f"Erreur lors du téléchargement de {dockerfile_path}: {e}")
+            return None
+
+def main():
+    print("RÉALITÉ DE L'API DOCKER HUB POUR LES DOCKERFILES")
+    print("=" * 80)
+    
+    # 1. Test de l'API Docker Hub
+    hub_checker = DockerHubRealityCheck()
+    test_results = hub_checker.test_endpoints()
+    
+    # 2. Informations disponibles
+    available_tags = hub_checker.get_available_tag_info(3)
+    
+    # 3. Sources réelles des Dockerfiles
+    dockerfile_sources = hub_checker.find_dockerfile_sources()
+    
+    # 4. Récupération depuis GitHub
+    print(f"\n" + "="*80)
+    github_fetcher = GitHubDockerfilesFetcher()
+    github_results = github_fetcher.get_dockerfile_tree()
+    
+    # 5. Exemple de téléchargement d'un Dockerfile
+    if github_results and github_results.get('dockerfiles'):
+        first_dockerfile = github_results['dockerfiles'][0]
+        print(f"\n=== EXEMPLE DE DOCKERFILE ===")
+        print(f"Téléchargement: {first_dockerfile['path']}")
+        print("-" * 60)
+        
+        content = github_fetcher.download_dockerfile(first_dockerfile['path'])
+        if content:
+            lines = content.split('\n')
+            # Afficher les 20 premières lignes
+            for i, line in enumerate(lines[:20], 1):
+                print(f"{i:2d}: {line}")
+            if len(lines) > 20:
+                print(f"... ({len(lines) - 20} lignes supplémentaires)")
+    
+    # 6. Conclusion
+    print(f"\n" + "="*80)
+    print("CONCLUSION:")
+    print("- L'API Docker Hub ne fournit PAS les Dockerfiles")
+    print("- Les Dockerfiles sont dans le repository GitHub: docker-library/ruby")
+    print("- Docker Hub fournit: tags, tailles, architectures, métadonnées")
+    print("- Pour les Dockerfiles: utiliser GitHub API ou git clone")
+    print("="*80)
+
+def create_real_script():
+    """
+    Crée un script pratique pour récupérer les Dockerfiles depuis GitHub
+    """
+    script_content = '''#!/usr/bin/env python3
+"""
+Script pour récupérer RÉELLEMENT tous les Dockerfiles Ruby
+Source: https://github.com/docker-library/ruby
+"""
+
+import requests
+import os
+import json
+
+    def download_all_ruby_dockerfiles():
+    """Télécharge tous les Dockerfiles Ruby depuis GitHub"""
+    
+    # Récupérer l'arborescence
+    tree_url = "https://api.github.com/repos/docker-library/ruby/git/trees/master?recursive=1"
+    response = requests.get(tree_url)
+    tree = response.json()['tree']
+    
+    # Filtrer les Dockerfiles
+    dockerfiles = [item for item in tree if 'Dockerfile' in item['path']]
+    
+    print(f"Trouvé {len(dockerfiles)} Dockerfiles")
+    
+    # Créer le dossier de sortie
+    os.makedirs('ruby_dockerfiles_real', exist_ok=True)
+    
+    # Télécharger chaque Dockerfile
+    for df in dockerfiles:
+        path = df['path']
+        download_url = f"https://raw.githubusercontent.com/docker-library/ruby/master/{path}"
+        
+        try:
+            file_response = requests.get(download_url)
+            content = file_response.text
+            
+            # Nom de fichier sécurisé
+            safe_name = path.replace('/', '_').replace('\\\\', '_')
+            filename = f"ruby_dockerfiles_real/{safe_name}"
+            
+            with open(filename, 'w') as f:
+                f.write(f"# Source: {path}\\n")
+                f.write(f"# URL: {download_url}\\n")
+                f.write("# " + "="*50 + "\\n\\n")
+                f.write(content)
+            
+            print(f"✓ {path}")
+            
+        except Exception as e:
+            print(f"✗ {path}: {e}")
+
+if __name__ == "__main__":
+    download_all_ruby_dockerfiles()
+'''
+    
+    with open('download_ruby_dockerfiles_real.py', 'w') as f:
+        f.write(script_content)
+    
+    print(f"\n✓ Script pratique créé: download_ruby_dockerfiles_real.py")
+    print("Usage: python download_ruby_dockerfiles_real.py")
+
+if __name__ == "__main__":
+    main()
+    create_real_script()

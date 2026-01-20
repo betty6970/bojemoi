@@ -1,0 +1,243 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║                  FARADAY SECURITY STACK - GUIDE COMPLET                  ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+📦 CONTENU DU PACKAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Stack complète de sécurité avec Docker:
+   • Faraday - Plateforme de gestion de vulnérabilités
+   • OWASP ZAP - Scanner de sécurité web
+   • Metasploit Framework - Tests de pénétration
+   • Masscan - Scanner de ports ultra-rapide
+   • Burp Suite - Proxy d'interception web
+   • PostgreSQL - Base de données
+   • Nginx - Reverse proxy
+
+✅ Scripts d'intégration automatiques:
+   • orchestrator.sh - Orchestration de tous les outils
+   • zap_to_faraday.py - Import ZAP → Faraday
+   • msf_to_faraday.py - Import Metasploit → Faraday
+   • masscan_to_faraday.py - Import Masscan → Faraday
+
+✅ Documentation complète:
+   • README.md - Documentation principale
+   • QUICKSTART.md - Guide de démarrage rapide
+   • ARCHITECTURE.md - Architecture technique
+   • CONTRIBUTING.md - Guide de contribution
+   • examples.sh - Exemples d'utilisation
+
+
+🚀 INSTALLATION EN 3 ÉTAPES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣  EXTRAIRE L'ARCHIVE
+
+   tar -xzf faraday-security-stack.tar.gz
+   cd faraday-security-stack
+
+2️⃣  LANCER L'INSTALLATION AUTOMATIQUE
+
+   chmod +x install.sh
+   ./install.sh
+
+3️⃣  ACCÉDER À FARADAY
+
+   Ouvrir: http://localhost:5985
+   User: faraday
+   Pass: changeme
+
+
+⚡ DÉMARRAGE RAPIDE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Démarrer tous les services
+make up
+
+# Vérifier le statut
+make status
+
+# Premier scan (exemple)
+make scan TARGET=192.168.1.0/24 WORKSPACE=mon-scan
+
+# Voir les résultats
+Ouvrir http://localhost:5985
+
+
+🎯 EXEMPLES D'UTILISATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SCAN RÉSEAU COMPLET
+   make scan TARGET=192.168.1.0/24 WORKSPACE=network-audit
+
+SCAN WEB SEULEMENT
+   make scan-zap TARGET=http://example.com WORKSPACE=webapp
+
+SCAN DE PORTS RAPIDE
+   make scan-masscan TARGET=10.0.0.0/24 WORKSPACE=portscan
+
+TESTS DE PÉNÉTRATION
+   make scan-metasploit TARGET=192.168.1.10 WORKSPACE=pentest
+
+TOUS LES EXEMPLES DÉTAILLÉS
+   ./examples.sh
+
+
+🔧 COMMANDES PRINCIPALES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+GESTION DES SERVICES:
+   make up         # Démarrer tous les services
+   make down       # Arrêter tous les services
+   make restart    # Redémarrer
+   make status     # Voir le statut
+   make logs       # Voir les logs
+
+SCANS:
+   make scan TARGET=<cible> WORKSPACE=<nom>
+   make scan-masscan TARGET=<réseau>
+   make scan-zap TARGET=<url>
+   make scan-metasploit TARGET=<ip>
+
+MAINTENANCE:
+   make backup     # Sauvegarder la base de données
+   make restore BACKUP_FILE=<fichier>
+   make clean      # Nettoyer (avec confirmation)
+   make update     # Mettre à jour les images
+   make test       # Lancer les tests
+
+SHELLS INTERACTIFS:
+   make shell-faraday
+   make shell-zap
+   make shell-metasploit
+   make shell-masscan
+
+AIDE:
+   make help       # Liste complète des commandes
+
+
+🌐 URLS D'ACCÈS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Service          URL                          Port
+─────────────────────────────────────────────────────────────────
+Faraday          http://localhost:5985        5985
+ZAP              http://localhost:8080        8080
+Burp Suite       http://localhost:8081        8081
+Nginx            http://localhost             80
+
+
+🔐 SÉCURITÉ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  IMPORTANT - AVANT PRODUCTION:
+
+1. CHANGER LES MOTS DE PASSE:
+   nano .env
+   # Modifier:
+   # FARADAY_DEFAULT_PASSWORD=VotreMotDePasseSecurise
+   # POSTGRES_PASSWORD=AutreMotDePasseSecurise
+
+2. CONFIGURER SSL/TLS:
+   # Ajouter vos certificats dans configs/nginx/certs/
+
+3. LIMITER L'ACCÈS RÉSEAU:
+   # Configurer un firewall
+   # Utiliser des VLANs
+   # Restreindre les ports exposés
+
+4. SAUVEGARDES RÉGULIÈRES:
+   # Créer un cron:
+   0 2 * * * cd /path/to/stack && make backup
+
+
+⚠️  AVERTISSEMENT LÉGAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ces outils sont destinés UNIQUEMENT à:
+✅ Tests de sécurité autorisés
+✅ Audits légitimes avec permission écrite
+✅ Recherche en laboratoire
+✅ Éducation et formation
+
+❌ N'UTILISEZ JAMAIS ces outils pour:
+   - Accès non autorisé à des systèmes
+   - Tests sans permission explicite
+   - Activités illégales
+
+VOUS ÊTES RESPONSABLE de l'utilisation de ces outils.
+L'usage non autorisé peut être illégal dans votre juridiction.
+
+
+🐛 RÉSOLUTION DE PROBLÈMES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+UN SERVICE NE DÉMARRE PAS?
+   make logs-faraday    # Voir les logs
+   make restart         # Redémarrer
+
+BASE DE DONNÉES CORROMPUE?
+   make clean           # Nettoyer complètement
+   make up              # Redémarrer
+
+TESTS AUTOMATIQUES:
+   ./test.sh            # Lance tous les tests
+
+ERREURS RÉSEAU:
+   docker network ls
+   docker network inspect faraday-network
+
+
+📚 DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FICHIER                  DESCRIPTION
+─────────────────────────────────────────────────────────────────
+README.md                Documentation complète
+QUICKSTART.md            Guide de démarrage rapide (5 minutes)
+ARCHITECTURE.md          Architecture technique détaillée
+CONTRIBUTING.md          Guide de contribution
+examples.sh              Exemples d'utilisation détaillés
+LICENSE                  Licence et avertissements légaux
+
+
+🆘 SUPPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Consultez la documentation: cat README.md
+2. Lancez les tests: ./test.sh
+3. Vérifiez les logs: make logs
+4. Consultez les exemples: ./examples.sh
+5. Vérifiez le statut: make status
+
+
+📊 RESSOURCES SYSTÈME
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+MINIMUM REQUIS:
+   • CPU: 4 cores
+   • RAM: 8 GB
+   • Disque: 20 GB SSD
+
+RECOMMANDÉ:
+   • CPU: 8+ cores
+   • RAM: 16 GB
+   • Disque: 50 GB SSD
+
+
+✨ PROCHAINES ÉTAPES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Lire QUICKSTART.md pour un démarrage rapide
+2. Configurer vos credentials dans .env
+3. Lancer votre premier scan
+4. Explorer l'interface Faraday
+5. Consulter examples.sh pour des workflows avancés
+
+
+Bon scan ! 🎯
+N'oubliez pas: utilisez ces outils de manière éthique et légale uniquement!
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║                     Version 1.0 - November 2024                          ║
+╚══════════════════════════════════════════════════════════════════════════╝

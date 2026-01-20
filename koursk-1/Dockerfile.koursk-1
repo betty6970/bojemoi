@@ -1,0 +1,53 @@
+# rsync-monitor/Dockerfile
+FROM alpine:latest
+
+# Installation des dépendances pour Alpine
+RUN apk add --no-cache \
+    rsync \
+    python3 \
+    py3-pip \
+    py3-prometheus-client \
+    netcat-openbsd \
+    socat \
+    nfs-utils \
+    rpcbind \
+    curl \
+    jq \
+    && pip3 install --no-cache-dir --break-system-packages \
+    prometheus-client \
+    requests
+
+# Créer l'utilisateur rsync
+RUN adduser -D -s /bin/ash rsync
+
+# Créer les répertoires nécessaires
+RUN mkdir -p /rsync/logs \
+    && mkdir -p /rsync/data \
+    && mkdir -p /rsync/scripts \
+    && mkdir -p /rsync/metrics \
+    && chown -R rsync:rsync /rsync
+
+# Copier les scripts
+COPY scripts/ /rsync/scripts/
+COPY metrics_exporter.py /rsync/metrics/
+COPY metrics_server.sh /rsync/
+COPY entrypoint.sh /rsync/
+
+# Rendre les scripts exécutables
+RUN chmod +x /rsync/scripts/*.sh \
+    && chmod +x /rsync/entrypoint.sh \
+    && chmod +x /rsync/metrics/metrics_exporter.py \
+    && chmod +x /rsync/metrics_server.sh
+
+# Exposer le port pour les métriques
+EXPOSE 8080
+
+# Changer d'utilisateur
+USER rsync
+WORKDIR /rsync
+
+# Point d'entrée
+ENTRYPOINT ["/rsync/entrypoint.sh"]
+CMD [daemon]
+
+
