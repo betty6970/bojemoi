@@ -12,10 +12,24 @@ from app.models.schemas import (
     DeploymentResponse, HealthResponse, DeploymentListResponse
 )
 from app.services.gitea_client import GiteaClient
-from app.services.xenserver_client import XenServerClient
+from app.services.xenserver_client_real import XenServerClient
 from app.services.docker_client import DockerSwarmClient
 from app.services.cloudinit_gen import CloudInitGenerator
 from app.services.database import Database
+
+# XenServer template mapping (os_type -> actual template name)
+XENSERVER_TEMPLATES = {
+    "alpine": "alpine-meta",
+    "ubuntu": "ubuntu cloud",
+    "ubuntu-20": "Ubuntu Focal Fossa 20.04",
+    "ubuntu-22": "Ubuntu Jammy Jellyfish 22.04",
+    "ubuntu-24": "ubuntu 24.x",
+    "debian": "Debian Bullseye 11",
+    "debian-12": "Debian Bookworm 12",
+    "debian-11": "Debian Bullseye 11",
+    "centos": "CentOS 7",
+    "rocky": "Rocky Linux 8",
+}
 
 # Configure logging
 logging.basicConfig(
@@ -195,10 +209,15 @@ async def deploy_vm(request: VMDeployRequest):
         )
         
         # 3. Create VM on XenServer
-        logger.info(f"Creating VM on XenServer: {request.name}")
+        # Get template name from mapping
+        template_name = XENSERVER_TEMPLATES.get(request.os_type)
+        if not template_name:
+            raise ValueError(f"Unknown os_type: {request.os_type}. Available: {list(XENSERVER_TEMPLATES.keys())}")
+
+        logger.info(f"Creating VM on XenServer: {request.name} (template: {template_name})")
         vm_ref = await xenserver_client.create_vm(
             name=request.name,
-            template=f"{request.os_type}-template",
+            template=template_name,
             cpu=request.cpu,
             memory=request.memory,
             disk=request.disk,

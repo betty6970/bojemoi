@@ -13,7 +13,10 @@ def run_in_executor(func):
     @wraps(func)
     async def wrapper(self, *args, **kwargs):
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, func, self, *args, **kwargs)
+        # Use partial to properly bind kwargs
+        from functools import partial
+        bound_func = partial(func, self, *args, **kwargs)
+        return await loop.run_in_executor(None, bound_func)
     return wrapper
 
 
@@ -44,8 +47,8 @@ class XenServerClient:
         try:
             logger.info(f"Logging in to XenServer at {self.url}")
             
-            # Create session
-            session = XenAPI.Session(self.url)
+            # Create session (ignore SSL for self-signed certs)
+            session = XenAPI.Session(self.url, ignore_ssl=True)
             session.login_with_password(self.username, self.password)
             
             logger.info("XenServer login successful")

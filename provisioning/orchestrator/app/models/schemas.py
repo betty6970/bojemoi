@@ -42,7 +42,7 @@ class ContainerDeployRequest(BaseModel):
     replicas: int = Field(default=1, ge=1, description="Number of replicas")
     environment: Dict[str, str] = Field(default_factory=dict, description="Environment variables")
     ports: List[str] = Field(default_factory=list, description="Port mappings (e.g., '80:80')")
-    networks: List[str] = Field(default_factory=lambda: ["bojemoi-net"], description="Networks to attach")
+    networks: List[str] = Field(default_factory=lambda: ["backend"], description="Networks to attach")
     labels: Optional[Dict[str, str]] = Field(default=None, description="Service labels")
     
     model_config = {
@@ -56,7 +56,7 @@ class ContainerDeployRequest(BaseModel):
                     "NGINX_PORT": "80"
                 },
                 "ports": ["80:80", "443:443"],
-                "networks": ["bojemoi-net"],
+                "networks": ["backend"],
                 "labels": {
                     "traefik.enable": "true"
                 }

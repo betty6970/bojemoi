@@ -1,0 +1,42 @@
+#cloud-config
+# Template: Debian Default
+# Usage: Configuration de base pour Debian
+
+users:
+  - name: deploy
+    groups: sudo, docker
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3... # Remplacer par votre clé SSH
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - wget
+  - htop
+  - vim
+  - git
+  - docker.io
+  - net-tools
+
+hostname: {{ vm_name }}
+fqdn: {{ vm_name }}.bojemoi.lab
+
+write_files:
+  - path: /etc/motd
+    content: |
+      ========================================
+        {{ vm_name }} - Bojemoi Lab
+        Environment: {{ environment }}
+        Deployed by Orchestrator
+      ========================================
+    owner: root:root
+    permissions: '0644'
+
+runcmd:
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker deploy

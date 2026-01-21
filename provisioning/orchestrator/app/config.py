@@ -30,10 +30,10 @@ class Settings(BaseSettings):
     GITEA_URL: str = "https://gitea.bojemoi.me"
     GITEA_TOKEN: str = "8c00a569574268e763f0cfd332104ba98ffb36e5"
     GITEA_REPO_OWNER: str = "bojemoi"
-    GITEA_REPO: str = "infrastructure"
+    GITEA_REPO: str = "bojemoi-configs"
     
     # XenServer
-    XENSERVER_URL: str = "xenserver.bojemoi.lab"
+    XENSERVER_URL: str = "https://xenserver.bojemoi.lab"
     XENSERVER_HOST: str = "xenserver.bojemoi.lab"
     XENSERVER_USER: str = "root"
     XENSERVER_PASS: str = "Sysres@01"
@@ -55,8 +55,9 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["*"]
     
     class Config:
-        env_file = ".env"
+        env_file = "/app/app/.env"
         case_sensitive = True
+        extra = "ignore"
 
 settings = Settings()
 

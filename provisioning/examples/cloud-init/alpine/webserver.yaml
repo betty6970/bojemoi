@@ -1,0 +1,114 @@
+#cloud-config
+# Template: Alpine Linux Webserver
+# Usage: Deploiement de serveur web nginx sur Alpine Linux
+
+# Configuration utilisateur
+users:
+  - name: deploy
+    groups: wheel, docker
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/ash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3... # Remplacer par votre clé SSH
+
+# Mise à jour des paquets
+package_update: true
+package_upgrade: true
+
+# Installation des paquets
+packages:
+  - nginx
+  - curl
+  - htop
+  - vim
+  - git
+  - docker
+  - docker-compose
+
+# Configuration hostname
+hostname: {{ vm_name }}
+fqdn: {{ vm_name }}.bojemoi.lab
+
+# Ecriture de fichiers de configuration
+write_files:
+  # Configuration nginx
+  - path: /etc/nginx/http.d/default.conf
+    content: |
+      server {
+          listen 80 default_server;
+          listen [::]:80 default_server;
+
+          server_name {{ vm_name }}.bojemoi.lab;
+          root /var/www/html;
+          index index.html index.htm;
+
+          location / {
+              try_files $uri $uri/ =404;
+          }
+
+          location /health {
+              access_log off;
+              return 200 "OK\n";
+              add_header Content-Type text/plain;
+          }
+      }
+    owner: root:root
+    permissions: '0644'
+
+  # Page d'accueil
+  - path: /var/www/html/index.html
+    content: |
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>{{ vm_name }} - Bojemoi Lab</title>
+          <style>
+              body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+              .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+              h1 { color: #333; }
+              .info { background: #e8f4f8; padding: 15px; border-radius: 4px; margin: 10px 0; }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <h1>{{ vm_name }}</h1>
+              <div class="info">
+                  <strong>Environment:</strong> {{ environment }}<br>
+                  <strong>Hostname:</strong> {{ vm_name }}.bojemoi.lab<br>
+                  <strong>Deployed by:</strong> Bojemoi Orchestrator
+              </div>
+          </div>
+      </body>
+      </html>
+    owner: root:root
+    permissions: '0644'
+
+  # Script de monitoring
+  - path: /usr/local/bin/health-check.sh
+    content: |
+      #!/bin/ash
+      curl -sf http://localhost/health > /dev/null && echo "OK" || echo "FAIL"
+    owner: root:root
+    permissions: '0755'
+
+# Commandes a executer au demarrage
+runcmd:
+  # Demarrer nginx
+  - rc-update add nginx default
+  - rc-service nginx start
+
+  # Demarrer docker
+  - rc-update add docker default
+  - rc-service docker start
+
+  # Configurer le firewall (si iptables disponible)
+  - iptables -A INPUT -p tcp --dport 80 -j ACCEPT || true
+  - iptables -A INPUT -p tcp --dport 443 -j ACCEPT || true
+  - iptables -A INPUT -p tcp --dport 22 -j ACCEPT || true
+
+# Redemarrage final (optionnel)
+power_state:
+  mode: reboot
+  message: "Cloud-init configuration complete, rebooting..."
+  timeout: 30
+  condition: true
