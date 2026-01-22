@@ -1,0 +1,61 @@
+
+
+services:
+  wireguard:
+    image: linuxserver/wireguard:latest
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Paris
+      - SERVERURL=auto  # ou votre IP publique/domaine
+      - SERVERPORT=51820
+      - PEERS=5  # nombre de clients à générer
+      - PEERDNS=auto  # ou une IP DNS spécifique comme 1.1.1.1
+      - INTERNAL_SUBNET=10.13.13.0
+      - ALLOWEDIPS=0.0.0.0/0  # route tout le trafic via VPN
+      - LOG_CONFS=true
+    volumes:
+      - wireguard-config:/config
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - target: 51820
+        published: 51820
+        protocol: udp
+        mode: host
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        - "traefik.enable=false"
+        - "traefik.enable=true"
+        - "traefik.http.routers.wireguard-ui.rule=Host(`wireguard.bojemoi.lab.local`)"
+        - "traefik.http.services.wireguard-ui.loadbalancer.server.port=5000"
+    networks:
+      - wireguard_net
+
+volumes:
+  wireguard-config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/bojemoi/volumes/wireguard/config
+
+networks:
+  wireguard_net:
+    driver: overlay
+    attachable: true
+

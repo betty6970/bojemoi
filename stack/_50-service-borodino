@@ -1,0 +1,15 @@
+services:
+  ms:
+    image: metasploitframework/metasploit-framework:latest
+    environment:
+      POSTGRES_DB: bojemoi
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    depends_on:
+      - postgres
+    ports:
+      - 4444:4444
+    stdin_open: true
+    tty: true
+
+

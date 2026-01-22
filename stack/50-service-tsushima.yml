@@ -1,0 +1,53 @@
+networks:
+  backend:
+    external: true
+services:
+  # Scanner principal
+  masscan-scanner:
+    image: localhost:5000/tsushima:latest
+    networks:
+       -  backend
+#    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - /etc/openvpn/:/etc/openvpn/
+    environment:
+      # Configuration des cibles
+      TARGET_COUNTRY: ${TARGET_COUNTRY:-RU}
+      TARGET_ISP: ${TARGET_ISP:-}
+      
+      # Configuration du scan
+      SCAN_PORTS: ${SCAN_PORTS:-22,80,443,3389,5985,8080,8443}
+      SCAN_RATE: ${SCAN_RATE:-10000}
+      MAX_CIDRS: ${MAX_CIDRS:-50}
+      
+      # Base de données IP2Location
+      IP2LOCATION_DB_HOST: postgres
+      IP2LOCATION_DB_PORT: 5432
+      IP2LOCATION_DB_NAME: ip2location
+      IP2LOCATION_DB_USER: postgres
+      IP2LOCATION_DB_PASSWORD: bojemoi 
+      
+      # Base de données Metasploit
+      MSF_DB_HOST: postgres
+      MSF_DB_PORT: 5432
+      MSF_DB_NAME: msf
+      MSF_DB_USER: postgres 
+      MSF_DB_PASSWORD: bojemoi 
+    # Pour les scans réseau, utiliser le réseau de l'hôte
+    # network_mode: "host"  # Décommenter si nécessaire
+    deploy:
+      mode: global
+      placement:                           
+        constraints:
+          - node.role == worker
+      restart_policy:                      
+          condition: on-failure              
+          delay: 5s                          
+          max_attempts: 3                    
+#      update_config:                       
+#          parallelism: 1                     
+#          delay: 10s                     
+#          failure_action: rollback       
+#    command: sh -c "tail -f /dev/null" 

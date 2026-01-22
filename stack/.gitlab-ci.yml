@@ -1,0 +1,234 @@
+variables:
+  STACK_NAME: "mon-app"
+  COMPOSE_FILE: "docker-compose.yml"
+  COMPOSE_FILE_PROD: "docker-compose.prod.yml"
+  REGISTRY: "registry.bojemoi.lab"
+  IMAGE_TAG: "${CI_COMMIT_SHORT_SHA}"
+
+stages:
+  - validate
+  - build
+  - test
+  - security
+  - deploy
+  - verify
+  - notify
+
+# Template pour les jobs de déploiement
+.deploy_template: &deploy_template
+  tags:
+    - swarm
+    - deploy
+  before_script:
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${REGISTRY}
+  after_script:
+    - docker logout ${REGISTRY}
+
+# Validation de la syntaxe
+validate:syntax:
+  stage: validate
+  script:
+    - docker-compose -f ${COMPOSE_FILE} config --quiet
+    - docker-compose -f ${COMPOSE_FILE_PROD} config --quiet
+    - echo "✅ Syntaxe validée"
+  only:
+    - branches
+
+# Validation des variables d'environnement requises
+validate:env:
+  stage: validate
+  script:
+    - |
+      required_vars=("POSTGRES_PASSWORD" "REDIS_PASSWORD" "API_KEY")
+      for var in "${required_vars[@]}"; do
+        if [ -z "${!var}" ]; then
+          echo "❌ Variable manquante: $var"
+          exit 1
+        fi
+      done
+    - echo "✅ Variables validées"
+  only:
+    - main
+
+# Build des images
+build:images:
+  stage: build
+  script:
+    - docker-compose -f ${COMPOSE_FILE} build
+    - docker-compose -f ${COMPOSE_FILE} push
+    - echo "✅ Images construites et pushées"
+  only:
+    - main
+    - develop
+
+# Tests unitaires
+test:unit:
+  stage: test
+  script:
+    - docker-compose -f ${COMPOSE_FILE} run --rm app npm test
+    - echo "✅ Tests unitaires passés"
+  only:
+    - branches
+
+# Tests d'intégration
+test:integration:
+  stage: test
+  script:
+    - docker-compose -f ${COMPOSE_FILE} up -d
+    - sleep 10
+    - docker-compose -f ${COMPOSE_FILE} exec -T app npm run test:integration
+    - docker-compose -f ${COMPOSE_FILE} down
+    - echo "✅ Tests d'intégration passés"
+  only:
+    - main
+    - develop
+
+# Scan de vulnérabilités avec Trivy
+security:trivy:
+  stage: security
+  script:
+    - |
+      for image in $(docker-compose -f ${COMPOSE_FILE} config | grep 'image:' | awk '{print $2}'); do
+        echo "🔍 Scan Trivy: $image"
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy image --severity HIGH,CRITICAL --exit-code 1 $image
+      done
+    - echo "✅ Scan Trivy terminé"
+  only:
+    - main
+  allow_failure: true
+
+# Scan OWASP ZAP
+security:zap:
+  stage: security
+  script:
+    - bash scripts/security/zap-scan.sh
+    - echo "✅ Scan ZAP terminé"
+  only:
+    - main
+  artifacts:
+    reports:
+      junit: zap-report.xml
+    paths:
+      - zap-report.html
+    expire_in: 1 week
+  allow_failure: true
+
+# Upload des résultats vers Faraday
+security:faraday:
+  stage: security
+  script:
+    - |
+      curl -X POST http://faraday.bojemoi.lab/api/v3/ws/${STACK_NAME}/upload \
+        -H "Authorization: Token ${FARADAY_TOKEN}" \
+        -F "file=@zap-report.xml"
+    - echo "✅ Résultats uploadés vers Faraday"
+  dependencies:
+    - security:zap
+  only:
+    - main
+
+# Déploiement en staging
+deploy:staging:
+  <<: *deploy_template
+  stage: deploy
+  script:
+    - bash scripts/deploy.sh ${STACK_NAME}-staging ${COMPOSE_FILE}
+    - echo "✅ Déployé en staging"
+  environment:
+    name: staging
+    url: https://${STACK_NAME}-staging.bojemoi.lab
+  only:
+    - develop
+
+# Déploiement en production
+deploy:production:
+  <<: *deploy_template
+  stage: deploy
+  script:
+    - bash scripts/deploy.sh ${STACK_NAME} ${COMPOSE_FILE_PROD}
+    - echo "✅ Déployé en production"
+  environment:
+    name: production
+    url: https://${STACK_NAME}.bojemoi.lab
+    on_stop: rollback:production
+  only:
+    - main
+  when: manual  # Déploiement manuel requis
+
+# Rollback production
+rollback:production:
+  <<: *deploy_template
+  stage: deploy
+  script:
+    - bash scripts/rollback.sh ${STACK_NAME}
+    - echo "🔄 Rollback effectué"
+  environment:
+    name: production
+    action: stop
+  only:
+    - main
+  when: manual
+
+# Vérification post-déploiement
+verify:health:
+  stage: verify
+  script:
+    - bash scripts/health-check.sh ${STACK_NAME}
+    - echo "✅ Health check passé"
+  dependencies:
+    - deploy:production
+  only:
+    - main
+
+# Vérification Prometheus
+verify:prometheus:
+  stage: verify
+  script:
+    - |
+      # Vérifier que les métriques remontent
+      response=$(curl -s http://prometheus.bojemoi.lab/api/v1/query?query=up{job="${STACK_NAME}"})
+      if echo "$response" | grep -q '"value":\[.*,"1"\]'; then
+        echo "✅ Métriques Prometheus OK"
+      else
+        echo "❌ Métriques Prometheus manquantes"
+        exit 1
+      fi
+  dependencies:
+    - deploy:production
+  only:
+    - main
+
+# Notification Grafana
+notify:grafana:
+  stage: notify
+  script:
+    - bash scripts/notify.sh grafana
+    - echo "📊 Annotation Grafana créée"
+  dependencies:
+    - deploy:production
+  only:
+    - main
+  when: always
+
+# Notification Slack/Email
+notify:team:
+  stage: notify
+  script:
+    - bash scripts/notify.sh team
+    - echo "📧 Équipe notifiée"
+  only:
+    - main
+  when: on_success
+
+post_deploy_monitoring:
+  stage: deploy
+  script:
+    - |
+      # Notification Grafana
+      curl -X POST http://grafana.bojemoi.lab/api/annotations \
+        -H "Content-Type: application/json" \
+        -d "{\"text\":\"Déploiement ${STACK_NAME} - ${CI_COMMIT_SHORT_SHA}\",\"tags\":[\"deployment\",\"${STACK_NAME}\"]}"
+  after_script:
+    - docker stack ps ${STACK_NAME} --no-trunc
+

@@ -1,0 +1,53 @@
+networks:
+   backend:
+     external: true
+
+services:
+
+  # Scanner ZAP (notre application)
+  zap-scanner:
+    image: localhost:5000/kherson:latest
+    container_name: zap_scanner
+    depends_on:
+      - postgres
+      - zaproxy
+    environment:
+      # Configuration base de données
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: msf
+      DB_USER: postgres
+      DB_PASSWORD: bojemoi
+      
+      # Configuration ZAP
+      ZAP_HOST: zaproxy
+      ZAP_PORT: 8090
+      ZAP_API_KEY: ""
+      
+      # Configuration logging
+      PYTHONUNBUFFERED: 1
+      LOG_LEVEL: INFO
+    volumes:
+      - scan_results:/results
+      - scan_logs:/logs
+    networks:
+      - backend
+    restart: unless-stopped
+    # Optionnel: démarrage différé pour s'assurer que tous les services sont prêts
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+      placement:
+        max_replicas_per_node: 3
+      replicas: 15
+
+
+volumes:
+  zap_data:
+    driver: local
+  scan_results:
+    driver: local
+  scan_logs:
+    driver: local

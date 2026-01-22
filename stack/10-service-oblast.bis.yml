@@ -1,0 +1,82 @@
+volumes:
+  zap-data:
+    driver: local
+  scan_results:
+    driver: local
+  scan_logs:
+    driver: local
+  zap-reports:
+    driver: local
+    name: zap
+  zap-scripts:
+    driver: local
+    name: zap 
+
+services:
+  zaproxy:
+    image: localhost:5000/oblast:latest
+    hostname: zaproxy 
+    ports:
+      - "18080:18080"  # Port principal ZAP
+      - "8090:8090"  # Port alternatif
+    environment:
+      - ZAP_HOST=0.0.0.0
+      - ZAP_PORT=8090
+      - TARGET_URL=${TARGET_URL:-https://example.com}
+      - REPORT_FORMAT=html
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/JSON/core/view/version/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+           - node.role == worker
+
+  # Scanner ZAP (notre application)
+  zap-scanner:
+    image: localhost:5000/oblast-1:latest
+    hostname: zap_scanner
+    environment:
+      # Configuration base de données
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: msf
+      DB_USER: postgres
+      DB_PASSWORD: bojemoi
+      
+      # Configuration ZAP
+      ZAP_HOST: zaproxy
+      ZAP_PORT: 8090
+      ZAP_API_KEY: ""
+      
+      # Configuration logging
+      PYTHONUNBUFFERED: 1
+      LOG_LEVEL: INFO
+    volumes:
+      - scan_results:/results
+      - scan_logs:/logs
+    networks:
+      - backend
+    # Optionnel: démarrage différé pour s'assurer que tous les services sont prêts
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+      placement:
+        constraints:
+           - node.role == worker
+        max_replicas_per_node: 3
+
+
+networks:
+  backend:
+    external: true
+  frontend:
+    external: true

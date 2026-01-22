@@ -1,0 +1,31 @@
+# Secrets et certificats
+*.key
+*.pem
+*.crt
+**/secrets/
+**/*secret*
+**/*password*
+
+# Variables d'environnement avec secrets
+.env
+*.env.local
+*.env.production
+
+# Fichiers temporaires
+*.tmp
+*.log
+*.swp
+*~
+.DS_Store
+
+# Sauvegardes
+*.bak
+*.backup
+
+# Données sensibles
+**/data/
+**/volumes/
+
+# IDE
+.vscode/
+.idea/

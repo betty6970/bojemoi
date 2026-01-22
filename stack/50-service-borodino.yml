@@ -1,0 +1,123 @@
+networks:
+  backend:
+    external: true
+
+volumes:
+  karacho-logs:
+    driver: local
+  karacho-run:
+    driver: local
+# =====================================
+# APPROCHE 1: YAML ANCHORS & ALIASES 
+# =====================================
+
+# Template de base avec anchor
+x-arme-template: &arme-template
+  image: localhost:5000/borodino:latest 
+  networks:
+    -  backend
+  depends_on:
+    - postgres 
+
+# Template de déploiement séparé
+x-deploy-template: &deploy-template
+  placement:
+    max_replicas_per_node: 5
+  restart_policy:
+    condition: on-failure
+    delay: 5s
+    max_attempts: 3
+  update_config:
+    parallelism: 1
+    delay: 10s
+    failure_action: rollback
+  resources:
+    limits:
+      cpus: '0.5'
+      memory: 512M
+    reservations:
+      cpus: '0.1'
+      memory: 256M
+
+
+#-----------------------------------------------------------------------------
+#
+#-----------------------------------------------------------------------------
+
+services:
+
+  ak47-service:
+    <<: *arme-template  # Hérite du template de base
+    environment:
+      - ARME_TYPE=ak47
+      - TARGET=container1
+    deploy:
+      <<: *deploy-template  # Hérite du template de déploiement
+      replicas: 15
+    command: /usr/bin/thearm_ak47
+
+  bm12-service:
+    <<: *arme-template  # Hérite du template de base
+    environment:
+      - ARME_TYPE=bm12
+      - TARGET=container1
+    deploy:
+      <<: *deploy-template  # Hérite du template de déploiement
+      replicas: 15
+    command: /usr/bin/thearm_bm12
+
+  uzi-service:
+    <<: *arme-template  # Hérite du template de base
+    environment:
+      - ARME_TYPE=uzi
+      - TARGET=container1
+    deploy:
+      <<: *deploy-template  # Hérite du template de déploiement
+      replicas: 5
+    command: /usr/bin/thearm_uzi
+
+#---------------------------------------------------
+#
+#---------------------------------------------------
+
+  karacho-blockchain:
+    image: localhost:5000/karacho:latest
+ 
+    volumes:
+      - karacho-logs:/var/log/karacho
+      - karacho-run:/var/run/karacho
+    ports:
+      - "5100:5100"
+    environment:
+      - DEBUG=false
+      - TOKEN_EXPIRY=3600
+      - PORT=5100
+      - SECRET_KEY=your_secret_key_here
+      - POSTGRES_HOST=postgres
+      - DB_USER=postgres
+      - DB_PASS=bojemoi
+      - DB_NAME=karacho
+      - MSF_DB_NAME=msf
+    networks:
+      - backend 
+    depends_on:
+      - postgres 
+    deploy:                                                                        
+      placement:                                                                   
+        constraints:                                                               
+          - node.role == manager                                                    
+#          - node.labels.logging == true                                            
+      restart_policy:                                                              
+        condition: on-failure                                                      
+      replicas: 1                                                                  
+      update_config:                                                               
+        parallelism: 1                                                             
+        delay: 10s                                                                 
+      resources:                                                                   
+        limits:                                                                    
+          cpus: '1'                                                                
+          memory: 2G             
+    restart: unless-stopped
+
+
+

@@ -1,0 +1,68 @@
+#service low level
+networks:
+
+  vpn-gateway:
+    driver: bridge
+  vpn-isolated:
+    driver: overlay
+    attachable: true
+  
+services:
+  openvpn-client:
+    image: dperson/openvpn-client
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.disable_ipv6=0
+    restart: on-failure 
+    volumes:
+      - /opt/bojemoi/volumes/openvpn/openvpn-config:/vpn
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Europe/Paris
+    networks:
+      -  vpn-isolated
+    # Optionnel: exposer des ports si nécessaire
+    # ports:
+    #   - "8080:8080"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    command: >
+      sh -c "
+      if [ ! -e /dev/net/tun ]; then
+        mkdir -p /dev/net &&
+        mknod /dev/net/tun c 10 200 &&
+        chmod 666 /dev/net/tun
+      fi &&
+      ip tuntap add dev tun0 mode tun &&
+      ip link set tun0 up &&
+      openvpn --config /vpn/fr.protonvpn.tcp.ovpn  --auth-user-pass /vpn/auth.txt --daemon &&
+      iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE &&
+      iptables -A FORWARD -i eth0 -o tun0 -j ACCEPT &&
+      iptables -A FORWARD -i tun0 -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT &&
+      tail -f /dev/null
+      "
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'

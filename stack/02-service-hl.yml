@@ -1,0 +1,45 @@
+#--------------------------------------------------------------------------------
+# for base  images
+# -------------------------------------------------------------------------------
+networks:
+  mail:
+    name: mail
+    driver: overlay
+    attachable: true
+
+volumes:
+  protonmail_data:
+    driver: local
+secrets:
+  proton_username:
+    external: true
+  proton_password:
+    external: true
+#ypPbe-amlCvsdS4zf0vDsg
+
+services:
+# =========================================================================
+#    protonmail
+# =========================================================================
+  protonmail-bridge:
+    image: shenxn/protonmail-bridge:latest
+    volumes:
+      - protonmail_data:/root
+    ports:
+      - "1025:25"    # SMTP
+      - "1143:143"   # IMAP
+    environment:
+      - TZ=Europe/Paris
+    networks:
+      - mail
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+
+
