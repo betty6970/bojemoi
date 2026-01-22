@@ -28,8 +28,6 @@ services:
       - backend
     volumes:
       - redis_data:/data
-    ports:
-      - 6379:6379
     deploy:
       placement:
         constraints:
@@ -141,8 +139,7 @@ services:
           cpus: '0.25'
           memory: 64M
       placement:
-          constraints:
-            - node.role == manager
+          constraints: []
 #==================================
 #
 #=================================

@@ -1,0 +1,71 @@
+networks:
+  backend:
+    external: true
+  pentest:
+    external: true
+
+volumes:
+  nuclei-templates:
+    driver: local
+  nuclei-results:
+    driver: local
+
+services:
+  nuclei:
+    image: projectdiscovery/nuclei:latest
+    networks:
+      - backend
+      - pentest
+    volumes:
+      - nuclei-templates:/root/nuclei-templates
+      - nuclei-results:/results
+      - /opt/bojemoi/volumes/nuclei/config:/root/.config/nuclei
+    environment:
+      - NUCLEI_TEMPLATES=/root/nuclei-templates
+    command: sh -c "nuclei -update-templates && tail -f /dev/null"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Service API pour lancer les scans
+  nuclei-api:
+    image: python:3.11-slim
+    networks:
+      - backend
+      - pentest
+    volumes:
+      - /opt/bojemoi/samsonov/nuclei_api:/app
+      - nuclei-results:/results
+    working_dir: /app
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - NUCLEI_HOST=nuclei
+      - RESULTS_DIR=/results
+    command: >
+      sh -c "pip install fastapi uvicorn redis httpx --break-system-packages &&
+             python -m uvicorn main:app --host 0.0.0.0 --port 8001"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3

@@ -15,6 +15,10 @@ docker stack deploy -c "$DIR/stack/50-service-borodino.yml" armement
 sleep 60
 docker stack deploy -c "$DIR/stack/50-service-tsushima.yml" masscan
 sleep 60
-docker stack deploy -c "$DIR/stack/60-service-samsonov.yml" faraday
+docker stack deploy -c "$DIR/stack/55-service-nuclei.yml" nuclei
+sleep 60
+docker stack deploy -c "$DIR/stack/56-service-vulnx.yml" vulnx
+sleep 60
+docker stack deploy -c "$DIR/stack/60-service-samsonov.yml" samsonov
 sleep 60
 docker stack deploy -c "$DIR/stack/70-service-zarovnik.yml" gitlab
