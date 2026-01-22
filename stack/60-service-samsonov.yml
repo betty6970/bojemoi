@@ -54,7 +54,10 @@ services:
     volumes:
       - /opt/bojemoi/samsonov/pentest_orchestrator:/app
     working_dir: /app
-    command: python main.py
+    command: python main.py --daemon
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     networks:
       - pentest
       - backend
@@ -67,7 +70,7 @@ services:
       restart_policy:
         condition: on-failure
         delay: 5s
-        max_attempts: 1
+        max_attempts: 3
 #==================================
 #
 #=================================

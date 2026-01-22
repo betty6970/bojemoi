@@ -1,9 +1,0 @@
-volumes:
-  shared_logs:
-    external: true
-services:
-  nfs-clien:
-    image: localhost:5000/vladimir-1:latest
-    volumes:
-      - shared_logs:/mnt/nfs
-

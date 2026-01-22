@@ -24,7 +24,9 @@ networks:
     driver: overlay
     attachable: true
   mail:
-    external: true
+    name: mail
+    driver: overlay
+    attachable: true
 
 volumes:
   postgres_data:
@@ -70,13 +72,23 @@ volumes:
       type: none
       o: bind
       device: /opt/bojemoi/volumes/traefik/certs  # Adjust path to your certs directory
-
+  protonmail_data:
+    driver: local
+  # Provisioning orchestrator volumes
+  provisioning_logs:
+    driver: local
+  provisioning_cache:
+    driver: local
 
 secrets:
    rsync_config:
      file: /opt/bojemoi/volumes/rsync/configs/rsyncd.conf
    ssh_private_key:
      file: /opt/bojemoi/volumes/rsync/ssh-keys/id_rsa
+   proton_username:
+     external: true
+   proton_password:
+     external: true
 configs:
    traefik_tls_config:
      file: /opt/bojemoi/volumes/traefik/traefik-tls.yml
@@ -116,6 +128,8 @@ configs:
      file: /opt/bojemoi/volumes/crowdsec/config/acquis.yaml
    registry_config:
      file: /opt/bojemoi/volumes/registry/config.yml
+   provisioning_env:
+     file: /opt/bojemoi/volumes/provisioning/.env
 
 # Template de base avec anchor                                                   
 x-mode-template: &mode-template                                             
@@ -189,6 +203,8 @@ services:
         target: /etc/docker/registry/config.yml
     volumes:
       - registry_data:/var/lib/registry
+    networks:
+      - monitoring
     deploy:
       replicas: 1
       placement:
@@ -332,14 +348,15 @@ services:
 
  
     networks:
-      - proxy 
-      - backend 
+      - proxy
+      - backend
+      - monitoring
     deploy:
       mode: global
       placement:
         constraints:
           - node.role == manager
-                                                                                              
+
       labels:
         - prometheus.enable=true
         - prometheus.port=8082
@@ -1191,7 +1208,7 @@ services:
     environment:
       DATA_SOURCE_NAME: "postgresql://postgres:bojemoi@postgres:5432/postgres?sslmode=disable"
     networks:
-      - monitoring 
+      - monitoring
       - backend
     deploy:
       replicas: 1
@@ -1211,3 +1228,114 @@ services:
         - prometheus.label.stack=base
         - prometheus.label.tier=data
 
+  # =========================================================================
+  # SERVICE: Provisioning Orchestrator
+  # =========================================================================
+  orchestrator:
+    image: localhost:5000/provisioning:latest
+    hostname: orchestrator.bojemoi.lab
+    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --app-dir /app
+    ports:
+      - "28080:8080"
+#    configs:
+#      - source: provisioning_env
+#        target: /app/.env
+#        mode: 0440
+    volumes:
+      # Socket Docker pour piloter les containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Logs persistants
+      - provisioning_logs:/app/logs
+      # Cache
+      - provisioning_cache:/app/cache
+    networks:
+      - backend
+      - proxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+      labels:
+        - "bojemoi.service=orchestrator"
+        - "bojemoi.environment=production"
+        - prometheus.port=5000
+        - prometheus.path=/metrics
+        - prometheus.label.team=infrastructure
+        - prometheus.label.component=provisioning
+        - prometheus.label.stack=base
+        - prometheus.label.tier=data
+
+        # Labels Prometheus
+        - "prometheus.scrape=true"
+        - "prometheus.port=9090"
+
+        # Traefik - Configuration générale
+        - "traefik.enable=true"
+        - "traefik.docker.network=proxy"
+
+        # Traefik - API HTTP (port 8080)
+        - "traefik.http.routers.orchestrator-api.rule=Host(`provisioning.bojemoi.lab`)"
+        - "traefik.http.routers.orchestrator-api.entrypoints=websecure"
+        - "traefik.http.routers.orchestrator-api.tls=true"
+        - "traefik.http.routers.orchestrator-api.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.orchestrator-api.service=orchestrator-api"
+        - "traefik.http.services.orchestrator-api.loadbalancer.server.port=8080"
+
+        # Traefik - Webhook endpoint avec rate limiting
+        - "traefik.http.routers.orchestrator-webhook.rule=Host(`provisioning.bojemoi.lab`) && PathPrefix(`/webhook`)"
+        - "traefik.http.routers.orchestrator-webhook.entrypoints=websecure"
+        - "traefik.http.routers.orchestrator-webhook.tls=true"
+        - "traefik.http.routers.orchestrator-webhook.middlewares=orchestrator-ratelimit"
+        - "traefik.http.middlewares.orchestrator-ratelimit.ratelimit.average=10"
+        - "traefik.http.middlewares.orchestrator-ratelimit.ratelimit.burst=20"
+
+        # Traefik - Metrics Prometheus
+        - "traefik.http.routers.orchestrator-metrics.rule=Host(`provisioning.bojemoi.lab`) && PathPrefix(`/metrics`)"
+        - "traefik.http.routers.orchestrator-metrics.entrypoints=websecure"
+        - "traefik.http.routers.orchestrator-metrics.tls=true"
+        - "traefik.http.routers.orchestrator-metrics.service=orchestrator-metrics"
+        - "traefik.http.services.orchestrator-metrics.loadbalancer.server.port=8080"
+
+        # Traefik - Health check
+        - "traefik.http.routers.orchestrator-health.rule=Host(`provisioning.bojemoi.lab`) && PathPrefix(`/health`)"
+        - "traefik.http.routers.orchestrator-health.entrypoints=websecure"
+        - "traefik.http.routers.orchestrator-health.tls=true"
+
+  # =========================================================================
+  #    protonmail
+  # =========================================================================
+  protonmail-bridge:
+    image: shenxn/protonmail-bridge:latest
+    volumes:
+      - protonmail_data:/root
+    ports:
+      - "1025:25"    # SMTP
+      - "1143:143"   # IMAP
+    environment:
+      - TZ=Europe/Paris
+    networks:
+      - mail
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
