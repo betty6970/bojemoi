@@ -1,0 +1,671 @@
+# Merged stack file: borodino.yml
+# Source files: 10-service-oblast.yml, 11-service-zaproxy.yml, 20-service-kyiv.yml,
+#               50-service-borodino.yml, 50-service-tsushima.yml, 55-service-nuclei.yml,
+#               56-service-vulnx.yml, 60-service-samsonov.yml, 70-service-zarovnik.yml
+#--------------------------------------------------------------------------------
+
+# =====================================
+# YAML ANCHORS & ALIASES
+# =====================================
+
+# Template de base avec anchor (from 50-service-borodino.yml)
+x-arme-template: &arme-template
+  image: localhost:5000/borodino:latest
+  networks:
+    - backend
+
+# Template de deploiement separe
+x-deploy-template: &deploy-template
+  placement:
+    max_replicas_per_node: 5
+  restart_policy:
+    condition: on-failure
+    delay: 5s
+    max_attempts: 3
+  update_config:
+    parallelism: 1
+    delay: 10s
+    failure_action: rollback
+  resources:
+    limits:
+      cpus: '0.5'
+      memory: 512M
+    reservations:
+      cpus: '0.1'
+      memory: 256M
+
+#--------------------------------------------------------------------------------
+# NETWORKS
+#--------------------------------------------------------------------------------
+networks:
+  backend:
+    external: true
+  proxy:
+    external: true
+  pentest:
+    external: true
+  gitlab_internal:
+    driver: overlay
+    internal: true
+
+#--------------------------------------------------------------------------------
+# VOLUMES
+#--------------------------------------------------------------------------------
+volumes:
+  # ZAP volumes
+  zap-data:
+    driver: local
+  scan_results:
+    driver: local
+  scan_logs:
+    driver: local
+  zap-reports:
+    driver: local
+    name: zap-reports
+  zap-scripts:
+    driver: local
+    name: zap-scripts
+
+  # Karacho volumes
+  karacho-logs:
+    driver: local
+  karacho-run:
+    driver: local
+
+  # Nuclei volumes
+  nuclei-templates:
+    driver: local
+  nuclei-output:
+    driver: local
+  nuclei-results:
+    driver: local
+
+  # VulnX volumes
+  vulnx-results:
+    driver: local
+
+  # Faraday/Redis volumes
+  faraday_data:
+    driver: local
+  redis_data:
+    driver: local
+  faraday-storage:
+    driver: local
+
+  # GitLab volumes
+  gitlab_config:
+    driver: local
+  gitlab_logs:
+    driver: local
+  gitlab_data:
+    driver: local
+  gitlab_runner_config:
+    driver: local
+  gitlab_backups:
+    driver: local
+
+#--------------------------------------------------------------------------------
+# CONFIGS
+#--------------------------------------------------------------------------------
+configs:
+  faraday-server_config:
+    file: /opt/bojemoi/volumes/faraday/config/server.ini
+
+#--------------------------------------------------------------------------------
+# SERVICES
+#--------------------------------------------------------------------------------
+services:
+
+  # =========================================================================
+  # FROM: 10-service-oblast.yml - ZAP Proxy
+  # =========================================================================
+  zaproxy:
+    image: localhost:5000/oblast:latest
+    hostname: zaproxy
+    ports:
+      - "18080:18080"
+      - "8090:8090"
+    environment:
+      - ZAP_HOST=0.0.0.0
+      - ZAP_PORT=8090
+      - TARGET_URL=${TARGET_URL:-https://zap.bojemoi.lab}
+      - REPORT_FORMAT=html
+    networks:
+      - backend
+      - pentest
+    dns_search:
+      - bojemoi.lab
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/JSON/core/view/version/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+
+  # ZAP Scanner application
+  zap-scanner:
+    image: localhost:5000/oblast-1:latest
+    hostname: zap_scanner
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: msf
+      DB_USER: postgres
+      DB_PASSWORD: bojemoi
+      FARADAY_UR: http://faraday.bojemoi.lab
+      FARADAY_TOKEN: ${FARADAY_TOKEN}
+      ZAP_HOST: zaproxy
+      ZAP_PORT: 8090
+      ZAP_API_KEY: ""
+      PYTHONUNBUFFERED: 1
+      LOG_LEVEL: ERROR
+    volumes:
+      - scan_results:/results
+      - scan_logs:/logs
+    networks:
+      - backend
+    dns_search:
+      - bojemoi.lab
+    deploy:
+      mode: global
+      restart_policy:
+        condition: any
+        delay: 10s
+      placement:
+        constraints:
+          - node.role == worker
+        max_replicas_per_node: 1
+
+  # =========================================================================
+  # FROM: 50-service-borodino.yml - Arme services
+  # =========================================================================
+  ak47-service:
+    <<: *arme-template
+    environment:
+      - ARME_TYPE=ak47
+      - TARGET=container1
+    deploy:
+      <<: *deploy-template
+      replicas: 15
+    command: /usr/bin/thearm_ak47
+
+  bm12-service:
+    <<: *arme-template
+    environment:
+      - ARME_TYPE=bm12
+      - TARGET=container1
+    deploy:
+      <<: *deploy-template
+      replicas: 15
+    command: /usr/bin/thearm_bm12
+
+  uzi-service:
+    <<: *arme-template
+    environment:
+      - ARME_TYPE=uzi
+      - TARGET=container1
+    deploy:
+      <<: *deploy-template
+      replicas: 5
+    command: /usr/bin/thearm_uzi
+
+  karacho-blockchain:
+    image: localhost:5000/karacho:latest
+    volumes:
+      - karacho-logs:/var/log/karacho
+      - karacho-run:/var/run/karacho
+    ports:
+      - "5100:5100"
+    environment:
+      - DEBUG=false
+      - TOKEN_EXPIRY=3600
+      - PORT=5100
+      - SECRET_KEY=your_secret_key_here
+      - POSTGRES_HOST=postgres
+      - DB_USER=postgres
+      - DB_PASS=bojemoi
+      - DB_NAME=karacho
+      - MSF_DB_NAME=msf
+    networks:
+      - backend
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+    restart: unless-stopped
+
+  # =========================================================================
+  # FROM: 50-service-tsushima.yml - Masscan Scanner
+  # =========================================================================
+  masscan-scanner:
+    image: localhost:5000/tsushima:latest
+    networks:
+      - backend
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - /etc/openvpn/:/etc/openvpn/
+    environment:
+      TARGET_COUNTRY: ${TARGET_COUNTRY:-RU}
+      TARGET_ISP: ${TARGET_ISP:-}
+      SCAN_PORTS: ${SCAN_PORTS:-22,80,443,3389,5985,8080,8443}
+      SCAN_RATE: ${SCAN_RATE:-10000}
+      MAX_CIDRS: ${MAX_CIDRS:-50}
+      IP2LOCATION_DB_HOST: postgres
+      IP2LOCATION_DB_PORT: 5432
+      IP2LOCATION_DB_NAME: ip2location
+      IP2LOCATION_DB_USER: postgres
+      IP2LOCATION_DB_PASSWORD: bojemoi
+      MSF_DB_HOST: postgres
+      MSF_DB_PORT: 5432
+      MSF_DB_NAME: msf
+      MSF_DB_USER: postgres
+      MSF_DB_PASSWORD: bojemoi
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  # =========================================================================
+  # FROM: 55-service-nuclei.yml - Nuclei Scanner
+  # =========================================================================
+  nuclei:
+    image: projectdiscovery/nuclei:latest
+    networks:
+      - backend
+      - pentest
+    volumes:
+      - nuclei-templates:/root/nuclei-templates
+      - nuclei-results:/results
+      - /opt/bojemoi/volumes/nuclei/config:/root/.config/nuclei
+    environment:
+      - NUCLEI_TEMPLATES=/root/nuclei-templates
+    command: sh -c "nuclei -update-templates && tail -f /dev/null"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  nuclei-api:
+    image: python:3.11-slim
+    networks:
+      - backend
+      - pentest
+    volumes:
+      - /opt/bojemoi/samsonov/nuclei_api:/app
+      - nuclei-results:/results
+    working_dir: /app
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - NUCLEI_HOST=nuclei
+      - RESULTS_DIR=/results
+    command: >
+      sh -c "pip install fastapi uvicorn redis httpx --break-system-packages &&
+             python -m uvicorn main:app --host 0.0.0.0 --port 8001"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  # =========================================================================
+  # FROM: 56-service-vulnx.yml - VulnX Scanner
+  # =========================================================================
+  vulnx:
+    image: python:3.11-slim
+    networks:
+      - backend
+      - pentest
+    volumes:
+      - vulnx-results:/results
+      - /opt/bojemoi/samsonov/vulnx_wrapper:/app
+    working_dir: /app
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RESULTS_DIR=/results
+    command: >
+      sh -c "apt-get update && apt-get install -y git &&
+             pip install requests colorama redis --break-system-packages &&
+             git clone https://github.com/anouarbensaad/vulnx.git /opt/vulnx 2>/dev/null || true &&
+             pip install -r /opt/vulnx/requirements.txt --break-system-packages || true &&
+             python main.py --daemon"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # =========================================================================
+  # FROM: 60-service-samsonov.yml - Faraday & Redis
+  # =========================================================================
+  redis:
+    image: redis:alpine
+    command: redis-server --appendonly yes --protected-mode no
+    networks:
+      - pentest
+      - backend
+    volumes:
+      - redis_data:/data
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  pentest-orchestrator:
+    image: python:3.11-slim
+    volumes:
+      - /opt/bojemoi/samsonov/pentest_orchestrator:/app
+    working_dir: /app
+    command: python main.py --daemon
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    networks:
+      - pentest
+      - backend
+    dns_search:
+      - bojemoi.lab
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  faraday:
+    image: faradaysec/faraday:latest
+    environment:
+      - PGSQL_USER=postgres
+      - PGSQL_PASSWD=bojemoi
+      - PGSQL_HOST=postgres
+      - PGSQL_DBNAME=faraday
+      - REDIS_SERVER=redis.bojemoi.lab
+      - REDIS_PORT=6379
+      - REDIS_HOST=redis
+      - REDIS_DB=0
+    networks:
+      - proxy
+      - backend
+      - pentest
+    dns_search:
+      - bojemoi.lab
+    ports:
+      - 5985:5985
+    configs:
+      - source: faraday-server_config
+        target: /home/faraday/.faraday/config/server.ini
+    volumes:
+      - faraday_data:/home/faraday/.faraday
+      - faraday-storage:/home/faraday/.faraday/storage
+      - /opt/bojemoi/volumes/faraday/config/server.ini:/home/faraday/.faraday/config/server.ini
+    entrypoint: "/entrypoint.sh"
+    deploy:
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.faraday.rule=Host(`faraday.bojemoi.lab`)
+        - traefik.http.routers.faraday.entrypoints=websecure
+        - traefik.http.routers.faraday.tls=true
+        - "traefik.docker.network=proxy"
+        - "traefik.http.routers.faraday.tls.certresolver=letsencrypt"
+        - "traefik.http.services.faraday.loadbalancer.server.port=5985"
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    environment:
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+    networks:
+      - pentest
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+      placement:
+        constraints: []
+
+  pentest-exporter:
+    image: python:latest
+    command: >
+      sh -c "pip3 install prometheus_client requests redis &&
+             python3 /app/metrics_exporter.py"
+    volumes:
+      - /opt/bojemoi/samsonov/scripts/metrics_exporter.py:/app/metrics_exporter.py
+    networks:
+      - pentest
+    deploy:
+      labels:
+        - "prometheus.scrape=true"
+      placement:
+        constraints:
+          - node.role == manager
+
+  # =========================================================================
+  # FROM: 70-service-zarovnik.yml - GitLab
+  # =========================================================================
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    hostname: gitlab.bojemoi.lab
+    networks:
+      - gitlab_internal
+      - proxy
+    ports:
+      - 1080:80
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://gitlab.bojemoi.lab'
+
+        # Registry configuration
+        registry_external_url 'https://registry.bojemoi.lab'
+        gitlab_rails['registry_enabled'] = true
+
+        # GitLab Rails settings
+        gitlab_rails['time_zone'] = 'Europe/Paris'
+        gitlab_rails['gitlab_email_from'] = 'gitlab@bojemoi.lab'
+        gitlab_rails['gitlab_email_reply_to'] = 'noreply@bojemoi.lab'
+
+        # Disable unused services to save resources
+        prometheus['enable'] = false
+        alertmanager['enable'] = false
+
+        # PostgreSQL settings
+        postgresql['shared_buffers'] = "256MB"
+        postgresql['max_worker_processes'] = 8
+        postgresql['enable'] = false
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'unicode'
+        gitlab_rails['db_host'] = 'postgres'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_database'] = 'gitlabhq_production'
+        gitlab_rails['db_username'] = 'postgres'
+        gitlab_rails['db_password'] = 'bojemoi'
+
+        # Sidekiq settings (background jobs)
+        sidekiq['max_concurrency'] = 10
+
+        # Puma settings (web server)
+        puma['worker_processes'] = 2
+        puma['per_worker_max_memory_mb'] = 1024
+
+        # Backup settings
+        gitlab_rails['backup_keep_time'] = 604800
+        gitlab_rails['backup_path'] = "/var/opt/gitlab/backups"
+
+        # LFS (Large File Storage)
+        gitlab_rails['lfs_enabled'] = true
+
+        # Container Registry
+        registry['enable'] = true
+        registry['registry_http_addr'] = "0.0.0.0:5000"
+
+        # Nginx settings
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        nginx['proxy_set_headers'] = {
+          "X-Forwarded-Proto" => "https",
+          "X-Forwarded-Ssl" => "on"
+        }
+
+        # Registry Nginx
+        registry_nginx['enable'] = true
+        registry_nginx['listen_port'] = 5050
+        registry_nginx['listen_https'] = false
+        registry_nginx['proxy_set_headers'] = {
+          "X-Forwarded-Proto" => "https",
+          "X-Forwarded-Ssl" => "on"
+        }
+    volumes:
+      - gitlab_config:/etc/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_data:/var/opt/gitlab
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.gitlab.rule=Host(`gitlab.bojemoi.lab`)"
+        - "traefik.http.routers.gitlab.entrypoints=websecure"
+        - "traefik.http.routers.gitlab.tls=true"
+        - "traefik.http.services.gitlab.loadbalancer.server.port=1080"
+        - "traefik.tcp.routers.gitlab-ssh.rule=HostSNI(`*`)"
+        - "traefik.tcp.routers.gitlab-ssh.entrypoints=gitlab-ssh"
+        - "traefik.tcp.routers.gitlab-ssh.service=gitlab-ssh-svc"
+        - "traefik.tcp.services.gitlab-ssh-svc.loadbalancer.server.port=22"
+        - "traefik.http.routers.gitlab-registry.rule=Host(`registry.bojemoi.lab`)"
+        - "traefik.http.routers.gitlab-registry.entrypoints=websecure"
+        - "traefik.http.routers.gitlab-registry.tls=true"
+        - "traefik.http.services.gitlab-registry.loadbalancer.server.port=5000"
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:alpine
+    hostname: gitlab-runner.bojemoi.lab
+    networks:
+      - gitlab_internal
+      - proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/bojemoi/volumes/gitlab/config.toml:/etc/gitlab-runner/config.toml
+      - gitlab_runner_config:/etc/gitlab-runner
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+
+  gitlab-backup:
+    image: alpine:latest
+    networks:
+      - gitlab_internal
+    volumes:
+      - gitlab_data:/var/opt/gitlab
+      - gitlab_backups:/backups
+    deploy:
+      mode: replicated
+      replicas: 0
+      restart_policy:
+        condition: none
+    command: >
+      sh -c "
+        echo 'Backup service ready. Scale to 1 to run backup.'
+        sleep infinity
+      "
