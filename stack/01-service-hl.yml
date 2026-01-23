@@ -1176,13 +1176,10 @@ services:
           - prometheus.label.component=backup-slave
           - prometheus.label.stack=base
           - prometheus.label.tier=backup
-          - task.type=rsync-slave
- #      replicas: 3
+      mode: global
       placement:
         constraints:
-          - node.role == worker
-        preferences:
-          - spread: node.id
+          - node.labels.rsync.slave == true
       update_config:
         parallelism: 1
         delay: 10s

@@ -1,57 +1,29 @@
 services:
-  burp-dast:
-    image: localhost:5000/kyiv:latest
+  nuclei:
+    image: localhost:5000/nuclei:latest
+    networks:
+      - pentest 
     volumes:
-#      - ./kyiv/reports:/opt/reports
-#      - ./kyiv/targets:/opt/targets
-      - burp-data:/root/.BurpSuite
-    environment:
-      - JAVA_OPTS=-Xmx4g
-      - BURP_HEADLESS=true
-    networks:
-      - backend
-      - proxy
-    restart: unless-stopped
-    # Commande pour démarrer un scan automatique
-    # command: ["python3", "/opt/scripts/scan.py", "--target", "https://example.com"]
+      - nuclei-templates:/root/nuclei-templates
+      - nuclei-output:/output
     deploy:
-       labels:
-         - traefik.enable=true
-         - traefik.http.routers.burp.rule=Host(`burp.bojemoi.lab`)
-         - traefik.http.routers.burp.entrypoints=websecure
-#         - traefik.http.routers.burp.tls.certresolver=letsencrypt
-         - traefik.http.routers.burp.middlewares=security-headers,vpn-whitelist
-         - traefik.http.services.burp.loadbalancer.server.port=8080
-
-         - traefik.http.middlewares.vpn-whitelist.ipallowlist.sourcerange=10.0.0.0/8,192.168.0.0/16
-
-
-  # Application cible pour les tests (exemple)
-  target-app:
-    image: localhost:5000/vulnerables/web-dvwa:latest
-    ports:
-      - "28081:80"
-    networks:
-      - backend	 
-    environment:
-      - MYSQL_ROOT_PASSWORD=password
-      - MYSQL_DATABASE=dvwa
-      - MYSQL_USER=dvwa
-      - MYSQL_PASSWORD=password
-    deploy:
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.burp.rule=Host(`burp.example.com`)"
-        - "traefik.http.routers.burp.entrypoints=websecure"
-#        - "traefik.http.routers.burp.tls.certresolver=letsencrypt"
-        - "traefik.http.services.burp.loadbalancer.server.port=8080"
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    command: ["sleep", "infinity"]  # Keep container running
+    labels:
+      - "com.bojemoi.service=nuclei"
 
 volumes:
-  burp-data:
-    driver: local
+  nuclei-templates:
+  nuclei-output:
+
 networks:
-  backend:
-    external: true
-  proxy:
+  pentest:
     external: true
 

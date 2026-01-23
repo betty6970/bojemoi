@@ -243,27 +243,41 @@ class RsyncScheduler:
                 self.log(f"Erreur configuration planification pour {job['name']}: {e}")
 
     def get_rsync_slave_list(self):
-                       
-        running_ip_containers = []
-# Ou r..cup..rer toutes les t..ches avec subn
-        filtered_tasks = self.get_filtered_tasks( 'task.type','rsync-slave')
-        for task in filtered_tasks:
-            running_ip_containers.append(self._extract_ip_addresses(task))
-        return running_ip_containers
+        """Découvre les slaves via le label rsync.slave=true sur les nodes"""
+        import docker
+        client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
 
-    def get_filtered_tasks(self, label_key, label_value):
+        slave_ips = []
+        slave_node_ids = []
+
         try:
-            all_tasks = bojemoi.get_all_swarm_tasks()
-            
-            filtered_tasks = []
-            for task in all_tasks:
-                filtered_task = task.get('Spec', {}).get('ContainerSpec', {}).get('Labels', {})
-                if filtered_task.get(label_key) == label_value:
-                    filtered_tasks.append(task)
-        
-            return filtered_tasks
+            # Trouver les nodes avec label rsync.slave=true
+            for node in client.nodes.list():
+                labels = node.attrs.get('Spec', {}).get('Labels', {})
+                if labels.get('rsync.slave') == 'true':
+                    hostname = node.attrs.get('Description', {}).get('Hostname', '')
+                    self.log(f"Node rsync slave: {hostname}")
+                    slave_node_ids.append(node.id)
+
+            if not slave_node_ids:
+                self.log("Aucun node avec label rsync.slave=true")
+                return []
+
+            # Trouver les tasks sur ces nodes dans rsync_network
+            for task in bojemoi.get_all_swarm_tasks():
+                if task.get('NodeID') in slave_node_ids and task.get('Status', {}).get('State') == 'running':
+                    for net in task.get('NetworksAttachments', []):
+                        if net.get('Network', {}).get('Spec', {}).get('Name') == 'rsync_network':
+                            for addr in net.get('Addresses', []):
+                                ip = addr.split('/')[0]
+                                if ip not in slave_ips:
+                                    slave_ips.append(ip)
+                                    self.log(f"Slave IP: {ip}")
+
+            return slave_ips
+
         except Exception as e:
-            print(f"Erreur lors du filtrage: {e}")
+            self.log(f"Erreur découverte slaves: {e}")
             return []
 
 
