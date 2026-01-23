@@ -158,7 +158,7 @@ services:
       DB_USER: postgres
       DB_PASSWORD: bojemoi
       FARADAY_UR: http://faraday.bojemoi.lab
-      FARADAY_TOKEN: ${FARADAY_TOKEN}
+      FARADAY_TOKEN: 9a48aa3fb074b442e0fae943f9a0a7d93a3214401d08821a14a1dcc6165b6659
       ZAP_HOST: zaproxy
       ZAP_PORT: 8090
       ZAP_API_KEY: ""
