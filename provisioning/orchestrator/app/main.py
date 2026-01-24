@@ -1,5 +1,5 @@
 """Main FastAPI application"""
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 import logging
@@ -9,13 +9,17 @@ from contextlib import asynccontextmanager
 from app.config import settings
 from app.models.schemas import (
     VMDeployRequest, ContainerDeployRequest,
-    DeploymentResponse, HealthResponse, DeploymentListResponse
+    DeploymentResponse, HealthResponse, DeploymentListResponse,
+    BlockchainBlock, BlockchainVerifyResponse, BlockListResponse
 )
 from app.services.gitea_client import GiteaClient
 from app.services.xenserver_client_real import XenServerClient
 from app.services.docker_client import DockerSwarmClient
 from app.services.cloudinit_gen import CloudInitGenerator
 from app.services.database import Database
+from app.services.ip2location_client import IP2LocationClient
+from app.services.blockchain import BlockchainService
+from app.middleware.ip_validation import IPValidationMiddleware, get_request_ip_info
 
 # XenServer template mapping (os_type -> actual template name)
 XENSERVER_TEMPLATES = {
@@ -44,16 +48,19 @@ xenserver_client: Optional[XenServerClient] = None
 docker_client: Optional[DockerSwarmClient] = None
 cloudinit_gen: Optional[CloudInitGenerator] = None
 db: Optional[Database] = None
+ip2location_client: Optional[IP2LocationClient] = None
+blockchain_service: Optional[BlockchainService] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan (startup and shutdown)"""
     global gitea_client, xenserver_client, docker_client, cloudinit_gen, db
-    
+    global ip2location_client, blockchain_service
+
     # Startup
     logger.info("Initializing Bojemoi Orchestrator...")
-    
+
     try:
         # Initialize Gitea client
         gitea_client = GiteaClient(
@@ -62,7 +69,7 @@ async def lifespan(app: FastAPI):
             repo=settings.GITEA_REPO
         )
         logger.info("Gitea client initialized")
-        
+
         # Initialize XenServer client
         xenserver_client = XenServerClient(
             url=settings.XENSERVER_URL,
@@ -70,42 +77,67 @@ async def lifespan(app: FastAPI):
             password=settings.XENSERVER_PASS
         )
         logger.info("XenServer client initialized")
-        
+
         # Initialize Docker Swarm client
         docker_client = DockerSwarmClient(
             base_url=settings.DOCKER_SWARM_URL
         )
         logger.info("Docker Swarm client initialized")
-        
+
         # Initialize CloudInit generator
         cloudinit_gen = CloudInitGenerator(gitea_client)
         logger.info("CloudInit generator initialized")
-        
+
         # Initialize Database
         db = Database(settings.DATABASE_URL)
         await db.init_db()
         logger.info("Database initialized")
-        
+
+        # Initialize IP2Location client
+        ip2location_client = IP2LocationClient(settings.IP2LOCATION_DB_URL)
+        await ip2location_client.init()
+        logger.info("IP2Location client initialized")
+
+        # Initialize Blockchain service
+        blockchain_service = BlockchainService(settings.KARACHO_DB_URL)
+        await blockchain_service.init()
+        logger.info("Blockchain service initialized")
+
+        # Add IP validation middleware
+        app.add_middleware(
+            IPValidationMiddleware,
+            ip2location_client=ip2location_client,
+            allowed_countries=settings.ALLOWED_COUNTRIES,
+            enabled=settings.IP_VALIDATION_ENABLED
+        )
+        logger.info(f"IP validation middleware added (enabled={settings.IP_VALIDATION_ENABLED})")
+
         logger.info("All services initialized successfully")
-        
+
     except Exception as e:
         logger.error(f"Failed to initialize services: {e}")
         raise
-    
+
     yield  # Application runs here
-    
+
     # Shutdown
     logger.info("Shutting down Bojemoi Orchestrator...")
-    
+
     if xenserver_client:
         await xenserver_client.close()
-    
+
     if docker_client:
         await docker_client.close()
-    
+
     if db:
         await db.close()
-    
+
+    if ip2location_client:
+        await ip2location_client.close()
+
+    if blockchain_service:
+        await blockchain_service.close()
+
     logger.info("Shutdown complete")
 
 
@@ -177,29 +209,50 @@ async def health_check():
     except Exception as e:
         health_status["services"]["database"] = "down"
         logger.error(f"Database health check failed: {e}")
-    
+
+    # Check IP2Location database
+    try:
+        ip2loc_ok = await ip2location_client.ping()
+        health_status["services"]["ip2location"] = "up" if ip2loc_ok else "down"
+    except Exception as e:
+        health_status["services"]["ip2location"] = "down"
+        logger.error(f"IP2Location health check failed: {e}")
+
+    # Check Blockchain database
+    try:
+        blockchain_ok = await blockchain_service.ping()
+        health_status["services"]["blockchain"] = "up" if blockchain_ok else "down"
+    except Exception as e:
+        health_status["services"]["blockchain"] = "down"
+        logger.error(f"Blockchain health check failed: {e}")
+
     # Overall status
     all_up = all(
-        status == "up" 
+        status == "up"
         for status in health_status["services"].values()
     )
     health_status["status"] = "healthy" if all_up else "degraded"
-    
+
     return health_status
 
 
 @app.post("/api/v1/vm/deploy", response_model=DeploymentResponse, tags=["VMs"])
-async def deploy_vm(request: VMDeployRequest):
+async def deploy_vm(request: VMDeployRequest, req: Request):
     """Deploy a new VM on XenServer"""
+    # Get IP info from middleware
+    ip_info = get_request_ip_info(req)
+    source_ip = ip_info.get("source_ip")
+    source_country = ip_info.get("source_country")
+
     try:
-        logger.info(f"Deploying VM: {request.name}")
-        
+        logger.info(f"Deploying VM: {request.name} (from IP: {source_ip}, country: {source_country})")
+
         # 1. Fetch cloud-init template from Gitea
         template_path = f"cloud-init/{request.os_type}/{request.template}.yaml"
         logger.debug(f"Fetching template: {template_path}")
-        
+
         template_content = await gitea_client.get_file_content(template_path)
-        
+
         # 2. Generate final cloud-init configuration
         cloudinit_config = cloudinit_gen.generate(
             template=template_content,
@@ -207,7 +260,7 @@ async def deploy_vm(request: VMDeployRequest):
             environment=request.environment,
             additional_vars=request.variables or {}
         )
-        
+
         # 3. Create VM on XenServer
         # Get template name from mapping
         template_name = XENSERVER_TEMPLATES.get(request.os_type)
@@ -224,8 +277,19 @@ async def deploy_vm(request: VMDeployRequest):
             network=request.network,
             cloudinit_data=cloudinit_config
         )
-        
-        # 4. Log deployment in database
+
+        # 4. Log deployment in blockchain
+        block = await blockchain_service.create_block(
+            deployment_type="vm",
+            name=request.name,
+            config=request.dict(),
+            resource_ref=vm_ref,
+            status="success",
+            source_ip=source_ip,
+            source_country=source_country
+        )
+
+        # Also log in legacy database for backwards compatibility
         deployment_id = await db.log_deployment(
             deployment_type="vm",
             name=request.name,
@@ -233,20 +297,34 @@ async def deploy_vm(request: VMDeployRequest):
             resource_ref=vm_ref,
             status="success"
         )
-        
-        logger.info(f"VM deployed successfully: {request.name} (ID: {deployment_id})")
-        
+
+        logger.info(f"VM deployed successfully: {request.name} (block: #{block['block_number']}, hash: {block['current_hash'][:16]}...)")
+
         return DeploymentResponse(
             success=True,
             deployment_id=deployment_id,
             resource_id=vm_ref,
-            message=f"VM {request.name} deployed successfully"
+            message=f"VM {request.name} deployed successfully (block #{block['block_number']})"
         )
-        
+
     except Exception as e:
         logger.error(f"Failed to deploy VM {request.name}: {e}")
-        
-        # Log failed deployment
+
+        # Log failed deployment in blockchain
+        try:
+            await blockchain_service.create_block(
+                deployment_type="vm",
+                name=request.name,
+                config=request.dict(),
+                status="failed",
+                error=str(e),
+                source_ip=source_ip,
+                source_country=source_country
+            )
+        except:
+            pass
+
+        # Also log in legacy database
         try:
             await db.log_deployment(
                 deployment_type="vm",
@@ -265,11 +343,16 @@ async def deploy_vm(request: VMDeployRequest):
 
 
 @app.post("/api/v1/container/deploy", response_model=DeploymentResponse, tags=["Containers"])
-async def deploy_container(request: ContainerDeployRequest):
+async def deploy_container(request: ContainerDeployRequest, req: Request):
     """Deploy a new container/service on Docker Swarm"""
+    # Get IP info from middleware
+    ip_info = get_request_ip_info(req)
+    source_ip = ip_info.get("source_ip")
+    source_country = ip_info.get("source_country")
+
     try:
-        logger.info(f"Deploying container: {request.name}")
-        
+        logger.info(f"Deploying container: {request.name} (from IP: {source_ip}, country: {source_country})")
+
         # Deploy service on Docker Swarm
         service_id = await docker_client.create_service(
             name=request.name,
@@ -280,8 +363,19 @@ async def deploy_container(request: ContainerDeployRequest):
             networks=request.networks,
             labels=request.labels
         )
-        
-        # Log deployment in database
+
+        # Log deployment in blockchain
+        block = await blockchain_service.create_block(
+            deployment_type="container",
+            name=request.name,
+            config=request.dict(),
+            resource_ref=service_id,
+            status="success",
+            source_ip=source_ip,
+            source_country=source_country
+        )
+
+        # Also log in legacy database for backwards compatibility
         deployment_id = await db.log_deployment(
             deployment_type="container",
             name=request.name,
@@ -289,20 +383,34 @@ async def deploy_container(request: ContainerDeployRequest):
             resource_ref=service_id,
             status="success"
         )
-        
-        logger.info(f"Container deployed successfully: {request.name} (ID: {deployment_id})")
-        
+
+        logger.info(f"Container deployed successfully: {request.name} (block: #{block['block_number']}, hash: {block['current_hash'][:16]}...)")
+
         return DeploymentResponse(
             success=True,
             deployment_id=deployment_id,
             resource_id=service_id,
-            message=f"Container {request.name} deployed successfully"
+            message=f"Container {request.name} deployed successfully (block #{block['block_number']})"
         )
-        
+
     except Exception as e:
         logger.error(f"Failed to deploy container {request.name}: {e}")
-        
-        # Log failed deployment
+
+        # Log failed deployment in blockchain
+        try:
+            await blockchain_service.create_block(
+                deployment_type="container",
+                name=request.name,
+                config=request.dict(),
+                status="failed",
+                error=str(e),
+                source_ip=source_ip,
+                source_country=source_country
+            )
+        except:
+            pass
+
+        # Also log in legacy database
         try:
             await db.log_deployment(
                 deployment_type="container",
@@ -313,7 +421,7 @@ async def deploy_container(request: ContainerDeployRequest):
             )
         except:
             pass
-        
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to deploy container: {str(e)}"
@@ -408,4 +516,99 @@ async def delete_deployment(deployment_id: int):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete deployment: {str(e)}"
+        )
+
+
+# Blockchain endpoints
+
+@app.get("/api/v1/blockchain/blocks", response_model=BlockListResponse, tags=["Blockchain"])
+async def list_blocks(
+    deployment_type: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    """List blockchain blocks with optional filtering"""
+    try:
+        blocks = await blockchain_service.get_blocks(
+            deployment_type=deployment_type,
+            status_filter=status_filter,
+            limit=limit,
+            offset=offset
+        )
+
+        return BlockListResponse(
+            success=True,
+            count=len(blocks),
+            blocks=blocks
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to list blocks: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list blocks: {str(e)}"
+        )
+
+
+@app.get("/api/v1/blockchain/blocks/{block_number}", response_model=BlockchainBlock, tags=["Blockchain"])
+async def get_block(block_number: int):
+    """Get a specific block by number"""
+    try:
+        block = await blockchain_service.get_block_by_number(block_number)
+
+        if not block:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Block #{block_number} not found"
+            )
+
+        return block
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get block #{block_number}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get block: {str(e)}"
+        )
+
+
+@app.get("/api/v1/blockchain/verify", response_model=BlockchainVerifyResponse, tags=["Blockchain"])
+async def verify_blockchain():
+    """Verify blockchain integrity"""
+    try:
+        result = await blockchain_service.verify_chain_integrity()
+        return BlockchainVerifyResponse(**result)
+
+    except Exception as e:
+        logger.error(f"Failed to verify blockchain: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to verify blockchain: {str(e)}"
+        )
+
+
+@app.get("/api/v1/blockchain/latest", response_model=BlockchainBlock, tags=["Blockchain"])
+async def get_latest_block():
+    """Get the latest block in the chain"""
+    try:
+        block = await blockchain_service.get_last_block()
+
+        if not block:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Blockchain is empty"
+            )
+
+        return block
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get latest block: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get latest block: {str(e)}"
         )

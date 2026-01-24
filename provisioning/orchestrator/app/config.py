@@ -21,10 +21,28 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "bojemoi"
     POSTGRES_DB: str = "deployments"
-    
+
+    # IP2Location Database
+    IP2LOCATION_DB_NAME: str = "ip2location"
+
+    # Karacho Blockchain Database
+    KARACHO_DB_NAME: str = "karacho"
+
     @property
     def DATABASE_URL(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+
+    @property
+    def IP2LOCATION_DB_URL(self) -> str:
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.IP2LOCATION_DB_NAME}"
+
+    @property
+    def KARACHO_DB_URL(self) -> str:
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.KARACHO_DB_NAME}"
+
+    # IP Validation
+    IP_VALIDATION_ENABLED: bool = True
+    ALLOWED_COUNTRIES: List[str] = ["FR", "DE", "CH", "BE", "LU", "NL", "AT"]  # France + Western Europe
     
     # Gitea
     GITEA_URL: str = "https://gitea.bojemoi.me"

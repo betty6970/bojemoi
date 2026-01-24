@@ -124,3 +124,80 @@ class DeploymentListResponse(BaseModel):
     success: bool
     count: int
     deployments: List[Deployment]
+
+
+# Blockchain models
+
+class BlockchainBlock(BaseModel):
+    """Blockchain block record"""
+    id: int
+    block_number: int
+    previous_hash: Optional[str]
+    current_hash: str
+    deployment_type: str
+    name: str
+    config: Dict[str, Any]
+    resource_ref: Optional[str]
+    status: str
+    error: Optional[str]
+    source_ip: Optional[str]
+    source_country: Optional[str]
+    created_at: datetime
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "block_number": 1,
+                "previous_hash": None,
+                "current_hash": "a1b2c3d4e5f6789...",
+                "deployment_type": "vm",
+                "name": "web-prod-01",
+                "config": {"cpu": 4, "memory": 4096},
+                "resource_ref": "vm-ref-12345",
+                "status": "success",
+                "error": None,
+                "source_ip": "192.168.1.100",
+                "source_country": "FR",
+                "created_at": "2025-01-17T10:30:00Z"
+            }
+        }
+    }
+
+
+class BlockchainVerifyResponse(BaseModel):
+    """Response model for blockchain verification"""
+    valid: bool
+    blocks_checked: int
+    message: Optional[str] = None
+    error: Optional[str] = None
+    invalid_blocks: Optional[List[Dict[str, Any]]] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "valid": True,
+                "blocks_checked": 150,
+                "message": "Chain integrity verified",
+                "error": None,
+                "invalid_blocks": None
+            }
+        }
+    }
+
+
+class BlockListResponse(BaseModel):
+    """Response model for blockchain blocks list"""
+    success: bool
+    count: int
+    blocks: List[BlockchainBlock]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "success": True,
+                "count": 10,
+                "blocks": []
+            }
+        }
+    }
