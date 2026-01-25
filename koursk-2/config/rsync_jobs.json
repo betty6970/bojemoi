@@ -1,18 +1,18 @@
 [
   {
-    "name": "synchro_data",
+    "name": "swarm_data",
     "source": "/opt/bojemoi/",
     "destination": "/opt/bojemoi/",
     "options": "-av --delete --stats",
     "schedule": "every_10_minutes",
     "enabled": true,
-    "description": "Sauvegarde quotidienne des données"
+    "description": "Sauvegarde 10mn des données"
   },
   {
-    "name": "sync_configs",
+    "name": "swarm_logs",
     "source": "/config/",
     "destination": "/data/backup/configs/",
     "options": "-av --stats",
-    "description": "Synchronisation des configurations"
+    "description": "Synchronisation des logs"
   }
 ]

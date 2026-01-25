@@ -95,7 +95,7 @@ class RsyncScheduler:
         
         try:
             start_time = time.time()
-            cmd = f"rsync {options}  --log-file /config/rsyncd.conf /opt/bojemoi rsync://docker@{node}/swarm_data"
+            cmd = f"rsync {options}  --log-file /var/log/rsync.log /opt/bojemoi/ rsync://docker@{node}/{job_name}/"
             
             self.log(f"Début d'exécution: {cmd}", job_name)
             
