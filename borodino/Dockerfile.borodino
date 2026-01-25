@@ -161,8 +161,6 @@ RUN apk update && apk add --no-cache \
     python3 \
     python3 py3-pip \
     py3-psycopg2 \
-    py3-requests \
-    py3-msgpack \
     py3-psutil \
     gcc \
     musl-dev \
@@ -177,6 +175,11 @@ RUN apk update && apk add --no-cache \
     openvpn \
     gcompat && \
     rm -rf /var/cache/apk/*
+
+# Install Python dependencies for pymetasploit3
+# msgpack needs build dependencies, retry is also required
+RUN pip3 install --no-cache-dir --break-system-packages msgpack retry && \
+    pip3 install --no-cache-dir --break-system-packages pymetasploit3
 
 # Set the working directory
 WORKDIR /opt/metasploit

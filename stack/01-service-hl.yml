@@ -11,10 +11,6 @@ networks:
     name: backend
     driver: overlay
     attachable: true
-  frontend:
-    name: frontend
-    driver: overlay
-    attachable: true
   rsync_network:
     name: rsync_network
     driver: overlay
@@ -166,30 +162,48 @@ x-deploy-template: &deploy-template
         memory: 100M                                    
 
 services:
-  #======================================================================         
-  #                                                                               
-  #======================================================================         
-  docker-socket-proxy:                                                            
-    image: tecnativa/docker-socket-proxy                                          
-    deploy:                                                                       
-      replicas: 1                                                                 
-      placement:                                                                  
-        constraints:                                                              
-          - node.role == manager                                                  
-    environment:                                                                  
-      - CONTAINERS=1                                                              
-      - SERVICES=1                                                                
-      - TASKS=1                                                                   
-      - NETWORKS=1                                                                
-      - NODES=1                                                                   
-      - IMAGES=1                                                                  
-      - VOLUMES=1                                                                 
-      - INFO=1                                                                    
-      - SWARM=1                                                                   
-      - STACKS=1                                                                  
-    volumes:                                                                      
-      - /var/run/docker.sock:/var/run/docker.sock:ro                              
-    networks:                                                                     
+  #======================================================================
+  # SERVICE: Docker Socket Proxy (sécurité - proxy filtrant pour l'API Docker)
+  #======================================================================
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.2.0
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+      labels:
+        - prometheus.enable=false
+        - prometheus.label.team=infrastructure
+        - prometheus.label.component=docker-proxy
+        - prometheus.label.stack=base
+        - prometheus.label.tier=security
+    environment:
+      # Lecture seule - pas de POST/DELETE
+      - POST=0
+      - DELETE=0
+      # API endpoints autorisés (lecture)
+      - CONTAINERS=1
+      - SERVICES=1
+      - TASKS=1
+      - NETWORKS=1
+      - NODES=1
+      - IMAGES=1
+      - VOLUMES=1
+      - INFO=1
+      - SWARM=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
       - backend                                                                   
   # =========================================================================
   # SERVICE:  registry 
@@ -308,7 +322,7 @@ services:
       # Docker Swarm
       - --providers.swarm.network=proxy
       - --providers.swarm=true
-      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.endpoint=tcp://docker-socket-proxy:2375
       - --providers.swarm.exposedbydefault=false
    
       # Points d'entrée
@@ -341,12 +355,9 @@ services:
       
     volumes:
       - /opt/bojemoi/volumes/traefik/var/log/traefik:/var/log/traefik
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-certificates:/letsencrypt
-      - /opt/bojemoi/volumes/traefik/certs:/etc/traefik/certs:ro   
+      - /opt/bojemoi/volumes/traefik/certs:/etc/traefik/certs:ro
       - /opt/bojemoi/volumes/traefik/dynamic-config.yml:/etc/traefik/dynamic/dynamic.yml:ro
-
- 
     networks:
       - proxy
       - backend
@@ -760,8 +771,8 @@ services:
       - source: prometheus_config
         target: /etc/prometheus/prometheus.yml
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - prometheus_data:/prometheus
+    # Note: Socket Docker retiré - utilise docker-socket-proxy via prometheus.yml si nécessaire
     deploy:
       replicas: 1
       restart_policy:
@@ -842,8 +853,9 @@ services:
     configs:
       - source: alloy_config
         target: /etc/alloy/config.alloy
+    environment:
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - shared_logs:/rsync/logs
     command:
       - run
@@ -1153,16 +1165,17 @@ services:
          target: /opt/bojemoi
        - ssh_keys:/root/.ssh:ro
        - shared_logs:/var/log/rsync
-       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-             - MODULE=swarm_data
-             - DATA_PATH=/opt/bojemoi
-             - RSYNC_MODE=master
-             - SYNC_INTERVAL=300
-             - REMOTE_HOSTS=rsync-slave
+       - MODULE=swarm_data
+       - DATA_PATH=/opt/bojemoi
+       - RSYNC_MODE=master
+       - SYNC_INTERVAL=300
+       - REMOTE_HOSTS=rsync-slave
+       - DOCKER_HOST=tcp://docker-socket-proxy:2375
     networks:
        - monitoring
        - rsync_network
+       - backend
     command: ["/scripts/rsync-start.sh"]
 
   rsync-slave:
@@ -1239,7 +1252,8 @@ services:
 #        target: /app/.env
 #        mode: 0440
     volumes:
-      # Socket Docker pour piloter les containers
+      # Socket Docker direct requis - l'orchestrator a besoin de POST/DELETE
+      # pour créer/supprimer des containers (non supporté par le proxy read-only)
       - /var/run/docker.sock:/var/run/docker.sock
       # Logs persistants
       - provisioning_logs:/app/logs
