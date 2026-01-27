@@ -22,14 +22,6 @@ rule_files:
 # Scrape configurations
 scrape_configs:
 
-  - job_name: 'gitlab'
-    static_configs:
-      - targets: ['gitlab.bojemoi.lab:9090']
-    
-  - job_name: 'gitlab-runner'
-    static_configs:
-      - targets: ['runner.bojemoi.lab:9252']
-
   # Prometheus self-monitoring
   - job_name: 'prometheus'
     static_configs:
@@ -236,70 +228,13 @@ scrape_configs:
           service: 'suricata'
           stack: 'security'
 
-  - job_name: 'zap'
-    static_configs:
-      - targets: ['zap:8090']
-        labels:
-          service: 'zap'
-          stack: 'security'
-
-  - job_name: 'metasploit'
-    static_configs:
-      - targets: ['metasploit-exporter:9100']
-        labels:
-          service: 'metasploit'
-          stack: 'security'
-
-  - job_name: 'faraday'
-    static_configs:
-      - targets: ['faraday:5985']
-        labels:
-          service: 'faraday'
-          stack: 'security'
-
-  - job_name: 'redis-exporter'
-    static_configs:
-      - targets: ['samsonov_redis-exporter:9121']
-        labels:
-          service: 'redis-exporter'
-          stack: 'samsonov'
-
-  - job_name: 'pentest-exporter'
-    static_configs:
-      - targets: ['samsonov_pentest-exporter:9999']
-        labels:
-          service: 'pentest-exporter'
-          stack: 'samsonov'
-
-  - job_name: 'nuclei-api'
-    static_configs:
-      - targets: ['nuclei_nuclei-api:8001']
-        labels:
-          service: 'nuclei-api'
-          stack: 'nuclei'
-    metrics_path: '/metrics'
-
   # Infrastructure Services
-  - job_name: 'traefik'
-    static_configs:
-      - targets: ['traefik:8082']
-        labels:
-          service: 'traefik'
-          stack: 'infrastructure'
-
   - job_name: 'postgresql'
     static_configs:
       - targets: ['postgres-exporter:9187']
         labels:
           service: 'postgresql'
           stack: 'database'
-
-  - job_name: 'docker-registry'
-    static_configs:
-      - targets: ['registry:5000']
-        labels:
-          service: 'docker-registry'
-          stack: 'infrastructure'
 
   # Node Exporter for system metrics
   - job_name: 'node-exporter'
