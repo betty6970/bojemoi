@@ -111,7 +111,7 @@ prometheus.remote_write "default" {
 // ========================================
 
 discovery.docker "containers" {
-  host = "unix:///var/run/docker.sock"
+  host = "http://docker-socket-proxy:2375"
   filter {
     name = "name"
     values = ["base_.*", "faraday_.*", "owasp_.*"]
@@ -119,7 +119,7 @@ discovery.docker "containers" {
 }
 
 loki.source.docker "docker_logs" {
-  host = "unix:///var/run/docker.sock"
+  host = "http://docker-socket-proxy:2375"
   targets = discovery.docker.containers.targets
   forward_to = [loki.process.parse_logs.receiver]
   labels = {job = "docker"}
