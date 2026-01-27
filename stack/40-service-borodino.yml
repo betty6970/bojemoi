@@ -472,6 +472,10 @@ services:
     networks:
       - pentest
     deploy:
+      labels:
+        - "prometheus.enable=true"
+        - "prometheus.port=9121"
+        - "prometheus.path=/metrics"
       replicas: 1
       resources:
         limits:
@@ -491,7 +495,9 @@ services:
       - pentest
     deploy:
       labels:
-        - "prometheus.scrape=true"
+        - "prometheus.enable=true"
+        - "prometheus.port=9090"
+        - "prometheus.path=/metrics"
       placement:
         constraints:
           - node.role == manager
