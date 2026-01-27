@@ -773,6 +773,7 @@ services:
         target: /etc/prometheus/prometheus.yml
     volumes:
       - prometheus_data:/prometheus
+      - /opt/bojemoi/volumes/prometheus/rules:/etc/prometheus/rules:ro
     # Note: Socket Docker retiré - utilise docker-socket-proxy via prometheus.yml si nécessaire
     deploy:
       replicas: 1
