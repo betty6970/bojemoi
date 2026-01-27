@@ -754,6 +754,7 @@ services:
       - monitoring
       - rsync_network
       - proxy
+      - backend  # Required for docker-socket-proxy access
     ports:
       - 9090:9090
     command:
