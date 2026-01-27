@@ -1,0 +1,35 @@
+{
+  "title": "ðŸ” Security Monitoring",
+  "tags": ["security"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "panels": [
+    {
+      "title": "Total Alertes",
+      "type": "stat",
+      "datasource": "Loki",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [{
+        "expr": "sum(count_over_time({job=\"suricata\"} | json | event_type=\"alert\" [1h]))"
+      }]
+    },
+    {
+      "title": "Top Signatures",
+      "type": "table",
+      "datasource": "Loki",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [{
+        "expr": "topk(10, sum by (alert_signature) (count_over_time({job=\"suricata\"} | json | event_type=\"alert\" [1h])))"
+      }]
+    },
+    {
+      "title": "Timeline Alertes",
+      "type": "timeseries",
+      "datasource": "Loki",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "targets": [{
+        "expr": "sum(rate({job=\"suricata\"} | json | event_type=\"alert\" [5m]))"
+      }]
+    }
+  ]
+}

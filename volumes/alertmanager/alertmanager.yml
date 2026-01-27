@@ -1,0 +1,57 @@
+global:
+  # Configuration SMTP Proton Mail Bridge
+  # Temps avant de d..clarer une alerte comme r..solue si elle
+  resolve_timeout: 5m
+  # Configuration SMTP (Email)
+  smtp_from: 'betty.bombers@bojemoi.lab'
+  smtp_smarthost: 'protonmail-bridge:1025'
+  smtp_auth_username: 'betty.bombers@proton.me'
+  smtp_auth_password: 'ypPbe-amlCvsdS4zf0vDsg'
+  smtp_require_tls: true
+
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  routes:
+    - receiver: 'default'
+      continue: true
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+
+receivers:
+  - name: 'default'
+    email_configs:
+      - to: 'betty.bombers@proton.me'
+        from: 'betty.bombers@proton.me'
+        send_resolved: true
+        headers:
+          Subject: '{{ .Status | toUpper }} [{{ .CommonLabels.alertname }}] {{ .CommonLabels.instance }}'
+        html: |
+          <!DOCTYPE html>
+          <html>
+          <body>
+            <h2>{{ .Status | toUpper }}</h2>
+            {{ range .Alerts }}
+            <h3>{{ .Labels.alertname }}</h3>
+            <p><strong>Severity:</strong> {{ .Labels.severity }}</p>
+            <p><strong>Instance:</strong> {{ .Labels.instance }}</p>
+            <p><strong>Summary:</strong> {{ .Annotations.summary }}</p>
+            <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+            <p><strong>Started:</strong> {{ .StartsAt }}</p>
+            {{ if .EndsAt }}<p><strong>Ended:</strong> {{ .EndsAt }}</p>{{ end }}
+            <hr>
+            {{ end }}
+          </body>
+          </html>
+        tls_config:
+          ca_file: /etc/alertmanager/certs/protonmail-bridge.crt
+          server_name: '127.0.0.1'  # Tell TLS to expect this name instead
+

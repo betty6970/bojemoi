@@ -1,0 +1,317 @@
+# Prometheus configuration for bojemoi.lab.local
+# Global configuration
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'bojemoi-lab'
+    environment: 'homelab'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - 'alertmanager:9093'
+
+# Load rules from files
+rule_files:
+  - '/etc/prometheus/rules/*.yml'
+
+# Scrape configurations
+scrape_configs:
+
+  - job_name: 'gitlab'
+    static_configs:
+      - targets: ['gitlab.bojemoi.lab:9090']
+    
+  - job_name: 'gitlab-runner'
+    static_configs:
+      - targets: ['runner.bojemoi.lab:9252']
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+
+  # Alertmanager monitoring
+  - job_name: 'alertmanager'
+    static_configs:
+      - targets: ['alertmanager:9093']
+        labels:
+          service: 'alertmanager'
+
+  # Grafana monitoring
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+        labels:
+          service: 'grafana'
+
+  # Loki monitoring
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+        labels:
+          service: 'loki'
+
+  # Tempo monitoring
+  - job_name: 'tempo'
+    static_configs:
+      - targets: ['tempo:3200']
+        labels:
+          service: 'tempo'
+
+  # Grafana Alloy monitoring
+  - job_name: 'alloy'
+    static_configs:
+      - targets: ['alloy:12345']
+        labels:
+          service: 'alloy'
+
+  # Postfix Exporter monitoring
+  - job_name: 'postfix'
+    static_configs:
+      - targets: ['postfix-exporter:9154']
+        labels:
+          service: 'postfix'
+
+  # Docker Swarm - Node discovery
+  - job_name: 'docker-swarm-nodes'
+    dockerswarm_sd_configs:
+      - host: http://docker-socket-proxy:2375
+        role: nodes
+    relabel_configs:
+      - source_labels: [__meta_dockerswarm_node_id]
+        target_label: node_id
+      - source_labels: [__meta_dockerswarm_node_hostname]
+        target_label: node_hostname
+      - source_labels: [__meta_dockerswarm_node_address]
+        target_label: node_address
+      - source_labels: [__meta_dockerswarm_node_availability]
+        target_label: availability
+      - source_labels: [__meta_dockerswarm_node_manager_reachability]
+        target_label: reachability
+      # CRITIQUE : Forcer le port 9100 pour node-exporter
+      - source_labels: [__address__]
+        regex: '([^:]+):.*'
+        replacement: '${1}:9100'
+        target_label: __address__
+
+  # Docker Swarm - Service discovery with opt-out capability
+  - job_name: 'docker-swarm-services'
+    dockerswarm_sd_configs:
+      - host: http://docker-socket-proxy:2375
+        role: tasks
+        refresh_interval: 30s
+    relabel_configs:
+      # Drop services with prometheus.enable=false label
+      - source_labels: [__meta_dockerswarm_service_label_prometheus_enable]
+        regex: 'true'
+        action: keep
+      
+      # Only keep tasks that are running
+      - source_labels: [__meta_dockerswarm_task_desired_state]
+        regex: running
+        action: keep
+      # Drop si le label existe ET vaut false
+      - source_labels: [__meta_dockerswarm_service_label_prometheus_enable]
+        regex: '(false|)'  # Matche 'false' OU vide (pas de label)
+        action: drop
+
+      # NOUVEAU: Construire l'adresse avec le nom du service au lieu de l'IP
+      - source_labels: [__meta_dockerswarm_service_name]
+        target_label: __tmp_service_name
+      - source_labels: [__meta_dockerswarm_task_port_publish_port]
+        regex: '(\d+)'
+        target_label: __tmp_port
+      - source_labels: [__tmp_service_name, __tmp_port]
+        separator: ':'
+        regex: '(.+):(.+)'
+        replacement: '${1}:${2}'
+        target_label: __address__
+ 
+      # Service name as job label
+      - source_labels: [__meta_dockerswarm_service_name]
+        target_label: job
+      
+      # Service ID
+      - source_labels: [__meta_dockerswarm_service_id]
+        target_label: service_id
+      
+      # Task ID
+      - source_labels: [__meta_dockerswarm_task_id]
+        target_label: task_id
+      
+      # Task slot
+      - source_labels: [__meta_dockerswarm_task_slot]
+        target_label: task_slot
+      
+      # Container ID
+      - source_labels: [__meta_dockerswarm_container_label_com_docker_swarm_task_id]
+        target_label: container_id
+      
+      # Node hostname
+      - source_labels: [__meta_dockerswarm_node_hostname]
+        target_label: node_hostname
+      
+      # Node ID
+      - source_labels: [__meta_dockerswarm_node_id]
+        target_label: node_id
+      
+      # Network name
+      - source_labels: [__meta_dockerswarm_network_name]
+        target_label: network
+      
+      # Stack name (if available from labels)
+      - source_labels: [__meta_dockerswarm_service_label_com_docker_stack_namespace]
+        target_label: stack
+      
+      # Custom prometheus port from label (default to 9090)
+      - source_labels: [__meta_dockerswarm_service_name, __meta_dockerswarm_service_label_prometheus_port]
+        regex: '(\d+);(\d+)'
+        target_label: __address__
+        replacement: 'tasks.${1}:${2}'
+      
+      # Default metrics path
+      - source_labels: [__meta_dockerswarm_service_label_prometheus_path]
+        regex: '(.+)'
+        target_label: __metrics_path__
+      
+      # Custom labels from service labels (prometheus.label.*)
+      - regex: __meta_dockerswarm_service_label_prometheus_label_(.+)
+        action: labelmap
+        replacement: ${1}
+      
+      # Preserve all service labels
+      - regex: __meta_dockerswarm_service_label_(.+)
+        action: labelmap
+        replacement: swarm_service_${1}
+
+  # Docker Swarm - Container discovery with cAdvisor
+  - job_name: 'docker-containers'
+    dockerswarm_sd_configs:
+      - host: http://docker-socket-proxy:2375
+        role: tasks
+        refresh_interval: 30s
+    relabel_configs:
+      # Drop if prometheus.enable=false
+      - source_labels: [__meta_dockerswarm_service_label_prometheus_enable]
+        regex: 'false'
+        action: drop
+      
+      # Only running tasks
+      - source_labels: [__meta_dockerswarm_task_desired_state]
+        regex: running
+        action: keep
+      
+      # Target cAdvisor endpoint
+      - source_labels: [__meta_dockerswarm_node_address]
+        target_label: __address__
+        replacement: '${1}:8088'
+
+      # NOUVEAU: Corriger le chemin des métriques pour cAdvisor
+      - target_label: __metrics_path__
+        replacement: /metrics
+    
+      # Ajouter le nom du nœud comme label
+      - source_labels: [__meta_dockerswarm_node_hostname]
+        target_label: node
+ 
+      
+      - source_labels: [__meta_dockerswarm_service_name]
+        target_label: service_name
+      
+      - source_labels: [__meta_dockerswarm_task_id]
+        target_label: container_id
+
+  # Security Stack Services
+  - job_name: 'suricata'
+    static_configs:
+      - targets: ['suricata-exporter:9917']
+        labels:
+          service: 'suricata'
+          stack: 'security'
+
+  - job_name: 'zap'
+    static_configs:
+      - targets: ['zap:8090']
+        labels:
+          service: 'zap'
+          stack: 'security'
+
+  - job_name: 'metasploit'
+    static_configs:
+      - targets: ['metasploit-exporter:9100']
+        labels:
+          service: 'metasploit'
+          stack: 'security'
+
+  - job_name: 'faraday'
+    static_configs:
+      - targets: ['faraday:5985']
+        labels:
+          service: 'faraday'
+          stack: 'security'
+
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['samsonov_redis-exporter:9121']
+        labels:
+          service: 'redis-exporter'
+          stack: 'samsonov'
+
+  - job_name: 'pentest-exporter'
+    static_configs:
+      - targets: ['samsonov_pentest-exporter:9999']
+        labels:
+          service: 'pentest-exporter'
+          stack: 'samsonov'
+
+  - job_name: 'nuclei-api'
+    static_configs:
+      - targets: ['nuclei_nuclei-api:8001']
+        labels:
+          service: 'nuclei-api'
+          stack: 'nuclei'
+    metrics_path: '/metrics'
+
+  # Infrastructure Services
+  - job_name: 'traefik'
+    static_configs:
+      - targets: ['traefik:8082']
+        labels:
+          service: 'traefik'
+          stack: 'infrastructure'
+
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          service: 'postgresql'
+          stack: 'database'
+
+  - job_name: 'docker-registry'
+    static_configs:
+      - targets: ['registry:5000']
+        labels:
+          service: 'docker-registry'
+          stack: 'infrastructure'
+
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    dockerswarm_sd_configs:
+      - host: http://docker-socket-proxy:2375
+        role: nodes
+    relabel_configs:
+      - source_labels: [__meta_dockerswarm_node_hostname]
+        target_label: instance
+      - source_labels: [__meta_dockerswarm_node_address]
+        target_label: __address__
+        replacement: '${1}:9100'
+
+
+

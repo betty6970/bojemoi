@@ -1,0 +1,297 @@
+
+// ========================================
+// OPENTELEMETRY TRACES COLLECTION
+// ========================================
+
+// Récepteur OTLP pour recevoir les traces
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  
+  output {
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+// Batch processor pour optimiser l'envoi
+otelcol.processor.batch "default" {
+  output {
+    traces  = [otelcol.exporter.otlp.tempo.input]
+  }
+  
+  timeout = "5s"
+  send_batch_size = 100
+}
+
+// Ton exporter Tempo (déjà correct)
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// ========================================
+// PROMETHEUS SCRAPING
+// ========================================
+
+prometheus.scrape "node_exporter" {
+  targets = [{"__address__" = "base_node-exporter:9100"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "15s"
+}
+
+prometheus.scrape "cadvisor" {
+  targets = [{"__address__" = "base_cadvisor:8080"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "15s"
+}
+
+prometheus.scrape "traefik" {
+  targets = [{"__address__" = "base_traefik:8080"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "15s"
+}
+
+prometheus.scrape "suricata_exporter" {
+  targets = [{"__address__" = "base_suricata-exporter:9917"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "15s"
+}
+
+prometheus.scrape "postgres_exporter" {
+  targets = [{"__address__" = "postgres-exporter:9187"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "30s"
+}
+
+prometheus.scrape "prometheus" {
+  targets = [{"__address__" = "base_prometheus:9090"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "30s"
+}
+
+prometheus.scrape "loki" {
+  targets = [{"__address__" = "base_loki:3100"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "30s"
+}
+
+prometheus.scrape "grafana" {
+  targets = [{"__address__" = "base_grafana:3000"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "30s"
+}
+
+prometheus.scrape "alertmanager" {
+  targets = [{"__address__" = "base_alertmanager:9093"}]
+  forward_to = [prometheus.remote_write.default.receiver]
+  scrape_interval = "30s"
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://base_prometheus:9090/api/v1/write"
+    queue_config {
+      capacity = 10000
+      max_shards = 200
+    }
+  }
+}
+
+// ========================================
+// LOKI LOG COLLECTION
+// ========================================
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name = "name"
+    values = ["base_.*", "faraday_.*", "owasp_.*"]
+  }
+}
+
+loki.source.docker "docker_logs" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.docker.containers.targets
+  forward_to = [loki.process.parse_logs.receiver]
+  labels = {job = "docker"}
+}
+
+loki.process "parse_logs" {
+  stage.json {
+    expressions = {
+      // Suricata EVE JSON
+      event_type       = "event_type",
+      timestamp        = "timestamp",
+      src_ip          = "src_ip",
+      dest_ip         = "dest_ip",
+      src_port        = "src_port",
+      dest_port       = "dest_port",
+      proto           = "proto",
+      
+      // Suricata Alerts
+      alert_signature = "alert.signature",
+      alert_severity  = "alert.severity",
+      alert_category  = "alert.category",
+      severity        = "alert.severity",
+      
+      // DNS
+      query           = "dns.query",
+      query_type      = "dns.type",
+      rrtype          = "dns.rrtype",
+      
+      // HTTP
+      http_hostname   = "http.hostname",
+      http_url        = "http.url",
+      http_method     = "http.http_method",
+      http_status     = "http.status",
+      
+      // TLS
+      tls_sni         = "tls.sni",
+      tls_version     = "tls.version",
+      
+      // Flow
+      flow_pkts_toserver   = "flow.pkts_toserver",
+      flow_bytes_toserver  = "flow.bytes_toserver",
+    }
+  }
+  
+  stage.labels {
+    values = {
+      event_type = "",
+      severity = "",
+      alert_category  = "",
+      proto           = "",
+   }
+  }
+// Drop des logs de debug non pertinents
+  stage.match {
+    selector = "{job=\"docker\"} |~ \"(?i)(debug|trace)\""
+    action   = "drop"
+  }
+  
+  // Enrichissement pour Traefik
+  stage.regex {
+    expression = ".*ClientHost=(?P<client_host>[^ ]+).*RequestMethod=(?P<request_method>[^ ]+).*RequestPath=(?P<request_path>[^ ]+).*"
+  }
+  
+  stage.labels {
+    values = {
+      client_host    = "",
+      request_method = "",
+    }
+  }
+
+  
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.source.file "suricata_eve" {
+  targets = [{
+    __path__ = "/var/log/suricata/eve.json",
+    job = "suricata",
+  }]
+  forward_to = [loki.process.parse_logs.receiver]
+}
+// Collecte des logs système
+loki.source.journal "system_logs" {
+  forward_to = [loki.process.system.receiver]
+  
+  labels = {
+    job = "systemd",
+  }
+}
+
+loki.process "system" {
+    stage.json {
+        expressions = {
+            unit    = "_SYSTEMD_UNIT",
+            message = "MESSAGE",
+            priority = "PRIORITY",  // utile pour la sévérité
+        }
+    }
+    
+    stage.labels {
+        values = {
+            unit     = "unit",
+            priority = "priority",
+        }
+    }
+    
+    // Optionnel : renommer le message pour plus de clarté
+    stage.output {
+        source = "message"
+    }
+    
+    forward_to = [loki.write.local.receiver]
+}
+
+// Logs dnsmasq
+loki.source.file "dnsmasq_logs" {
+  targets = [
+    {
+      __path__ = "/var/log/dnsmasq.log",
+      job      = "dnsmasq",
+    },
+  ]
+  
+  forward_to = [loki.process.dnsmasq.receiver]
+}
+
+loki.process "dnsmasq" {
+  stage.regex {
+    expression = ".*query\\[(?P<query_type>[^\\]]+)\\] (?P<query>[^ ]+) from (?P<client>[^ ]+)"
+  }
+  
+  stage.labels {
+    values = {
+      query_type = "",
+    }
+  }
+  
+  forward_to = [loki.write.local.receiver]
+}
+
+// Write to Loki
+loki.write "local" {
+  endpoint {
+    url = "http://base_loki:3100/loki/api/v1/push"
+    
+    batch_wait = "1s"
+//    batch_size = 1024 
+  }
+}
+// ========================================
+// EXPORTERS ADDITIONNELS
+// ========================================
+
+// Postfix Exporter (si installé)
+//prometheus.exporter.unix "postfix" {
+//  textfile_directory = "/var/spool/postfix/stats"
+//}
+
+//prometheus.scrape "postfix" {
+//  targets    = prometheus.exporter.unix.postfix.targets
+//  forward_to = [prometheus.remote_write.default.receiver]
+//}
+
+// ========================================
+// HEALTH CHECKS
+// ========================================
+prometheus.exporter.self "alloy" {}
+
+prometheus.scrape "alloy" {
+  targets    = prometheus.exporter.self.alloy.targets
+  forward_to = [prometheus.remote_write.default.receiver]
+  
+  scrape_interval = "30s"
+}
+

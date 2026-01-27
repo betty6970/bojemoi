@@ -1,0 +1,357 @@
+# =============================================================================
+# Alertmanager Configuration
+# Fichier: alertmanager.yml
+# =============================================================================
+
+global:
+  # Temps avant de déclarer une alerte comme résolue si elle n'est plus active
+  resolve_timeout: 5m
+  
+  # Configuration SMTP (Email)
+  smtp_from: 'alertmanager@bojemoi.lab'
+  smtp_smarthost: 'protonmail-bridge.bojemoi.lab:1025'
+  smtp_auth_username: 'betty.bombers@proton.me'
+  smtp_auth_password: ypPbe-amlCvsdS4zf0vDsg
+  smtp_require_tls: true
+  
+  # URL externe d'Alertmanager
+  http_config:
+    follow_redirects: true
+
+# =============================================================================
+# TEMPLATES
+# =============================================================================
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# =============================================================================
+# ROUTE CONFIGURATION
+# =============================================================================
+route:
+  # Route par défaut
+  receiver: 'default'
+  
+  # Temps d'attente avant d'envoyer une alerte
+  group_wait: 30s
+  
+  # Temps d'attente avant d'envoyer des mises à jour pour un groupe
+  group_interval: 5m
+  
+  # Temps minimum entre deux notifications pour la même alerte
+  repeat_interval: 4h
+  
+  # Grouper les alertes par ces labels
+  group_by: ['alertname', 'cluster', 'severity']
+
+  # Routes spécifiques
+  routes:
+    # Alertes critiques - notification immédiate
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 10s
+      repeat_interval: 30m
+      continue: true  # Continue vers d'autres routes
+    
+    # Alertes de sécurité
+    - match:
+        component: security
+      receiver: 'security-team'
+      group_by: ['alertname', 'security_tool']
+      group_wait: 1m
+      repeat_interval: 2h
+    
+    # Alertes infrastructure
+    - match:
+        component: infrastructure
+      receiver: 'infra-team'
+      group_by: ['alertname', 'node_role', 'instance']
+      group_wait: 1m
+      repeat_interval: 3h
+    
+    # Alertes orchestration (Swarm)
+    - match:
+        component: orchestration
+      receiver: 'infra-team'
+      group_by: ['alertname', 'service']
+      group_wait: 30s
+      repeat_interval: 1h
+    
+    # Alertes monitoring stack
+    - match:
+        component: monitoring
+      receiver: 'monitoring-team'
+      group_by: ['alertname']
+      group_wait: 2m
+      repeat_interval: 6h
+    
+    # Alertes Traefik/reverse-proxy
+    - match:
+        component: reverse-proxy
+      receiver: 'infra-team'
+      group_by: ['alertname', 'service']
+      group_wait: 1m
+      repeat_interval: 2h
+    
+    # Alertes backup
+    - match:
+        component: backup
+      receiver: 'backup-team'
+      group_wait: 5m
+      repeat_interval: 12h
+    
+    # Alertes warning (moins urgent)
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 5m
+      repeat_interval: 6h
+
+# =============================================================================
+# INHIBITION RULES
+# =============================================================================
+# Empêche certaines alertes d'en déclencher d'autres
+inhibit_rules:
+  # Si un nœud est down, ne pas envoyer d'alertes CPU/RAM pour ce nœud
+  - source_match:
+      alertname: 'NodeDown'
+    target_match_re:
+      alertname: 'Node(HighCPU|CriticalCPU|HighMemory|CriticalMemory)'
+    equal: ['instance']
+  
+  # Si Traefik est down, ignorer les alertes de service HTTP down
+  - source_match:
+      alertname: 'TraefikDown'
+    target_match:
+      alertname: 'ServiceHTTPDown'
+  
+  # Si Prometheus est down, ignorer les autres alertes monitoring
+  - source_match:
+      alertname: 'PrometheusDown'
+    target_match_re:
+      alertname: '(Grafana|Loki|Alertmanager)Down'
+  
+  # Si un manager Swarm est down, ignorer les alertes de services
+  - source_match:
+      alertname: 'SwarmManagerDown'
+    target_match_re:
+      alertname: 'Service.*'
+    equal: ['instance']
+  
+  # Critical alerts inhibit warning alerts
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+
+# =============================================================================
+# RECEIVERS
+# =============================================================================
+receivers:
+  # ---------------------------------------
+  # Default receiver
+  # ---------------------------------------
+  - name: 'default'
+    email_configs:
+      - to: 'admin@bojemoi.lab'
+        headers:
+          Subject: '[{{ .GroupLabels.severity | toUpper }}] {{ .GroupLabels.alertname }}'
+        html: |
+          <h2>Alert: {{ .GroupLabels.alertname }}</h2>
+          <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+          <p><strong>Cluster:</strong> {{ .GroupLabels.cluster }}</p>
+          <h3>Active Alerts:</h3>
+          {{ range .Alerts }}
+          <p>
+            <strong>{{ .Labels.instance }}</strong><br/>
+            {{ .Annotations.summary }}<br/>
+            {{ .Annotations.description }}
+          </p>
+          {{ end }}
+
+  # ---------------------------------------
+  # Critical alerts - Multiple channels
+  # ---------------------------------------
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'admin@bojemoi.lab,oncall@bojemoi.lab'
+        send_resolved: true
+        headers:
+          Subject: '🚨 [CRITICAL] {{ .GroupLabels.alertname }}'
+        html: |
+          <h1 style="color: red;">🚨 CRITICAL ALERT</h1>
+          <h2>{{ .GroupLabels.alertname }}</h2>
+          <p><strong>Cluster:</strong> {{ .GroupLabels.cluster }}</p>
+          <h3>Details:</h3>
+          {{ range .Alerts }}
+          <div style="border: 2px solid red; padding: 10px; margin: 10px 0;">
+            <p><strong>Instance:</strong> {{ .Labels.instance }}</p>
+            <p><strong>Summary:</strong> {{ .Annotations.summary }}</p>
+            <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+            <p><strong>Started:</strong> {{ .StartsAt }}</p>
+          </div>
+          {{ end }}
+    
+    # Webhook pour intégration Slack/Discord/Teams
+    webhook_configs:
+      - url: 'http://webhook-receiver:8080/critical'
+        send_resolved: true
+        http_config:
+          follow_redirects: true
+
+  # ---------------------------------------
+  # Security team
+  # ---------------------------------------
+  - name: 'security-team'
+    email_configs:
+      - to: 'security@bojemoi.lab'
+        send_resolved: true
+        headers:
+          Subject: '🔒 [SECURITY] {{ .GroupLabels.alertname }}'
+        html: |
+          <h2 style="color: orange;">🔒 Security Alert</h2>
+          <h3>{{ .GroupLabels.alertname }}</h3>
+          {{ range .Alerts }}
+          <p>
+            <strong>Tool:</strong> {{ .Labels.security_tool }}<br/>
+            <strong>Summary:</strong> {{ .Annotations.summary }}<br/>
+            <strong>Description:</strong> {{ .Annotations.description }}
+          </p>
+          {{ end }}
+
+  # ---------------------------------------
+  # Infrastructure team
+  # ---------------------------------------
+  - name: 'infra-team'
+    email_configs:
+      - to: 'infra@bojemoi.lab'
+        send_resolved: true
+        headers:
+          Subject: '[INFRA] {{ .GroupLabels.alertname }}'
+
+  # ---------------------------------------
+  # Monitoring team
+  # ---------------------------------------
+  - name: 'monitoring-team'
+    email_configs:
+      - to: 'monitoring@bojemoi.lab'
+        send_resolved: true
+        headers:
+          Subject: '[MONITORING] {{ .GroupLabels.alertname }}'
+
+  # ---------------------------------------
+  # Backup team
+  # ---------------------------------------
+  - name: 'backup-team'
+    email_configs:
+      - to: 'backup@bojemoi.lab'
+        send_resolved: true
+        headers:
+          Subject: '[BACKUP] {{ .GroupLabels.alertname }}'
+
+  # ---------------------------------------
+  # Warning alerts - Less urgent
+  # ---------------------------------------
+  - name: 'warning-alerts'
+    email_configs:
+      - to: 'warnings@bojemoi.lab'
+        send_resolved: true
+        headers:
+          Subject: '[WARNING] {{ .GroupLabels.alertname }}'
+
+  # ---------------------------------------
+  # Slack integration (exemple)
+  # ---------------------------------------
+  - name: 'slack-notifications'
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
+        channel: '#alerts'
+        username: 'Alertmanager'
+        icon_emoji: ':warning:'
+        send_resolved: true
+        title: '{{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Summary:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Instance:* {{ .Labels.instance }}
+          {{ end }}
+
+  # ---------------------------------------
+  # Discord webhook (exemple)
+  # ---------------------------------------
+  - name: 'discord-notifications'
+    webhook_configs:
+      - url: 'https://discord.com/api/webhooks/YOUR/WEBHOOK/URL'
+        send_resolved: true
+
+  # ---------------------------------------
+  # PagerDuty integration (exemple)
+  # ---------------------------------------
+  - name: 'pagerduty'
+    pagerduty_configs:
+      - routing_key: 'YOUR_PAGERDUTY_INTEGRATION_KEY'
+        severity: '{{ .GroupLabels.severity }}'
+        description: '{{ .GroupLabels.alertname }}: {{ .Annotations.summary }}'
+        client: 'Prometheus Alertmanager'
+        client_url: 'https://prometheus.bojemoi.lab'
+
+# =============================================================================
+# TIME INTERVALS
+# =============================================================================
+# Définir des périodes pour moduler les notifications
+time_intervals:
+  # Heures de bureau
+  - name: 'business-hours'
+    time_intervals:
+      - times:
+          - start_time: '09:00'
+            end_time: '18:00'
+        weekdays: ['monday:friday']
+  
+  # Week-end
+  - name: 'weekends'
+    time_intervals:
+      - weekdays: ['saturday', 'sunday']
+  
+
+# =============================================================================
+# MUTE TIME INTERVALS
+# =============================================================================
+# Définir des périodes où ne PAS envoyer certaines notifications
+# mute_time_intervals:
+#   - name: 'maintenance-window'
+#     time_intervals:
+#       - times:
+#           - start_time: '02:00'
+#             end_time: '04:00'
+#         weekdays: ['sunday']
+
+# =============================================================================
+# NOTES D'UTILISATION
+# =============================================================================
+#
+# 1. Tester la configuration:
+#    amtool check-config alertmanager.yml
+#
+# 2. Tester le routing:
+#    amtool config routes test --config.file=alertmanager.yml \
+#      alertname=NodeDown severity=critical
+#
+# 3. Envoyer une alerte test:
+#    curl -X POST http://alertmanager.bojemoi.lab:9093/api/v1/alerts \
+#      -H 'Content-Type: application/json' \
+#      -d '[{"labels":{"alertname":"TestAlert","severity":"warning"}}]'
+#
+# 4. Voir les alertes actives:
+#    curl http://alertmanager.bojemoi.lab:9093/api/v2/alerts
+#
+# 5. Recharger la config (sans redémarrer):
+#    curl -X POST http://alertmanager.bojemoi.lab:9093/-/reload
+#
+# 6. Silence une alerte via API:
+#    amtool silence add alertname=NodeDown instance=node01
+#
+# =============================================================================

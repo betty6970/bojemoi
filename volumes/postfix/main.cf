@@ -1,0 +1,35 @@
+# Configuration Postfix pour lab bojemoi.lab
+
+# Paramètres de base
+myhostname = mail.bojemoi.lab
+mydomain = bojemoi.lab
+myorigin = $mydomain
+
+# Domaines acceptés
+mydestination = $myhostname, $mydomain, localhost, localhost.localdomain
+
+# Réseaux autorisés (votre lab)
+mynetworks = 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8
+
+# Interface d'écoute
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Restrictions simplifiées pour le lab
+smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+
+# Désactiver les vérifications DNS strictes
+smtp_dns_support_level = enabled
+
+smtp_host_lookup = native
+
+# Taille maximale des messages (10 MB)
+message_size_limit = 10485760
+
+# Mailbox
+home_mailbox = Maildir/
+mailbox_command =
+
+# Logging
+maillog_file = /var/log/mail.log
+

@@ -1,0 +1,973 @@
+groups:
+  - name: base_infrastructure
+    interval: 30s
+    rules:
+      # Node Exporter - Santé des hôtes
+      - alert: HostDown
+        expr: up{job="node-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Host {{ $labels.instance }} est DOWN"
+          description: "Le node-exporter sur {{ $labels.instance }} ne répond plus depuis 2 minutes"
+
+      - alert: HostHighCPU
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "CPU élevé sur {{ $labels.instance }}"
+          description: "Utilisation CPU à {{ $value | humanizePercentage }} sur {{ $labels.instance }}"
+
+      - alert: HostCriticalCPU
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+        for: 5m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "CPU critique sur {{ $labels.instance }}"
+          description: "Utilisation CPU à {{ $value | humanizePercentage }} sur {{ $labels.instance }}"
+
+      - alert: HostHighMemory
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Mémoire élevée sur {{ $labels.instance }}"
+          description: "Utilisation mémoire à {{ $value | humanizePercentage }} sur {{ $labels.instance }}"
+
+      - alert: HostCriticalMemory
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+        for: 5m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Mémoire critique sur {{ $labels.instance }}"
+          description: "Utilisation mémoire à {{ $value | humanizePercentage }} sur {{ $labels.instance }}"
+
+      - alert: HostDiskSpaceWarning
+        expr: (node_filesystem_avail_bytes{fstype!="tmpfs",mountpoint!~"/boot.*"} / node_filesystem_size_bytes) * 100 < 15
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Espace disque faible sur {{ $labels.instance }}"
+          description: "Partition {{ $labels.mountpoint }} sur {{ $labels.instance }} : {{ $value | humanizePercentage }} d'espace libre restant"
+
+      - alert: HostDiskSpaceCritical
+        expr: (node_filesystem_avail_bytes{fstype!="tmpfs",mountpoint!~"/boot.*"} / node_filesystem_size_bytes) * 100 < 5
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Espace disque critique sur {{ $labels.instance }}"
+          description: "Partition {{ $labels.mountpoint }} sur {{ $labels.instance }} : {{ $value | humanizePercentage }} d'espace libre restant"
+
+      - alert: HostDiskIOHigh
+        expr: rate(node_disk_io_time_seconds_total[5m]) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "I/O disque élevé sur {{ $labels.instance }}"
+          description: "Le disque {{ $labels.device }} sur {{ $labels.instance }} est saturé à {{ $value | humanizePercentage }}"
+
+      - alert: HostNetworkErrors
+        expr: rate(node_network_receive_errs_total[5m]) > 10 or rate(node_network_transmit_errs_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Erreurs réseau sur {{ $labels.instance }}"
+          description: "Interface {{ $labels.device }} sur {{ $labels.instance }} présente des erreurs réseau"
+
+      - alert: HostLoadAverage
+        expr: node_load15 / count(node_cpu_seconds_total{mode="idle"}) without(cpu,mode) > 2
+        for: 15m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "Load average élevé sur {{ $labels.instance }}"
+          description: "Load average 15min à {{ $value }} sur {{ $labels.instance }}"
+
+      # DNS (dnsmasq)
+      - alert: DnsmasqDown
+        expr: up{job="dnsmasq"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: dns
+        annotations:
+          summary: "Dnsmasq DOWN"
+          description: "Le service dnsmasq ne répond plus depuis 2 minutes"
+
+      # Rsync
+      - alert: RsyncMasterDown
+        expr: up{job="rsync-master"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: backup
+        annotations:
+          summary: "Rsync Master DOWN"
+          description: "Le service rsync master ne répond plus"
+
+      - alert: RsyncSlaveDown
+        expr: up{job="rsync-slave"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: backup
+        annotations:
+          summary: "Rsync Slave DOWN"
+          description: "Le service rsync slave ne répond plus"
+
+      # Registry
+      - alert: RegistryDown
+        expr: up{job="registry"} == 0
+        for: 3m
+        labels:
+          severity: warning
+          component: registry
+        annotations:
+          summary: "Docker Registry DOWN"
+          description: "Le registry Docker ne répond plus"
+
+      # Orbiter (si métriques disponibles)
+      - alert: OrbiterDown
+        expr: up{job="orbiter"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Orbiter DOWN"
+          description: "Le service Orbiter ne répond plus"
+
+
+  - name: monitoring_stack
+    interval: 30s
+    rules:
+      # Prometheus
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Prometheus DOWN"
+          description: "Prometheus ne répond plus depuis 2 minutes"
+
+      - alert: PrometheusTargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Target Prometheus DOWN"
+          description: "La cible {{ $labels.job }} ({{ $labels.instance }}) est DOWN depuis 5 minutes"
+
+      - alert: PrometheusHighCardinality
+        expr: prometheus_tsdb_symbol_table_size_bytes > 100000000
+        for: 10m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Cardinalité élevée dans Prometheus"
+          description: "La table de symboles Prometheus est à {{ $value | humanize }}B"
+
+      - alert: PrometheusTSDBCompactionsFailing
+        expr: rate(prometheus_tsdb_compactions_failed_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Échecs de compaction TSDB Prometheus"
+          description: "Prometheus rencontre des échecs de compaction TSDB"
+
+      - alert: PrometheusNotConnectedToAlertmanager
+        expr: prometheus_notifications_alertmanagers_discovered < 1
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Prometheus non connecté à Alertmanager"
+          description: "Prometheus n'a découvert aucun Alertmanager"
+
+      - alert: PrometheusRuleEvaluationFailures
+        expr: rate(prometheus_rule_evaluation_failures_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Échecs d'évaluation des règles Prometheus"
+          description: "Prometheus rencontre des échecs d'évaluation pour {{ $labels.rule_group }}"
+
+      # Alertmanager
+      - alert: AlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Alertmanager DOWN"
+          description: "Alertmanager ne répond plus depuis 2 minutes"
+
+      - alert: AlertmanagerConfigReloadFailed
+        expr: alertmanager_config_last_reload_successful == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Échec de rechargement config Alertmanager"
+          description: "Le rechargement de configuration d'Alertmanager a échoué"
+
+      - alert: AlertmanagerNotificationsFailing
+        expr: rate(alertmanager_notifications_failed_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Échecs de notifications Alertmanager"
+          description: "Alertmanager échoue à envoyer des notifications vers {{ $labels.integration }}"
+
+      # Grafana
+      - alert: GrafanaDown
+        expr: up{job="grafana"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Grafana DOWN"
+          description: "Grafana ne répond plus depuis 2 minutes"
+
+      # Loki
+      - alert: LokiDown
+        expr: up{job="loki"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Loki DOWN"
+          description: "Loki ne répond plus depuis 2 minutes"
+
+      - alert: LokiRequestErrors
+        expr: rate(loki_request_duration_seconds_count{status_code=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Erreurs de requêtes Loki élevées"
+          description: "Loki rencontre un taux d'erreur élevé : {{ $value | humanizePercentage }}"
+
+      - alert: LokiIngesterReplayErrors
+        expr: rate(loki_ingester_wal_replay_errors_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Erreurs de replay WAL Loki"
+          description: "Loki ingester rencontre des erreurs de replay WAL"
+
+      - alert: LokiCompactorErrors
+        expr: rate(loki_boltdb_shipper_compact_tables_operation_total{status="failed"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Erreurs du compacteur Loki"
+          description: "Le compacteur Loki rencontre des échecs"
+
+      # Alloy
+      - alert: AlloyDown
+        expr: up{job="alloy"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Alloy DOWN"
+          description: "Grafana Alloy ne répond plus depuis 2 minutes"
+
+      - alert: AlloyComponentUnhealthy
+        expr: alloy_component_controller_evaluating{health_type!="healthy"} == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Composant Alloy non sain"
+          description: "Le composant {{ $labels.component_id }} d'Alloy est en état {{ $labels.health_type }}"
+
+      - alert: AlloyHighMemory
+        expr: process_resident_memory_bytes{job="alloy"} > 2000000000
+        for: 10m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Utilisation mémoire élevée pour Alloy"
+          description: "Alloy utilise {{ $value | humanize }}B de mémoire"
+
+  - name: databases
+    interval: 30s
+    rules:
+      # PostgreSQL
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "PostgreSQL DOWN sur {{ $labels.instance }}"
+          description: "La base de données PostgreSQL ne répond plus depuis 2 minutes"
+
+      - alert: PostgresTooManyConnections
+        expr: sum by (instance) (pg_stat_activity_count) > pg_settings_max_connections * 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Trop de connexions PostgreSQL"
+          description: "PostgreSQL sur {{ $labels.instance }} a {{ $value }} connexions (> 80% du max)"
+
+      - alert: PostgresConnectionsExhausted
+        expr: sum by (instance) (pg_stat_activity_count) > pg_settings_max_connections * 0.95
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Connexions PostgreSQL quasi-épuisées"
+          description: "PostgreSQL sur {{ $labels.instance }} a {{ $value }} connexions (> 95% du max)"
+
+      - alert: PostgresDeadLocks
+        expr: rate(pg_stat_database_deadlocks[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Deadlocks détectés dans PostgreSQL"
+          description: "Base {{ $labels.datname }} sur {{ $labels.instance }} : {{ $value }} deadlocks/sec"
+
+      - alert: PostgresSlowQueries
+        expr: pg_stat_activity_max_tx_duration{datname!~"template.*|postgres"} > 600
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Requêtes lentes dans PostgreSQL"
+          description: "Transaction longue ({{ $value }}s) dans {{ $labels.datname }} sur {{ $labels.instance }}"
+
+      - alert: PostgresReplicationLag
+        expr: pg_replication_lag > 30
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Retard de réplication PostgreSQL"
+          description: "Lag de réplication de {{ $value }}s détecté sur {{ $labels.instance }}"
+
+      - alert: PostgresDatabaseSize
+        expr: pg_database_size_bytes{datname!~"template.*|postgres"} > 10737418240
+        for: 10m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Base de données PostgreSQL volumineuse"
+          description: "La base {{ $labels.datname }} fait {{ $value | humanize }}B sur {{ $labels.instance }}"
+
+      - alert: PostgresHighRollbackRate
+        expr: rate(pg_stat_database_xact_rollback[5m]) / rate(pg_stat_database_xact_commit[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Taux de rollback élevé PostgreSQL"
+          description: "Base {{ $labels.datname }} : {{ $value | humanizePercentage }} de transactions rollback"
+
+      - alert: PostgresExporterErrors
+        expr: pg_exporter_last_scrape_error > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Erreurs de scrape postgres_exporter"
+          description: "Le postgres_exporter rencontre des erreurs sur {{ $labels.instance }}"
+
+      # Redis (pour Faraday)
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Redis DOWN"
+          description: "Redis ne répond plus depuis 2 minutes"
+
+      - alert: RedisTooManyConnections
+        expr: redis_connected_clients / redis_config_maxclients * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Trop de connexions Redis"
+          description: "Redis a {{ $value | humanizePercentage }} de connexions utilisées"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Mémoire Redis élevée"
+          description: "Redis utilise {{ $value | humanizePercentage }} de sa mémoire"
+
+      - alert: RedisRejectedConnections
+        expr: rate(redis_rejected_connections_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "Connexions Redis rejetées"
+          description: "Redis rejette des connexions : {{ $value }} connexions/sec"
+
+      # PgAdmin
+      - alert: PgAdminDown
+        expr: up{job="pgadmin"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "PgAdmin DOWN"
+          description: "L'interface PgAdmin ne répond plus"
+
+  - name: traefik_proxy
+    interval: 30s
+    rules:
+      # Traefik
+      - alert: TraefikDown
+        expr: up{job="traefik"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: proxy
+        annotations:
+          summary: "Traefik DOWN"
+          description: "Le reverse proxy Traefik ne répond plus depuis 2 minutes"
+
+      - alert: TraefikHighResponseTime
+        expr: histogram_quantile(0.99, sum(rate(traefik_service_request_duration_seconds_bucket[5m])) by (service, le)) > 2
+        for: 10m
+        labels:
+          severity: warning
+          component: proxy
+        annotations:
+          summary: "Temps de réponse Traefik élevé"
+          description: "Le service {{ $labels.service }} a un P99 de {{ $value }}s"
+
+      - alert: TraefikHighErrorRate
+        expr: sum(rate(traefik_service_requests_total{code=~"5.."}[5m])) by (service) / sum(rate(traefik_service_requests_total[5m])) by (service) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: proxy
+        annotations:
+          summary: "Taux d'erreur Traefik élevé"
+          description: "Le service {{ $labels.service }} a {{ $value | humanizePercentage }} d'erreurs 5xx"
+
+      - alert: TraefikTooManyRequests
+        expr: sum(rate(traefik_service_requests_total[1m])) by (service) > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: proxy
+        annotations:
+          summary: "Trafic élevé sur Traefik"
+          description: "Le service {{ $labels.service }} reçoit {{ $value }} req/sec"
+
+      - alert: TraefikBackendDown
+        expr: traefik_service_server_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: proxy
+        annotations:
+          summary: "Backend Traefik DOWN"
+          description: "Le backend {{ $labels.service }} ({{ $labels.url }}) est DOWN"
+
+      - alert: TraefikTLSCertExpiringSoon
+        expr: (traefik_tls_certs_not_after - time()) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+          component: proxy
+        annotations:
+          summary: "Certificat TLS expire bientôt"
+          description: "Le certificat pour {{ $labels.cn }} expire dans {{ $value }} jours"
+
+      - alert: TraefikTLSCertExpiring
+        expr: (traefik_tls_certs_not_after - time()) / 86400 < 7
+        for: 1h
+        labels:
+          severity: critical
+          component: proxy
+        annotations:
+          summary: "Certificat TLS expire très bientôt"
+          description: "Le certificat pour {{ $labels.cn }} expire dans {{ $value }} jours"
+
+      # Postfix
+      - alert: PostfixDown
+        expr: up{job="postfix"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: mail
+        annotations:
+          summary: "Postfix DOWN"
+          description: "Le service Postfix ne répond plus"
+
+      - alert: PostfixQueueSize
+        expr: postfix_queue_size > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: mail
+        annotations:
+          summary: "Queue Postfix volumineuse"
+          description: "La queue Postfix contient {{ $value }} messages"
+
+  - name: security_ids
+    interval: 30s
+    rules:
+      # Suricata
+      - alert: SuricataDown
+        expr: up{job="suricata"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Suricata DOWN sur {{ $labels.instance }}"
+          description: "L'IDS Suricata ne répond plus depuis 2 minutes"
+
+      - alert: SuricataExporterDown
+        expr: up{job="suricata-exporter"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Suricata Exporter DOWN"
+          description: "L'exporteur de métriques Suricata ne répond plus"
+
+      - alert: SuricataHighAlertRate
+        expr: rate(suricata_alerts_total[5m]) > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Taux d'alertes Suricata élevé"
+          description: "Suricata génère {{ $value }} alertes/sec sur {{ $labels.instance }}"
+
+      - alert: SuricataCriticalAlerts
+        expr: rate(suricata_alerts_total{severity="1"}[5m]) > 1
+        for: 2m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Alertes critiques Suricata"
+          description: "Suricata détecte {{ $value }} alertes critiques/sec sur {{ $labels.instance }}"
+
+      - alert: SuricataPacketDrop
+        expr: rate(suricata_dropped_packets_total[5m]) / rate(suricata_packets_total[5m]) * 100 > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Perte de paquets Suricata"
+          description: "Suricata perd {{ $value | humanizePercentage }} des paquets sur {{ $labels.instance }}"
+
+      - alert: SuricataHighCPU
+        expr: rate(suricata_cpu_seconds_total[5m]) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "CPU Suricata élevé"
+          description: "Suricata utilise {{ $value | humanizePercentage }} de CPU sur {{ $labels.instance }}"
+
+      - alert: SuricataMemoryHigh
+        expr: suricata_memory_bytes > 2000000000
+        for: 10m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Mémoire Suricata élevée"
+          description: "Suricata utilise {{ $value | humanize }}B de mémoire sur {{ $labels.instance }}"
+
+      - alert: SuricataRulesOutdated
+        expr: (time() - suricata_rules_last_update_timestamp) > 604800
+        for: 1h
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Règles Suricata obsolètes"
+          description: "Les règles Suricata n'ont pas été mises à jour depuis {{ $value | humanizeDuration }}"
+
+  - name: pentest_tools
+    interval: 30s
+    rules:
+      # Faraday
+      - alert: FaradayDown
+        expr: up{job="faraday"} == 0
+        for: 3m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "Faraday DOWN"
+          description: "La plateforme Faraday ne répond plus depuis 3 minutes"
+
+      - alert: FaradayHighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="faraday"}[5m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "Temps de réponse Faraday élevé"
+          description: "Faraday a un temps de réponse P95 de {{ $value }}s"
+
+      - alert: FaradayHighMemory
+        expr: container_memory_usage_bytes{name=~".*faraday.*"} / container_spec_memory_limit_bytes{name=~".*faraday.*"} * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "Utilisation mémoire Faraday élevée"
+          description: "Faraday utilise {{ $value | humanizePercentage }} de sa limite mémoire"
+
+      # OWASP ZAP
+      - alert: ZAPDown
+        expr: up{job="zaproxy"} == 0
+        for: 3m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "OWASP ZAP DOWN"
+          description: "OWASP ZAProxy ne répond plus depuis 3 minutes"
+
+      - alert: ZAPScannerDown
+        expr: up{job="zap-scanner"} == 0
+        for: 3m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "ZAP Scanner DOWN"
+          description: "Le scanner ZAP ne répond plus"
+
+      - alert: ZAPHighCPU
+        expr: rate(container_cpu_usage_seconds_total{name=~".*zap.*"}[5m]) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "CPU ZAP élevé"
+          description: "ZAP utilise {{ $value | humanizePercentage }} de CPU"
+
+      - alert: ZAPScanStalled
+        expr: increase(zap_scan_progress[30m]) == 0 and zap_scan_progress > 0 and zap_scan_progress < 100
+        for: 30m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "Scan ZAP bloqué"
+          description: "Le scan ZAP est bloqué à {{ $value }}% depuis 30 minutes"
+
+      # Métriques générales conteneurs pentest
+      - alert: PentestContainerRestarting
+        expr: rate(container_last_seen{name=~".*faraday.*|.*zap.*"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "Redémarrages fréquents conteneur pentest"
+          description: "Le conteneur {{ $labels.name }} redémarre fréquemment"
+
+      - alert: PentestContainerOOMKilled
+        expr: container_memory_failcnt{name=~".*faraday.*|.*zap.*"} > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: pentest
+        annotations:
+          summary: "Conteneur pentest OOM killed"
+          description: "Le conteneur {{ $labels.name }} a été tué par OOM killer"
+
+  - name: pentest_workload
+    interval: 60s
+    rules:
+      # Détection de scans actifs
+      - alert: HighScanActivity
+        expr: sum(rate(container_cpu_usage_seconds_total{name=~".*zap.*|.*faraday.*"}[5m])) > 3
+        for: 30m
+        labels:
+          severity: info
+          component: pentest
+        annotations:
+          summary: "Activité de scan élevée détectée"
+          description: "Une activité de scan importante est en cours (CPU cumulé {{ $value }})"
+
+      # Surveillance des vulnérabilités découvertes (si métriques custom disponibles)
+      - alert: HighSeverityVulnerabilitiesFound
+        expr: faraday_vulnerabilities{severity="critical"} > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "Vulnérabilités critiques détectées"
+          description: "{{ $value }} vulnérabilités critiques trouvées dans le workspace {{ $labels.workspace }}"
+
+      - alert: NewCriticalVulnerability
+        expr: increase(faraday_vulnerabilities{severity="critical"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: info
+          component: pentest
+        annotations:
+          summary: "Nouvelle vulnérabilité critique"
+          description: "Une nouvelle vulnérabilité critique a été détectée dans {{ $labels.workspace }}"
+
+  - name: docker_containers
+    interval: 30s
+    rules:
+      # cAdvisor
+      - alert: CAdvisorDown
+        expr: up{job="cadvisor"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "cAdvisor DOWN"
+          description: "cAdvisor ne répond plus sur {{ $labels.instance }}"
+
+      # Conteneurs généraux
+      - alert: ContainerKilled
+        expr: time() - container_last_seen < 60
+        for: 1m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "Conteneur {{ $labels.name }} tué"
+          description: "Le conteneur {{ $labels.name }} vient d'être arrêté sur {{ $labels.instance }}"
+
+      - alert: ContainerHighCPU
+        expr: sum by (name, instance) (rate(container_cpu_usage_seconds_total{name!=""}[5m])) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "CPU élevé pour {{ $labels.name }}"
+          description: "Le conteneur {{ $labels.name }} utilise {{ $value | humanizePercentage }} de CPU"
+
+      - alert: ContainerCriticalCPU
+        expr: sum by (name, instance) (rate(container_cpu_usage_seconds_total{name!=""}[5m])) * 100 > 95
+        for: 5m
+        labels:
+          severity: critical
+          component: docker
+        annotations:
+          summary: "CPU critique pour {{ $labels.name }}"
+          description: "Le conteneur {{ $labels.name }} utilise {{ $value | humanizePercentage }} de CPU"
+
+      - alert: ContainerHighMemory
+        expr: sum by (name, instance) (container_memory_usage_bytes{name!=""}) / sum by (name, instance) (container_spec_memory_limit_bytes{name!=""} > 0) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "Mémoire élevée pour {{ $labels.name }}"
+          description: "Le conteneur {{ $labels.name }} utilise {{ $value | humanizePercentage }} de sa limite mémoire"
+
+      - alert: ContainerNoMemoryLimit
+        expr: container_memory_usage_bytes{name!=""} > 1000000000 and container_spec_memory_limit_bytes{name!=""} == 0
+        for: 30m
+        labels:
+          severity: info
+          component: docker
+        annotations:
+          summary: "Conteneur sans limite mémoire"
+          description: "Le conteneur {{ $labels.name }} n'a pas de limite mémoire définie (utilisation: {{ $value | humanize }}B)"
+
+      - alert: ContainerOOMKilled
+        expr: increase(container_memory_failcnt[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: docker
+        annotations:
+          summary: "Conteneur OOM killed"
+          description: "Le conteneur {{ $labels.name }} a été tué par l'OOM killer"
+
+      - alert: ContainerFrequentRestarts
+        expr: rate(container_last_seen[10m]) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "Redémarrages fréquents de {{ $labels.name }}"
+          description: "Le conteneur {{ $labels.name }} redémarre fréquemment"
+
+      - alert: ContainerHighNetworkIO
+        expr: sum by (name, instance) (rate(container_network_receive_bytes_total[5m]) + rate(container_network_transmit_bytes_total[5m])) > 100000000
+        for: 15m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "I/O réseau élevé pour {{ $labels.name }}"
+          description: "Le conteneur {{ $labels.name }} génère {{ $value | humanize }}B/s de trafic réseau"
+
+      - alert: ContainerHighDiskIO
+        expr: sum by (name, instance) (rate(container_fs_reads_bytes_total[5m]) + rate(container_fs_writes_bytes_total[5m])) > 100000000
+        for: 15m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "I/O disque élevé pour {{ $labels.name }}"
+          description: "Le conteneur {{ $labels.name }} génère {{ $value | humanize }}B/s d'I/O disque"
+
+      - alert: ContainerDiskSpaceLow
+        expr: (container_fs_usage_bytes{name!=""} / container_fs_limit_bytes{name!=""}) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "Espace disque faible pour {{ $labels.name }}"
+          description: "Le conteneur {{ $labels.name }} utilise {{ $value | humanizePercentage }} de son espace disque"
+
+  - name: docker_swarm
+    interval: 30s
+    rules:
+      # Services Swarm
+      - alert: SwarmServiceReplicasMismatch
+        expr: (sum by (service_name) (swarm_service_replicas_desired) - sum by (service_name) (swarm_service_replicas_running)) != 0
+        for: 10m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "Réplicas manquants pour {{ $labels.service_name }}"
+          description: "Le service {{ $labels.service_name }} a {{ $value }} réplicas manquants"
+
+      - alert: SwarmNodeDown
+        expr: swarm_node_status != 1
+        for: 5m
+        labels:
+          severity: critical
+          component: docker
+        annotations:
+          summary: "Nœud Swarm DOWN"
+          description: "Le nœud {{ $labels.node_name }} est DOWN"
+
+      - alert: SwarmNodeDiskPressure
+        expr: swarm_node_disk_pressure == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "Pression disque sur nœud Swarm"
+          description: "Le nœud {{ $labels.node_name }} subit une pression disque"
+
+      - alert: SwarmNodeMemoryPressure
+        expr: swarm_node_memory_pressure == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "Pression mémoire sur nœud Swarm"
+          description: "Le nœud {{ $labels.node_name }} subit une pression mémoire"
+
+      - alert: SwarmTaskFailed
+        expr: sum by (service_name) (rate(swarm_task_failed_total[10m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: docker
+        annotations:
+          summary: "Tâches échouées pour {{ $labels.service_name }}"
+          description: "Le service {{ $labels.service_name }} a des tâches qui échouent"
+
+      - alert: SwarmManagerLost
+        expr: sum(swarm_manager_nodes) < 3
+        for: 5m
+        labels:
+          severity: critical
+          component: docker
+        annotations:
+          summary: "Managers Swarm insuffisants"
+          description: "Seulement {{ $value }} managers disponibles (recommandé: 3+)"
+

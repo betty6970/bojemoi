@@ -1,0 +1,75 @@
+groups:
+- name: rsync_alerts
+  rules:
+  # Alerte si un conteneur rsync est down
+  - alert: RsyncContainerDown
+    expr: up{job=~"rsync-(master|slave)"} == 0
+    for: 30s
+    labels:
+      severity: critical
+    annotations:
+      summary: "Conteneur rsync {{ $labels.job }} est arrêté"
+      description: "Le conteneur {{ $labels.job }} n'est pas accessible depuis 30 secondes."
+
+  # Alerte haute utilisation CPU
+  - alert: HighCpuUsage
+    expr: (100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Utilisation CPU élevée sur {{ $labels.instance }}"
+      description: "L'utilisation CPU est supérieure à 80% pendant plus de 5 minutes."
+
+  # Alerte haute utilisation mémoire
+  - alert: HighMemoryUsage
+    expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Utilisation mémoire élevée sur {{ $labels.instance }}"
+      description: "L'utilisation mémoire est supérieure à 85% pendant plus de 5 minutes."
+
+  # Alerte espace disque faible
+  - alert: LowDiskSpace
+    expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Espace disque faible sur {{ $labels.instance }}"
+      description: "L'espace disque disponible est inférieur à 10%."
+
+  # Alerte conteneur avec restart fréquents
+  - alert: ContainerRestartFrequent
+    expr: increase(container_start_time_seconds[1h]) > 5
+    for: 0s
+    labels:
+      severity: warning
+    annotations:
+      summary: "Conteneur {{ $labels.name }} redémarre fréquemment"
+      description: "Le conteneur {{ $labels.name }} a redémarré plus de 5 fois dans la dernière heure."
+
+- name: system_alerts
+  rules:
+  # Alerte charge système élevée
+  - alert: HighLoadAverage
+    expr: node_load1 > 2
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Charge système élevée sur {{ $labels.instance }}"
+      description: "La charge système sur 1 minute est supérieure à 2 pendant plus de 5 minutes."
+
+  # Alerte réseau
+  - alert: NetworkErrors
+    expr: increase(node_network_receive_errs_total[5m]) > 100
+    for: 1m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Erreurs réseau détectées sur {{ $labels.instance }}"
+      description: "Plus de 100 erreurs réseau détectées en 5 minutes sur l'interface {{ $labels.device }}."
+

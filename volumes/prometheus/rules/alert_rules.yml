@@ -1,0 +1,458 @@
+# =============================================================================
+# Alert Rules - bojemoi.lab Docker Swarm
+# Fichier: /etc/prometheus/alerts/alert_rules.yml
+# =============================================================================
+
+groups:
+  # ---------------------------------------------------------------------------
+  # Node Health Alerts
+  # ---------------------------------------------------------------------------
+  - name: node_health
+    interval: 30s
+    rules:
+      - alert: NodeDown
+        expr: up{job="node-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Node {{ $labels.instance }} is down"
+          description: "Node {{ $labels.instance }} has been down for more than 2 minutes."
+
+      - alert: NodeHighCPU
+        expr: swarm:node:cpu_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanize }}% on node {{ $labels.instance }} (role: {{ $labels.node_role }})"
+
+      - alert: NodeCriticalCPU
+        expr: swarm:node:cpu_usage_percent > 95
+        for: 3m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Critical CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanize }}% on node {{ $labels.instance }} (role: {{ $labels.node_role }})"
+
+      - alert: NodeHighMemory
+        expr: swarm:node:memory_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanize }}% on node {{ $labels.instance }}"
+
+      - alert: NodeCriticalMemory
+        expr: swarm:node:memory_usage_percent > 95
+        for: 3m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Critical memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanize }}% on node {{ $labels.instance }}. Risk of OOM!"
+
+      - alert: NodeHighDiskUsage
+        expr: swarm:node:disk_usage_percent > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value | humanize }}% on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+
+      - alert: NodeCriticalDiskUsage
+        expr: swarm:node:disk_usage_percent > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Critical disk usage on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value | humanize }}% on {{ $labels.instance }} ({{ $labels.mountpoint }}). Immediate action required!"
+
+      - alert: NodeHighLoad
+        expr: node_load5 / count without(cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High load average on {{ $labels.instance }}"
+          description: "Load average (5m) is {{ $value | humanize }} on {{ $labels.instance }}"
+
+      - alert: NodeHighSwapUsage
+        expr: swarm:node:swap_usage_percent > 50
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High swap usage on {{ $labels.instance }}"
+          description: "Swap usage is {{ $value | humanize }}% on {{ $labels.instance }}"
+
+      - alert: NodeFilesystemReadOnly
+        expr: node_filesystem_readonly{fstype!~"tmpfs|fuse.*"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Filesystem is read-only on {{ $labels.instance }}"
+          description: "Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is in read-only mode"
+
+  # ---------------------------------------------------------------------------
+  # Cluster Health Alerts
+  # ---------------------------------------------------------------------------
+  - name: cluster_health
+    interval: 30s
+    rules:
+      - alert: SwarmManagerDown
+        expr: up{job="docker-swarm-nodes", node_role="manager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: orchestration
+        annotations:
+          summary: "Swarm manager {{ $labels.instance }} is down"
+          description: "Manager node {{ $labels.instance }} has been down for more than 2 minutes. Cluster stability at risk!"
+
+      - alert: SwarmQuorumLost
+        expr: swarm:cluster:managers_total < 2
+        for: 1m
+        labels:
+          severity: critical
+          component: orchestration
+        annotations:
+          summary: "Swarm manager quorum lost"
+          description: "Only {{ $value }} manager(s) remaining. Cluster is at risk of losing quorum!"
+
+      - alert: SwarmWorkerDown
+        expr: up{job="docker-swarm-nodes", node_role="worker"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: orchestration
+        annotations:
+          summary: "Swarm worker {{ $labels.instance }} is down"
+          description: "Worker node {{ $labels.instance }} has been down for more than 5 minutes"
+
+      - alert: ClusterHighCPU
+        expr: swarm:cluster:cpu_usage_percent_avg > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: capacity
+        annotations:
+          summary: "High average CPU usage across cluster"
+          description: "Cluster average CPU usage is {{ $value | humanize }}%. Consider adding capacity."
+
+      - alert: ClusterHighMemory
+        expr: swarm:cluster:memory_usage_percent_avg > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: capacity
+        annotations:
+          summary: "High average memory usage across cluster"
+          description: "Cluster average memory usage is {{ $value | humanize }}%. Consider adding capacity."
+
+  # ---------------------------------------------------------------------------
+  # Service Health Alerts
+  # ---------------------------------------------------------------------------
+  - name: service_health
+    interval: 30s
+    rules:
+      - alert: ServiceReplicasDown
+        expr: swarm:service:health_ratio < 0.5
+        for: 3m
+        labels:
+          severity: critical
+          component: services
+        annotations:
+          summary: "Service {{ $labels.service }} has degraded replicas"
+          description: "Less than 50% of replicas are healthy for service {{ $labels.service }}"
+
+      - alert: ServiceAllReplicasDown
+        expr: swarm:service:replicas_running == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: services
+        annotations:
+          summary: "All replicas down for {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has no running replicas!"
+
+      - alert: ServiceTaskRestarting
+        expr: |
+          rate(
+            (time() - container_start_time_seconds{name!~".*POD.*"})[5m:]
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          component: services
+        annotations:
+          summary: "Service task {{ $labels.name }} is restarting frequently"
+          description: "Container {{ $labels.name }} on {{ $labels.node }} is restarting frequently"
+
+  # ---------------------------------------------------------------------------
+  # Traefik Alerts
+  # ---------------------------------------------------------------------------
+  - name: traefik_health
+    interval: 30s
+    rules:
+      - alert: TraefikDown
+        expr: up{job="traefik"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: reverse-proxy
+        annotations:
+          summary: "Traefik is down"
+          description: "Traefik reverse proxy has been down for more than 2 minutes. All external access is impacted!"
+
+      - alert: TraefikHighErrorRate
+        expr: traefik:service:error_rate_percent > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: reverse-proxy
+        annotations:
+          summary: "High error rate for service {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has {{ $value | humanize }}% error rate (5xx responses)"
+
+      - alert: TraefikHighLatency
+        expr: traefik:service:request_duration_p95 > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: reverse-proxy
+        annotations:
+          summary: "High latency for service {{ $labels.service }}"
+          description: "P95 latency is {{ $value | humanize }}s for service {{ $labels.service }}"
+
+  # ---------------------------------------------------------------------------
+  # Security Stack Alerts
+  # ---------------------------------------------------------------------------
+  - name: security_stack
+    interval: 60s
+    rules:
+      - alert: SecurityToolDown
+        expr: up{component="security"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Security tool {{ $labels.security_tool }} is down"
+          description: "Security tool {{ $labels.security_tool }} has been down for more than 5 minutes"
+
+      - alert: SecurityStackDegraded
+        expr: security:stack:health_ratio < 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Security stack is degraded"
+          description: "Less than 80% of security tools are operational. Current ratio: {{ $value | humanize }}"
+
+      - alert: FaradayDown
+        expr: up{service="faraday"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Faraday is down"
+          description: "Faraday vulnerability management platform has been down for more than 5 minutes"
+
+      - alert: SuricataDown
+        expr: up{service="suricata"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "Suricata IDS/IPS is down"
+          description: "Suricata has been down for more than 3 minutes. Network monitoring is impaired!"
+
+  # ---------------------------------------------------------------------------
+  # Monitoring Stack Alerts
+  # ---------------------------------------------------------------------------
+  - name: monitoring_stack
+    interval: 30s
+    rules:
+      - alert: PrometheusDown
+        expr: up{job="prometheus"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Prometheus is down"
+          description: "Prometheus monitoring system is down. No metrics being collected!"
+
+      - alert: AlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: monitoring
+        annotations:
+          summary: "Alertmanager is down"
+          description: "Alertmanager has been down for more than 5 minutes. Alerts are not being routed!"
+
+      - alert: GrafanaDown
+        expr: up{job="grafana"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Grafana is down"
+          description: "Grafana visualization platform has been down for more than 5 minutes"
+
+      - alert: LokiDown
+        expr: up{job="loki"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Loki is down"
+          description: "Loki log aggregation system has been down for more than 5 minutes"
+
+      - alert: PrometheusTargetsMissing
+        expr: |
+          (count by (job) (up == 1) 
+          / 
+          count by (job) (up)) < 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Less than 80% of targets are up for job {{ $labels.job }}"
+          description: "Only {{ $value | humanizePercentage }} of targets are reachable for job {{ $labels.job }}"
+
+      - alert: PrometheusTSDBCompactionsFailing
+        expr: rate(prometheus_tsdb_compactions_failed_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Prometheus TSDB compactions are failing"
+          description: "Prometheus has {{ $value }} compaction failures per second"
+
+      - alert: PrometheusConfigReloadFailed
+        expr: prometheus_config_last_reload_successful == 0
+        for: 1m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Prometheus config reload failed"
+          description: "Prometheus configuration reload has failed. Check configuration syntax!"
+
+  # ---------------------------------------------------------------------------
+  # Backup Alerts
+  # ---------------------------------------------------------------------------
+  - name: backup_health
+    interval: 60s
+    rules:
+      - alert: RsyncMasterDown
+        expr: up{service="rsync-master"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: backup
+        annotations:
+          summary: "Rsync master is down"
+          description: "Rsync master backup service has been down for more than 5 minutes"
+
+  # ---------------------------------------------------------------------------
+  # Blackbox Probe Alerts
+  # ---------------------------------------------------------------------------
+  - name: blackbox_probes
+    interval: 30s
+    rules:
+      - alert: ServiceHTTPDown
+        expr: probe_success{probe_type="http"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: availability
+        annotations:
+          summary: "HTTP probe failed for {{ $labels.instance }}"
+          description: "Service {{ $labels.instance }} is not responding to HTTP probes for more than 3 minutes"
+
+      - alert: ServiceHTTPSlow
+        expr: probe_duration_seconds{probe_type="http"} > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "HTTP probe is slow for {{ $labels.instance }}"
+          description: "Service {{ $labels.instance }} is responding slowly ({{ $value | humanize }}s)"
+
+      - alert: ServiceICMPDown
+        expr: probe_success{probe_type="icmp"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "ICMP probe failed for {{ $labels.instance }}"
+          description: "Host {{ $labels.instance }} is not responding to ICMP probes"
+
+      - alert: SSLCertificateExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "SSL certificate expiring soon for {{ $labels.instance }}"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value | humanize }} days"
+
+      - alert: SSLCertificateExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 7
+        for: 1h
+        labels:
+          severity: critical
+          component: security
+        annotations:
+          summary: "SSL certificate expiring very soon for {{ $labels.instance }}"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value | humanize }} days. Immediate action required!"
+
+# =============================================================================
+# NOTES D'UTILISATION
+# =============================================================================
+# 
+# Severity levels:
+# - critical: Require immediate action, services are impacted
+# - warning: Should be addressed soon, potential degradation
+# - info: Informational, no action required
+# 
+# Pour tester les alertes:
+# promtool check rules alert_rules.yml
+# 
+# Pour voir les alertes actives:
+# curl http://prometheus.bojemoi.lab:9090/api/v1/alerts
+# 
+# Configuration Alertmanager requise pour router ces alertes.
+# 
+# =============================================================================

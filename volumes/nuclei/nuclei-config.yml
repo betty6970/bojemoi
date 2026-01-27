@@ -1,0 +1,7 @@
+# nuclei-config.yaml
+severity: critical,high,medium,low
+tags: cve,exposure,misconfiguration,vuln
+rate-limit: 150
+bulk-size: 25
+timeout: 10
+retries: 1

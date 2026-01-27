@@ -1,0 +1,301 @@
+# Guide de déploiement - Passerelle OpenVPN
+
+## � Prérequis système
+
+### Serveur/Machine hôte
+```bash
+# Système d'exploitation
+Ubuntu 20.04+ / CentOS 8+ / Debian 11+
+
+# RAM minimum
+2 GB (4 GB recommandés)
+
+# Espace disque
+10 GB minimum (50 GB+ pour les données/logs)
+
+# CPU
+2 vCPU minimum
+
+# Réseau
+Connexion internet stable (10 Mbps+)
+```
+
+### Logiciels requis
+```bash
+# Installation Docker et Docker Compose
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker $USER
+
+# Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+```
+
+## � Configuration système
+
+### Modules kernel requis
+```bash
+# Vérifier/charger le module TUN
+sudo modprobe tun
+echo 'tun' | sudo tee -a /etc/modules
+
+# Vérifier que le module est chargé
+lsmod | grep tun
+```
+
+### Paramètres réseau
+```bash
+# Activer le forwarding IP
+echo 'net.ipv4.ip_forward=1' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+
+# Vérifier
+cat /proc/sys/net/ipv4/ip_forward
+# Doit retourner 1
+```
+
+### Pare-feu et sécurité
+```bash
+# Configuration UFW (si utilisé)
+sudo ufw allow 22/tcp          # SSH
+sudo ufw allow 8080/tcp        # Services web
+sudo ufw allow 3000/tcp        # Applications
+sudo ufw allow out 1194/udp    # OpenVPN
+
+# Ou avec iptables
+sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+sudo iptables -A INPUT -p tcp --dport 8080 -j ACCEPT
+sudo iptables -A OUTPUT -p udp --dport 1194 -j ACCEPT
+```
+
+## � Structure des fichiers
+
+### Arborescence complète
+```
+vpn-gateway/
+├── docker-compose.yml
+├── .env
+├── openvpn-config/
+│   ├── client.ovpn
+│   ├── ca.crt
+│   ├── client.crt
+│   ├── client.key
+│   └── auth.txt (optionnel)
+├── nginx-config/
+│   ├── nginx.conf
+│   └── html/
+├── webapp/
+│   ├── package.json
+│   └── app.js
+├── scripts/
+│   ├── start.sh
+│   ├── stop.sh
+│   ├── check-vpn.sh
+│   └── backup.sh
+└── logs/
+```
+
+## � Fichier .env (Variables d'environnement)
+
+```bash
+# Configuration VPN
+VPN_PROVIDER=custom
+VPN_CONFIG_FILE=client.ovpn
+VPN_USERNAME=your_username
+VPN_PASSWORD=your_password
+
+# Configuration réseau
+NETWORK_SUBNET=192.168.100.0/24
+DNS_SERVERS=8.8.8.8,8.8.4.4
+
+# Configuration services
+NGINX_PORT=8080
+WEBAPP_PORT=3000
+MONITORING_PORT=61208
+
+# Timezone
+TZ=Europe/Paris
+
+# Logs
+LOG_LEVEL=info
+LOG_MAX_SIZE=100m
+LOG_MAX_FILES=5
+
+# Sécurité
+PUID=1000
+PGID=1000
+```
+
+## � Paramètres de déploiement production
+
+### Configuration Docker Compose production
+```yaml
+# Ressources et limites
+services:
+  gluetun:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Politique de redémarrage
+    restart: unless-stopped
+    
+    # Health check avancé
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    
+    # Logs configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+```
+
+### Variables d'environnement sécurisées
+```bash
+# Utiliser Docker secrets (Swarm) ou
+# Fichiers .env avec permissions restrictives
+chmod 600 .env
+chown root:docker .env
+
+# Variables sensibles
+echo "VPN_PASSWORD=motdepasse_secret" >> .env.secret
+chmod 400 .env.secret
+```
+
+## � Monitoring et surveillance
+
+### Health checks personnalisés
+```bash
+# Script de vérification VPN
+#!/bin/bash
+EXPECTED_IP="votre.ip.vpn.attendue"
+CURRENT_IP=$(docker exec gluetun-gateway curl -s ifconfig.me)
+
+if [ "$CURRENT_IP" = "$EXPECTED_IP" ]; then
+    echo "VPN OK - IP: $CURRENT_IP"
+    exit 0
+else
+    echo "VPN KO - IP actuelle: $CURRENT_IP, attendue: $EXPECTED_IP"
+    exit 1
+fi
+```
+
+### Métriques et logs
+```yaml
+# Configuration Prometheus/Grafana
+monitoring:
+  image: prom/prometheus
+  volumes:
+    - ./prometheus.yml:/etc/prometheus/prometheus.yml
+  command:
+    - '--config.file=/etc/prometheus/prometheus.yml'
+    - '--storage.tsdb.path=/prometheus'
+
+# Exporteur de métriques VPN
+vpn-exporter:
+  image: custom/vpn-exporter
+  network_mode: "service:gluetun"
+```
+
+## � Sécurité avancée
+
+### Chiffrement et certificats
+```bash
+# Générer des certificats si nécessaire
+openssl req -new -x509 -days 365 -nodes \
+  -out server.crt -keyout server.key
+
+# Permissions restrictives
+chmod 400 client.key ca.key
+chmod 444 client.crt ca.crt
+```
+
+### Isolation réseau
+```yaml
+# Réseau isolé pour les containers
+networks:
+  vpn-isolated:
+    driver: bridge
+    internal: true
+  vpn-gateway:
+    driver: bridge
+    external: false
+```
+
+## � Performance et optimisation
+
+### Optimisations réseau
+```bash
+# Dans docker-compose.yml
+sysctls:
+  - net.core.rmem_max=26214400
+  - net.core.rmem_default=26214400
+  - net.core.wmem_max=26214400
+  - net.core.wmem_default=26214400
+  - net.core.netdev_max_backlog=2048
+```
+
+### Cache et stockage
+```yaml
+volumes:
+  # Volume nommé pour la persistance
+  vpn-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/vpn-data
+```
+
+## � Scripts de déploiement
+
+### Script de déploiement automatique
+```bash
+#!/bin/bash
+set -e
+
+echo "� Déploiement de la passerelle VPN..."
+
+# Vérifications prérequis
+./scripts/check-requirements.sh
+
+# Sauvegarde configuration existante
+./scripts/backup.sh
+
+# Déploiement
+docker-compose pull
+docker-compose up -d
+
+# Tests post-déploiement
+sleep 30
+./scripts/health-check.sh
+
+echo "✅ Déploiement terminé avec succès!"
+```
+
+## � Checklist de déploiement
+
+- [ ] Serveur avec ressources suffisantes
+- [ ] Docker et Docker Compose installés
+- [ ] Module TUN activé
+- [ ] IP forwarding activé
+- [ ] Pare-feu configuré
+- [ ] Certificats VPN en place
+- [ ] Variables d'environnement configurées
+- [ ] Fichier .env sécurisé
+- [ ] Tests de connectivité VPN
+- [ ] Monitoring en place
+- [ ] Scripts de sauvegarde configurés
+- [ ] Documentation à jour

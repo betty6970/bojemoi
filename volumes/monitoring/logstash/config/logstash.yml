@@ -1,0 +1,39 @@
+# Configuration principale de Logstash
+http.host: "0.0.0.0"
+http.port: 9600
+
+# Configuration des workers
+pipeline.workers: 2
+pipeline.batch.size: 125
+pipeline.batch.delay: 50
+
+# Configuration des chemins
+path.data: /usr/share/logstash/data
+path.logs: /usr/share/logstash/logs
+path.settings: /usr/share/logstash/config
+
+# Configuration de la JVM
+xpack.monitoring.enabled: false
+
+# Configuration des pipelines
+pipeline.id: main
+config.reload.automatic: true
+config.reload.interval: 3s
+
+# Configuration de logging interne
+log.level: info
+log.format: plain
+
+# Dead Letter Queue
+dead_letter_queue.enable: true
+dead_letter_queue.max_bytes: 1024mb
+
+# Configuration de sécurité (si nécessaire)
+# xpack.security.enabled: false
+
+# Configuration des métriques
+pipeline.plugin_classloaders: false
+
+# Configuration de persistence
+queue.type: memory
+queue.max_bytes: 1gb

@@ -5,11 +5,16 @@
 **/secrets/
 **/*secret*
 **/*password*
+**/privatekey-*
+**/presharedkey-*
 
 # Variables d'environnement avec secrets
 .env
 *.env.local
 *.env.production
+
+# VPN credentials
+**/auth.txt
 
 # Fichiers temporaires
 *.tmp
@@ -17,6 +22,8 @@
 *.swp
 *~
 .DS_Store
+*.socket
+eve.json
 
 # Sauvegardes
 *.bak
@@ -24,7 +31,6 @@
 
 # Données sensibles
 **/data/
-**/volumes/
 
 # IDE
 .vscode/

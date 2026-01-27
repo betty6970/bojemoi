@@ -1,0 +1,94 @@
+{{ define "email.default.subject" }}
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.alertname }} - {{ .GroupLabels.service }}
+{{ end }}
+
+{{ define "email.default.html" }}
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .alert { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; }
+        .firing { background-color: #ffe6e6; border-color: #ff9999; }
+        .resolved { background-color: #e6ffe6; border-color: #99ff99; }
+        .critical { background-color: #ffcccc; border-color: #ff6666; }
+        .warning { background-color: #fff3cd; border-color: #ffc107; }
+        .info { background-color: #d1ecf1; border-color: #17a2b8; }
+        .labels { background-color: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 3px; }
+        .annotations { background-color: #f8f9fa; padding: 10px; margin: 10px 0; border-radius: 3px; }
+        h2 { color: #333; }
+        h3 { color: #666; }
+        .timestamp { color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h2>Alertes {{ .Status | title }}</h2>
+    
+    <p><strong>Nombre d'alertes :</strong> {{ .Alerts | len }}</p>
+    <p><strong>Groupe :</strong> {{ .GroupLabels }}</p>
+    
+    {{ range .Alerts }}
+    <div class="alert {{ .Status }} {{ .Labels.severity }}">
+        <h3>{{ .Annotations.summary | default .Labels.alertname }}</h3>
+        
+        <div class="annotations">
+            <p><strong>Description :</strong> {{ .Annotations.description | default "N/A" }}</p>
+            <p><strong>Runbook :</strong> 
+                {{ if .Annotations.runbook_url }}
+                    <a href="{{ .Annotations.runbook_url }}">{{ .Annotations.runbook_url }}</a>
+                {{ else }}
+                    N/A
+                {{ end }}
+            </p>
+        </div>
+        
+        <div class="labels">
+            <p><strong>Labels :</strong></p>
+            <ul>
+                {{ range .Labels.SortedPairs }}
+                <li><strong>{{ .Name }}:</strong> {{ .Value }}</li>
+                {{ end }}
+            </ul>
+        </div>
+        
+        <p class="timestamp">
+            <strong>Début :</strong> {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+            {{ if .EndsAt }}
+            <br><strong>Fin :</strong> {{ .EndsAt.Format "2006-01-02 15:04:05" }}
+            {{ end }}
+        </p>
+        
+        <p>
+            <a href="http://grafana.votre-domaine.com/explore?left=[%22now-1h%22,%22now%22,%22Loki%22,{%22expr%22:%22{service=%22{{ .Labels.service }}%22}%22}]">Voir les logs</a> |
+            <a href="http://grafana.votre-domaine.com/d/{{ .Labels.dashboard | default "overview" }}">Dashboard</a>
+        </p>
+    </div>
+    {{ end }}
+    
+    <hr>
+    <p style="font-size: 0.8em; color: #666;">
+        Cette alerte a été générée par Alertmanager à {{ now.Format "2006-01-02 15:04:05" }}
+    </p>
+</body>
+</html>
+{{ end }}
+
+{{ define "slack.default.title" }}
+{{ if eq .Status "firing" }}�{{ else }}✅{{ end }} {{ .GroupLabels.alertname }}
+{{ end }}
+
+{{ define "slack.default.text" }}
+{{ range .Alerts }}
+*Service:* {{ .Labels.service | default "Unknown" }}
+*Instance:* {{ .Labels.instance | default "Unknown" }}
+*Severity:* {{ .Labels.severity | default "Unknown" }}
+*Description:* {{ .Annotations.description | default .Annotations.summary }}
+*Time:* {{ .StartsAt.Format "15:04:05" }}
+{{ if .Annotations.runbook_url }}
+*Runbook:* {{ .Annotations.runbook_url }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+
+A

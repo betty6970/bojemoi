@@ -1,0 +1,15 @@
+---
+source: loki
+url: http://loki:3100
+query: '{job="syslog"} |= "sshd"'
+since: 3h
+labels:
+  type: syslog
+
+---
+source: loki
+url: http://loki:3100
+query: '{job="traefik"}'
+since: 3h
+labels:
+  type: traefik
