@@ -1029,9 +1029,8 @@ services:
       - postfix_data:/var/spool/postfix
       - postfix_mail:/var/mail
       - postfix_log:/var/log
-    configs:
-      - source: postfix_config 
-        target: /etc/postfix/main.cf
+    # NOTE: Removed Docker config for main.cf - postconf modifies this file
+    # and Docker configs are read-only. Environment variables handle configuration.
     deploy:
       replicas: 1
       placement:

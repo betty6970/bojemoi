@@ -63,6 +63,8 @@ limits_config:
   max_label_value_length: 4096
   max_label_names_per_series: 30
   allow_structured_metadata: true
+  # Allow out-of-order log ingestion
+  unordered_writes: true
 
 # Configuration de la table des index
 table_manager:
@@ -88,10 +90,15 @@ ingester:
         store: inmemory
       replication_factor: 1
     final_sleep: 0s
-  chunk_idle_period: 1h
-  max_chunk_age: 1h
+  # Increase chunk age to allow older entries
+  chunk_idle_period: 2h
+  max_chunk_age: 24h
   chunk_target_size: 1048576
   chunk_retain_period: 30s
+  # WAL configuration for durability
+  wal:
+    enabled: true
+    flush_on_shutdown: true
 
 # Configuration des analytics
 analytics:
