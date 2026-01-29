@@ -1,0 +1,62 @@
+# Cloud-init network configuration
+# Generated from meta-76 VM audit on 2026-01-29
+# Format: Network Config Version 2 (netplan-compatible)
+
+version: 2
+ethernets:
+  eth0:
+    # DHCP configuration (current setup)
+    dhcp4: true
+    dhcp6: true
+
+    # Optional: Static IP configuration (uncomment to use)
+    # addresses:
+    #   - 192.168.1.121/24
+    # gateway4: 192.168.1.254
+    # nameservers:
+    #   addresses:
+    #     - 192.168.1.121
+    #     - 8.8.8.8
+    #     - 1.1.1.1
+    #   search:
+    #     - bojemoi.lab.local
+
+    # Match by MAC address (optional, for predictable naming)
+    # match:
+    #   macaddress: "ee:05:a0:40:75:ca"
+    # set-name: eth0
+
+---
+# Alternative: Network Config Version 1 format (for older cloud-init)
+# Uncomment below and comment version 2 above if needed
+
+# network:
+#   version: 1
+#   config:
+#     - type: physical
+#       name: eth0
+#       mac_address: "ee:05:a0:40:75:ca"
+#       subnets:
+#         - type: dhcp
+#         - type: dhcp6
+
+---
+# Static IP Version 1 format (alternative)
+# network:
+#   version: 1
+#   config:
+#     - type: physical
+#       name: eth0
+#       mac_address: "ee:05:a0:40:75:ca"
+#       subnets:
+#         - type: static
+#           address: 192.168.1.121/24
+#           gateway: 192.168.1.254
+#           dns_nameservers:
+#             - 192.168.1.121
+#             - 8.8.8.8
+#           dns_search:
+#             - bojemoi.lab.local
+#         - type: static
+#           address: 2a01:e0a:bc2:ce90:ec05:a0ff:fe40:75ca/64
+#           gateway: fe80::1

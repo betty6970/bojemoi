@@ -1,0 +1,29 @@
+# Cloud-init network configuration template
+# Variables: static_ip, gateway, dns_servers, search_domains
+
+version: 2
+ethernets:
+  eth0:
+{% if static_ip is defined %}
+    addresses:
+      - {{ static_ip }}/24
+{% if ipv6_address is defined %}
+      - {{ ipv6_address }}/64
+{% endif %}
+    routes:
+      - to: default
+        via: {{ gateway | default('192.168.1.254') }}
+    nameservers:
+      addresses:
+{% for dns in dns_servers | default(['192.168.1.121', '8.8.8.8']) %}
+        - {{ dns }}
+{% endfor %}
+      search:
+{% for domain in search_domains | default(['bojemoi.lab.local']) %}
+        - {{ domain }}
+{% endfor %}
+{% else %}
+    dhcp4: true
+    dhcp6: true
+{% endif %}
+    mtu: {{ mtu | default(1500) }}

@@ -1,0 +1,259 @@
+#cloud-config
+# Cloud-init user-data for Alpine Linux Docker Swarm Manager
+# Generated from meta-76 VM audit on 2026-01-29
+
+# Hostname
+hostname: meta-76
+fqdn: meta-76.bojemoi.lab.local
+manage_etc_hosts: true
+
+# Timezone
+timezone: Europe/Paris
+
+# APK repositories
+apk_repos:
+  preserve_repositories: false
+  default_repos:
+    main:
+      enabled: true
+    community:
+      enabled: true
+  repos:
+    - url: http://dl-cdn.alpinelinux.org/alpine/v3.20/main
+    - url: http://alpinelinux.mirrors.ovh.net/v3.20/main
+    - url: http://alpinelinux.mirrors.ovh.net/v3.20/community
+    - url: http://dl-cdn.alpinelinux.org/alpine/edge/community
+
+# System packages
+packages:
+  # Core utilities
+  - bash
+  - curl
+  - wget
+  - jq
+  - bind-tools
+  - nmap
+  - rsync
+  - git
+  - make
+  - patch
+
+  # Docker & containers
+  - docker
+  - docker-cli
+  - docker-cli-buildx
+  - docker-cli-compose
+  - containerd
+
+  # Python stack
+  - python3
+  - py3-pip
+  - py3-yaml
+  - py3-jinja2
+  - py3-requests
+  - py3-docker-py
+  - py3-psycopg2
+  - py3-prometheus-client
+
+  # Database
+  - postgresql14
+  - postgresql14-client
+  - postgresql14-contrib
+
+  # Security
+  - openssh
+  - fail2ban
+  - suricata
+  - nftables
+  - openvpn
+  - easy-rsa
+  - doas
+
+  # Monitoring & services
+  - chrony
+  - logrotate
+
+  # NFS
+  - nfs-utils
+  - rpcbind
+
+  # XenServer guest tools
+  - xe-guest-utilities
+
+  # Build tools (optional)
+  - build-base
+  - autoconf
+  - automake
+  - libtool
+
+# Users configuration
+users:
+  - name: root
+    lock_passwd: false
+    shell: /bin/sh
+
+  - name: docker
+    uid: 1002
+    groups:
+      - docker
+      - wheel
+    shell: /bin/ash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... docker@bojemoi
+
+  - name: alpine
+    uid: 1003
+    gecos: alpine Cloud User
+    groups:
+      - wheel
+      - docker
+    shell: /bin/ash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI... alpine@bojemoi
+
+# Groups
+groups:
+  - docker
+  - wheel
+
+# SSH configuration
+ssh:
+  emit_keys_to_console: false
+ssh_pwauth: false
+disable_root: false
+
+# Write files
+write_files:
+  # doas configuration
+  - path: /etc/doas.d/doas.conf
+    content: |
+      permit persist :wheel
+    permissions: '0644'
+
+  # SSH hardening
+  - path: /etc/ssh/sshd_config.d/hardening.conf
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      AllowTcpForwarding no
+      GatewayPorts no
+      X11Forwarding no
+      MaxAuthTries 3
+      LoginGraceTime 30
+    permissions: '0644'
+
+  # Docker daemon configuration
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        },
+        "storage-driver": "overlay2",
+        "live-restore": true,
+        "metrics-addr": "0.0.0.0:9323",
+        "experimental": true
+      }
+    permissions: '0644'
+
+  # Chrony NTP configuration
+  - path: /etc/chrony/chrony.conf
+    content: |
+      server 0.pool.ntp.org iburst
+      server 1.pool.ntp.org iburst
+      server 2.pool.ntp.org iburst
+      driftfile /var/lib/chrony/chrony.drift
+      makestep 1.0 3
+      rtcsync
+      allow 192.168.1.0/24
+      allow 172.16.0.0/12
+    permissions: '0644'
+
+  # Sysctl for Docker Swarm
+  - path: /etc/sysctl.d/99-docker-swarm.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.conf.all.rp_filter = 1
+      net.ipv4.tcp_syncookies = 1
+      vm.swappiness = 10
+      fs.inotify.max_user_watches = 524288
+      fs.inotify.max_user_instances = 512
+    permissions: '0644'
+
+  # Docker Swarm manager init script
+  - path: /etc/init.d/swarm-manager
+    content: |
+      #!/sbin/openrc-run
+
+      name="Docker Swarm Manager"
+      description="Initialize Docker Swarm manager node"
+      depend() {
+          need docker
+          after docker
+      }
+
+      start() {
+          ebegin "Checking Docker Swarm status"
+          if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
+              einfo "Initializing Docker Swarm..."
+              docker swarm init --advertise-addr eth0 || true
+          fi
+          eend $?
+      }
+
+      stop() {
+          ebegin "Swarm manager service stopped"
+          eend 0
+      }
+    permissions: '0755'
+
+# Run commands
+runcmd:
+  # Apply sysctl settings
+  - sysctl --system
+
+  # Enable and start services
+  - rc-update add docker default
+  - rc-update add chronyd default
+  - rc-update add sshd default
+  - rc-update add fail2ban default
+  - rc-update add xe-guest-utilities default
+  - rc-update add nftables default
+  - rc-update add rpcbind default
+  - rc-update add nfs default
+
+  # Start services
+  - service docker start
+  - service chronyd start
+  - service sshd start
+  - service xe-guest-utilities start
+
+  # Wait for Docker and initialize Swarm
+  - sleep 5
+  - rc-update add swarm-manager default
+  - service swarm-manager start
+
+  # Enable Docker metrics
+  - docker plugin install --grant-all-permissions grafana/loki-docker-driver:latest || true
+
+# Phone home when done
+phone_home:
+  url: http://manager.bojemoi.lab.local:8000/api/v1/cloud-init/callback
+  post:
+    - instance_id
+    - hostname
+  tries: 3
+
+# Final message
+final_message: |
+  Cloud-init completed for $INSTANCE_ID
+  Hostname: $HOSTNAME
+  Alpine Linux Docker Swarm Manager ready

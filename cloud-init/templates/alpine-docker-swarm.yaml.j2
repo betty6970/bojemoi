@@ -1,0 +1,183 @@
+#cloud-config
+# Alpine Linux Docker Swarm Node Template
+# Variables: vm_name, environment, ssh_keys, static_ip (optional), gateway, dns_servers
+
+hostname: {{ vm_name }}
+fqdn: {{ vm_name }}.bojemoi.lab.local
+manage_etc_hosts: true
+
+timezone: Europe/Paris
+
+apk_repos:
+  preserve_repositories: false
+  default_repos:
+    main:
+      enabled: true
+    community:
+      enabled: true
+  repos:
+    - url: http://dl-cdn.alpinelinux.org/alpine/v3.20/main
+    - url: http://alpinelinux.mirrors.ovh.net/v3.20/main
+    - url: http://alpinelinux.mirrors.ovh.net/v3.20/community
+    - url: http://dl-cdn.alpinelinux.org/alpine/edge/community
+
+packages:
+  # Core
+  - bash
+  - curl
+  - wget
+  - jq
+  - bind-tools
+  - nmap
+  - rsync
+  - git
+
+  # Docker
+  - docker
+  - docker-cli
+  - docker-cli-buildx
+  - docker-cli-compose
+  - containerd
+
+  # Python
+  - python3
+  - py3-pip
+  - py3-yaml
+  - py3-jinja2
+  - py3-requests
+  - py3-docker-py
+
+  # Security
+  - openssh
+  - fail2ban
+  - doas
+  - nftables
+
+  # Services
+  - chrony
+  - xe-guest-utilities
+
+users:
+  - name: docker
+    uid: 1002
+    groups: [docker, wheel]
+    shell: /bin/ash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+{% if ssh_keys is defined %}
+    ssh_authorized_keys:
+{% for key in ssh_keys %}
+      - {{ key }}
+{% endfor %}
+{% endif %}
+
+  - name: alpine
+    uid: 1003
+    gecos: alpine Cloud User
+    groups: [wheel, docker]
+    shell: /bin/ash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+{% if ssh_keys is defined %}
+    ssh_authorized_keys:
+{% for key in ssh_keys %}
+      - {{ key }}
+{% endfor %}
+{% endif %}
+
+groups:
+  - docker
+  - wheel
+
+ssh_pwauth: false
+disable_root: false
+
+write_files:
+  - path: /etc/doas.d/doas.conf
+    content: |
+      permit persist :wheel
+    permissions: '0644'
+
+  - path: /etc/ssh/sshd_config.d/hardening.conf
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication no
+      AllowTcpForwarding no
+      X11Forwarding no
+      MaxAuthTries 3
+    permissions: '0644'
+
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {"max-size": "10m", "max-file": "3"},
+        "storage-driver": "overlay2",
+        "live-restore": true,
+        "metrics-addr": "0.0.0.0:9323"
+      }
+    permissions: '0644'
+
+  - path: /etc/sysctl.d/99-docker.conf
+    content: |
+      net.ipv4.ip_forward = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      vm.swappiness = 10
+      fs.inotify.max_user_watches = 524288
+    permissions: '0644'
+
+{% if swarm_role is defined and swarm_role == 'manager' %}
+  - path: /etc/init.d/swarm-manager
+    content: |
+      #!/sbin/openrc-run
+      name="Docker Swarm Manager"
+      depend() { need docker; after docker; }
+      start() {
+          if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
+              docker swarm init --advertise-addr eth0 || true
+          fi
+      }
+    permissions: '0755'
+{% elif swarm_role is defined and swarm_role == 'worker' and swarm_token is defined %}
+  - path: /etc/init.d/swarm-worker
+    content: |
+      #!/sbin/openrc-run
+      name="Docker Swarm Worker"
+      depend() { need docker; after docker; }
+      start() {
+          if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
+              docker swarm join --token {{ swarm_token }} {{ swarm_manager }}:2377 || true
+          fi
+      }
+    permissions: '0755'
+{% endif %}
+
+runcmd:
+  - sysctl --system
+  - rc-update add docker default
+  - rc-update add chronyd default
+  - rc-update add sshd default
+  - rc-update add fail2ban default
+  - rc-update add xe-guest-utilities default
+  - service docker start
+  - service chronyd start
+  - service sshd start
+  - service xe-guest-utilities start
+  - sleep 5
+{% if swarm_role == 'manager' %}
+  - rc-update add swarm-manager default
+  - service swarm-manager start
+{% elif swarm_role == 'worker' %}
+  - rc-update add swarm-worker default
+  - service swarm-worker start
+{% endif %}
+
+phone_home:
+  url: http://manager.bojemoi.lab.local:8000/api/v1/cloud-init/callback
+  post: [instance_id, hostname]
+  tries: 3
+
+final_message: |
+  Cloud-init completed: {{ vm_name }}
+  Environment: {{ environment | default('production') }}
+  Role: {{ swarm_role | default('standalone') }}

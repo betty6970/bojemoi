@@ -1,0 +1,22 @@
+# Cloud-init network configuration - Static IP
+# Generated from meta-76 VM audit on 2026-01-29
+# Use this for static IP assignment
+
+version: 2
+ethernets:
+  eth0:
+    addresses:
+      - 192.168.1.121/24
+      - 2a01:e0a:bc2:ce90:ec05:a0ff:fe40:75ca/64
+    routes:
+      - to: default
+        via: 192.168.1.254
+    nameservers:
+      addresses:
+        - 192.168.1.121
+        - 8.8.8.8
+        - 1.1.1.1
+      search:
+        - bojemoi.lab.local
+        - local
+    mtu: 1500

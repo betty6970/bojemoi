@@ -1,0 +1,11 @@
+# Cloud-init meta-data
+# Generated from meta-76 VM audit on 2026-01-29
+
+instance-id: meta-76
+local-hostname: meta-76
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: true
+      dhcp6: true
