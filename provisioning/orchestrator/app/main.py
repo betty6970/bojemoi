@@ -149,13 +149,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# Add CORS middleware with restricted origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
 
@@ -321,8 +321,8 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
                 source_ip=source_ip,
                 source_country=source_country
             )
-        except:
-            pass
+        except Exception as blockchain_err:
+            logger.error(f"Failed to log VM deployment failure to blockchain: {blockchain_err}")
 
         # Also log in legacy database
         try:
@@ -333,8 +333,8 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
                 status="failed",
                 error=str(e)
             )
-        except:
-            pass
+        except Exception as db_err:
+            logger.error(f"Failed to log VM deployment failure to database: {db_err}")
         
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -407,8 +407,8 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
                 source_ip=source_ip,
                 source_country=source_country
             )
-        except:
-            pass
+        except Exception as blockchain_err:
+            logger.error(f"Failed to log container deployment failure to blockchain: {blockchain_err}")
 
         # Also log in legacy database
         try:
@@ -419,8 +419,8 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
                 status="failed",
                 error=str(e)
             )
-        except:
-            pass
+        except Exception as db_err:
+            logger.error(f"Failed to log container deployment failure to database: {db_err}")
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
