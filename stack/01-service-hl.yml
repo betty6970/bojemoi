@@ -373,7 +373,7 @@ services:
   #================================================
 
   tempo:
-    image: grafana/tempo:latest
+    image: localhost:5000/grafana/tempo:latest
 
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
@@ -734,7 +734,7 @@ services:
 # POSTFIX EXPORTER (Métriques Prometheus)
 # =============================================================================
   postfix-exporter:
-    image: blackflysolutions/postfix-exporter:latest
+    image: localhost:5000/blackflysolutions/postfix-exporter:latest
     hostname: postfix-exporter.bojemoi.lab
     networks:
       - monitoring
@@ -1016,7 +1016,7 @@ services:
   #ypPbe-amlCvsdS4zf0vDsg
 # =========================================================================
   protonmail-bridge:
-    image: shenxn/protonmail-bridge:latest
+    image: localhost:5000/shenxn/protonmail-bridge:latest
     volumes:
       - protonmail_data:/root
     ports:
