@@ -79,9 +79,19 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None):
         findings_count = 0
         if output_file.exists():
             with open(output_file, 'r') as f:
-                for line in f:
-                    if line.strip():
-                        findings_count += 1
+                content = f.read().strip()
+                if content:
+                    try:
+                        data = json.loads(content)
+                        if isinstance(data, list):
+                            findings_count = len(data)
+                        else:
+                            findings_count = 1
+                    except json.JSONDecodeError:
+                        # JSONL format (one JSON per line)
+                        for line in content.split('\n'):
+                            if line.strip() and line.strip() not in ('[]', '{}'):
+                                findings_count += 1
 
         # Met à jour le statut final
         r.hset(f'nuclei:scan:{scan_id}', mapping={

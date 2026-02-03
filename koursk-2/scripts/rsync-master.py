@@ -245,7 +245,8 @@ class RsyncScheduler:
     def get_rsync_slave_list(self):
         """Découvre les slaves via le label rsync.slave=true sur les nodes"""
         import docker
-        client = docker.DockerClient(base_url='unix:///var/run/docker.sock')
+        # Use docker.from_env() to respect DOCKER_HOST environment variable
+        client = docker.from_env()
 
         slave_ips = []
         slave_node_ids = []

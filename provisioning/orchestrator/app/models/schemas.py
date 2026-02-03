@@ -311,3 +311,27 @@ class BlockListResponse(BaseModel):
     success: bool
     count: int
     blocks: List[BlockchainBlock]
+
+
+class BlockchainStatsResponse(BaseModel):
+    """Response model for blockchain statistics"""
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "total_blocks": 150,
+                "deployments_by_type": {"vm": 80, "container": 70},
+                "deployments_by_status": {"success": 140, "failed": 10},
+                "first_block_time": "2025-01-01T00:00:00Z",
+                "last_block_time": "2025-01-17T10:30:00Z",
+                "chain_continuous": True,
+            }
+        }
+    )
+
+    total_blocks: int
+    deployments_by_type: Dict[str, int]
+    deployments_by_status: Dict[str, int]
+    first_block_time: Optional[str] = None
+    last_block_time: Optional[str] = None
+    chain_continuous: bool
+    error: Optional[str] = None

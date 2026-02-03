@@ -16,13 +16,13 @@ docker-compose -f stack/<stack-name>.yml config --quiet
 # Deploy a stack
 docker stack deploy -c stack/<stack-name>.yml <stack-name> --prune --resolve-image always
 
-# View service logs
+aa# View service logs
 docker service logs -f <service-name>
 ```
 
 ### Orchestrator Development
 ```bash
-cd provisioning1
+cd provisioning
 pip install -r requirements.txt
 
 # Run the API server

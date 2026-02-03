@@ -5,27 +5,19 @@
 networks:
   monitoring:
     name: monitoring
-    driver: overlay
-    attachable: true
+    external: true
   backend:
     name: backend
-    driver: overlay
-    attachable: true
+    external: true
   rsync_network:
     name: rsync_network
-    driver: overlay
-    attachable: true
+    external: true
   proxy:
     name: proxy
-    driver: overlay
-    attachable: true
+    external: true
   mail:
     name: mail
-    driver: overlay
-    attachable: true
-  telegram_net:
-    driver: overlay
-    attachable: true
+    external: true
 
 volumes:
   postgres_data:

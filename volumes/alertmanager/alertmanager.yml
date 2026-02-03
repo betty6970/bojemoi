@@ -4,7 +4,7 @@ global:
   resolve_timeout: 5m
   # Configuration SMTP (Email)
   smtp_from: 'betty.bombers@bojemoi.lab'
-  smtp_smarthost: 'protonmail-bridge:1025'
+  smtp_smarthost: 'protonmail-bridge:25'
   smtp_auth_username: 'betty.bombers@proton.me'
   smtp_auth_password: 'ypPbe-amlCvsdS4zf0vDsg'
   smtp_require_tls: true

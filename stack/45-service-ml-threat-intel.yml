@@ -1,0 +1,110 @@
+# Bojemoi Lab - ML Threat Intelligence Stack
+# IoC analysis with ML classification and OSINT integration
+
+x-deploy-template: &deploy-template
+  placement:
+    constraints:
+      - node.role == worker
+  restart_policy:
+    condition: on-failure
+    delay: 5s
+    max_attempts: 3
+  update_config:
+    parallelism: 1
+    delay: 10s
+    failure_action: rollback
+  resources:
+    limits:
+      cpus: '1.0'
+      memory: 1G
+    reservations:
+      cpus: '0.25'
+      memory: 512M
+
+networks:
+  backend:
+    external: true
+  proxy:
+    external: true
+
+volumes:
+  ml-threat-intel-db:
+    driver: local
+  ml-threat-intel-models:
+    driver: local
+
+services:
+  # PostgreSQL for ML Threat Intel
+  ml-threat-intel-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: bojemoi_threat_intel
+      POSTGRES_USER: bojemoi
+      POSTGRES_PASSWORD_FILE: /run/secrets/ml_threat_intel_db_password
+    volumes:
+      - ml-threat-intel-db:/var/lib/postgresql/data
+    networks:
+      - backend
+    secrets:
+      - ml_threat_intel_db_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bojemoi -d bojemoi_threat_intel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      <<: *deploy-template
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+
+  # ML Threat Intelligence API
+  ml-threat-intel-api:
+    image: localhost:5000/ml-threat-intel:latest
+    environment:
+      DB_HOST: ml-threat-intel-db
+      DB_PORT: 5432
+      DB_NAME: bojemoi_threat_intel
+      DB_USER: bojemoi
+      DB_PASSWORD_FILE: /run/secrets/ml_threat_intel_db_password
+      VT_API_KEY_FILE: /run/secrets/vt_api_key
+      ABUSEIPDB_API_KEY_FILE: /run/secrets/abuseipdb_api_key
+      OTX_API_KEY_FILE: /run/secrets/otx_api_key
+      SHODAN_API_KEY_FILE: /run/secrets/shodan_api_key
+    volumes:
+      - ml-threat-intel-models:/app/models
+      - /opt/bojemoi/ml-threat-intel/config:/app/config:ro
+    networks:
+      - backend
+      - proxy
+    secrets:
+      - ml_threat_intel_db_password
+      - vt_api_key
+      - abuseipdb_api_key
+      - otx_api_key
+      - shodan_api_key
+    depends_on:
+      - ml-threat-intel-db
+    deploy:
+      <<: *deploy-template
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.ml-threat-intel.rule=Host(`threat-intel.bojemoi.lab.local`)"
+        - "traefik.http.routers.ml-threat-intel.entrypoints=web"
+        - "traefik.http.services.ml-threat-intel.loadbalancer.server.port=8001"
+
+secrets:
+  ml_threat_intel_db_password:
+    external: true
+  vt_api_key:
+    external: true
+  abuseipdb_api_key:
+    external: true
+  otx_api_key:
+    external: true
+  shodan_api_key:
+    external: true

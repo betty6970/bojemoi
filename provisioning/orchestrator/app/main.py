@@ -1,6 +1,8 @@
 """Main FastAPI application"""
+import time
 from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from typing import Optional, List
 import logging
 from datetime import datetime
@@ -10,7 +12,8 @@ from app.config import settings
 from app.models.schemas import (
     VMDeployRequest, ContainerDeployRequest,
     DeploymentResponse, HealthResponse, DeploymentListResponse,
-    BlockchainBlock, BlockchainVerifyResponse, BlockListResponse
+    BlockchainBlock, BlockchainVerifyResponse, BlockListResponse,
+    BlockchainStatsResponse
 )
 from app.services.gitea_client import GiteaClient
 from app.services.xenserver_client_real import XenServerClient
@@ -20,6 +23,18 @@ from app.services.database import Database
 from app.services.ip2location_client import IP2LocationClient
 from app.services.blockchain import BlockchainService
 from app.middleware.ip_validation import IPValidationMiddleware, get_request_ip_info
+from app.middleware.metrics import MetricsMiddleware
+from app.metrics import (
+    set_app_info,
+    get_metrics,
+    get_metrics_content_type,
+    record_deployment,
+    record_deployment_error,
+    update_service_health,
+    update_blockchain_metrics,
+    track_duration,
+    deployment_duration,
+)
 
 # XenServer template mapping (os_type -> actual template name)
 XENSERVER_TEMPLATES = {
@@ -66,9 +81,11 @@ async def lifespan(app: FastAPI):
         gitea_client = GiteaClient(
             base_url=settings.GITEA_URL,
             token=settings.GITEA_TOKEN,
-            repo=settings.GITEA_REPO
+            repo=settings.GITEA_REPO,
+            owner=settings.GITEA_REPO_OWNER,
+            cache_ttl=300  # 5 minute cache for templates
         )
-        logger.info("Gitea client initialized")
+        logger.info(f"Gitea client initialized (repo: {settings.GITEA_REPO_OWNER}/{settings.GITEA_REPO})")
 
         # Initialize XenServer client
         xenserver_client = XenServerClient(
@@ -102,6 +119,13 @@ async def lifespan(app: FastAPI):
         blockchain_service = BlockchainService(settings.KARACHO_DB_URL)
         await blockchain_service.init()
         logger.info("Blockchain service initialized")
+
+        # Set Prometheus app info
+        set_app_info(
+            version=settings.API_VERSION,
+            environment="production" if not settings.DEBUG else "development"
+        )
+        logger.info("Prometheus metrics initialized")
 
         # Add IP validation middleware
         app.add_middleware(
@@ -158,6 +182,9 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
 
+# Add metrics middleware
+app.add_middleware(MetricsMiddleware)
+
 
 @app.get("/", tags=["General"])
 async def root():
@@ -169,6 +196,19 @@ async def root():
     }
 
 
+@app.get("/metrics", tags=["Monitoring"], include_in_schema=False)
+async def metrics():
+    """Prometheus metrics endpoint.
+
+    Returns metrics in Prometheus text format for scraping.
+    This endpoint is excluded from OpenAPI schema.
+    """
+    return Response(
+        content=get_metrics(),
+        media_type=get_metrics_content_type()
+    )
+
+
 @app.get("/health", response_model=HealthResponse, tags=["General"])
 async def health_check():
     """Health check endpoint"""
@@ -177,53 +217,70 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
         "services": {}
     }
-    
+
     # Check Gitea
     try:
         gitea_ok = await gitea_client.ping()
         health_status["services"]["gitea"] = "up" if gitea_ok else "down"
+        update_service_health("gitea", gitea_ok)
     except Exception as e:
         health_status["services"]["gitea"] = "down"
+        update_service_health("gitea", False)
         logger.error(f"Gitea health check failed: {e}")
-    
+
     # Check XenServer
     try:
         xenserver_ok = await xenserver_client.ping()
         health_status["services"]["xenserver"] = "up" if xenserver_ok else "down"
+        update_service_health("xenserver", xenserver_ok)
     except Exception as e:
         health_status["services"]["xenserver"] = "down"
+        update_service_health("xenserver", False)
         logger.error(f"XenServer health check failed: {e}")
-    
+
     # Check Docker Swarm
     try:
         docker_ok = await docker_client.ping()
         health_status["services"]["docker_swarm"] = "up" if docker_ok else "down"
+        update_service_health("docker_swarm", docker_ok)
     except Exception as e:
         health_status["services"]["docker_swarm"] = "down"
+        update_service_health("docker_swarm", False)
         logger.error(f"Docker Swarm health check failed: {e}")
-    
+
     # Check Database
     try:
         db_ok = await db.ping()
         health_status["services"]["database"] = "up" if db_ok else "down"
+        update_service_health("database", db_ok)
     except Exception as e:
         health_status["services"]["database"] = "down"
+        update_service_health("database", False)
         logger.error(f"Database health check failed: {e}")
 
     # Check IP2Location database
     try:
         ip2loc_ok = await ip2location_client.ping()
         health_status["services"]["ip2location"] = "up" if ip2loc_ok else "down"
+        update_service_health("ip2location", ip2loc_ok)
     except Exception as e:
         health_status["services"]["ip2location"] = "down"
+        update_service_health("ip2location", False)
         logger.error(f"IP2Location health check failed: {e}")
 
     # Check Blockchain database
     try:
         blockchain_ok = await blockchain_service.ping()
         health_status["services"]["blockchain"] = "up" if blockchain_ok else "down"
+        update_service_health("blockchain", blockchain_ok)
+
+        # Update blockchain metrics
+        if blockchain_ok:
+            block_count = await blockchain_service.count_blocks()
+            update_blockchain_metrics(block_count, True)
     except Exception as e:
         health_status["services"]["blockchain"] = "down"
+        update_service_health("blockchain", False)
         logger.error(f"Blockchain health check failed: {e}")
 
     # Overall status
@@ -243,6 +300,8 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
     ip_info = get_request_ip_info(req)
     source_ip = ip_info.get("source_ip")
     source_country = ip_info.get("source_country")
+
+    start_time = time.time()
 
     try:
         logger.info(f"Deploying VM: {request.name} (from IP: {source_ip}, country: {source_country})")
@@ -298,6 +357,10 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
             status="success"
         )
 
+        # Record success metrics
+        duration = time.time() - start_time
+        record_deployment("vm", "success", request.environment.value, duration)
+
         logger.info(f"VM deployed successfully: {request.name} (block: #{block['block_number']}, hash: {block['current_hash'][:16]}...)")
 
         return DeploymentResponse(
@@ -308,6 +371,11 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
         )
 
     except Exception as e:
+        # Record failure metrics
+        duration = time.time() - start_time
+        record_deployment("vm", "failed", request.environment.value, duration)
+        record_deployment_error("vm", type(e).__name__)
+
         logger.error(f"Failed to deploy VM {request.name}: {e}")
 
         # Log failed deployment in blockchain
@@ -350,6 +418,8 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
     source_ip = ip_info.get("source_ip")
     source_country = ip_info.get("source_country")
 
+    start_time = time.time()
+
     try:
         logger.info(f"Deploying container: {request.name} (from IP: {source_ip}, country: {source_country})")
 
@@ -384,6 +454,10 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
             status="success"
         )
 
+        # Record success metrics
+        duration = time.time() - start_time
+        record_deployment("container", "success", "production", duration)
+
         logger.info(f"Container deployed successfully: {request.name} (block: #{block['block_number']}, hash: {block['current_hash'][:16]}...)")
 
         return DeploymentResponse(
@@ -394,6 +468,11 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
         )
 
     except Exception as e:
+        # Record failure metrics
+        duration = time.time() - start_time
+        record_deployment("container", "failed", "production", duration)
+        record_deployment_error("container", type(e).__name__)
+
         logger.error(f"Failed to deploy container {request.name}: {e}")
 
         # Log failed deployment in blockchain
@@ -611,4 +690,174 @@ async def get_latest_block():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get latest block: {str(e)}"
+        )
+
+
+@app.get("/api/v1/blockchain/stats", response_model=BlockchainStatsResponse, tags=["Blockchain"])
+async def get_blockchain_stats():
+    """Get blockchain statistics including deployment counts and chain health"""
+    try:
+        stats = await blockchain_service.get_chain_stats()
+
+        if "error" in stats:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=stats["error"]
+            )
+
+        return BlockchainStatsResponse(**stats)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get blockchain stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get blockchain stats: {str(e)}"
+        )
+
+
+@app.get("/api/v1/blockchain/history/{name}", tags=["Blockchain"])
+async def get_deployment_history(name: str):
+    """Get all blockchain records for a specific deployment name"""
+    try:
+        blocks = await blockchain_service.get_blocks_by_name(name)
+
+        return {
+            "success": True,
+            "name": name,
+            "count": len(blocks),
+            "blocks": blocks
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get deployment history for {name}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get deployment history: {str(e)}"
+        )
+
+
+# Template endpoints
+
+@app.get("/api/v1/templates", tags=["Templates"])
+async def list_templates(os_type: Optional[str] = None):
+    """List available cloud-init templates.
+
+    Args:
+        os_type: Filter by OS type (alpine, ubuntu, debian), or omit for all
+    """
+    try:
+        templates = await gitea_client.list_templates(os_type)
+
+        return {
+            "success": True,
+            "templates": templates,
+            "total": sum(len(t) for t in templates.values())
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to list templates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list templates: {str(e)}"
+        )
+
+
+@app.get("/api/v1/templates/{os_type}/{template_name}", tags=["Templates"])
+async def get_template(os_type: str, template_name: str):
+    """Get a specific cloud-init template.
+
+    Args:
+        os_type: Operating system type (alpine, ubuntu, debian)
+        template_name: Template name (without .yaml extension)
+    """
+    try:
+        content = await gitea_client.get_template(os_type, template_name)
+
+        return {
+            "success": True,
+            "os_type": os_type,
+            "template_name": template_name,
+            "content": content
+        }
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Template not found: {os_type}/{template_name}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to get template {os_type}/{template_name}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get template: {str(e)}"
+        )
+
+
+@app.get("/api/v1/templates/scripts", tags=["Templates"])
+async def list_common_scripts():
+    """List available common scripts for cloud-init."""
+    try:
+        scripts = await gitea_client.list_common_scripts()
+
+        return {
+            "success": True,
+            "scripts": scripts,
+            "total": len(scripts)
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to list common scripts: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list scripts: {str(e)}"
+        )
+
+
+@app.get("/api/v1/templates/scripts/{script_name}", tags=["Templates"])
+async def get_common_script(script_name: str):
+    """Get a common script by name.
+
+    Args:
+        script_name: Script name (with or without .sh extension)
+    """
+    try:
+        content = await gitea_client.get_common_script(script_name)
+
+        return {
+            "success": True,
+            "script_name": script_name,
+            "content": content
+        }
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Script not found: {script_name}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to get script {script_name}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get script: {str(e)}"
+        )
+
+
+@app.post("/api/v1/templates/cache/clear", tags=["Templates"])
+async def clear_template_cache():
+    """Clear the template cache to force fresh fetches from Gitea."""
+    try:
+        gitea_client.clear_cache()
+
+        return {
+            "success": True,
+            "message": "Template cache cleared"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to clear cache: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear cache: {str(e)}"
         )

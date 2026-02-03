@@ -17,6 +17,8 @@ x-arme-template: &arme-template
 # Template de deploiement separe
 x-deploy-template: &deploy-template
   placement:
+    constraints:
+      - node.role == worker
     max_replicas_per_node: 5
   restart_policy:
     condition: on-failure
@@ -43,7 +45,8 @@ networks:
   proxy:
     external: true
   pentest:
-    external: true
+    driver: overlay
+    attachable: true
 #--------------------------------------------------------------------------------
 # VOLUMES
 #--------------------------------------------------------------------------------
@@ -220,7 +223,7 @@ services:
     deploy:
       placement:
         constraints:
-          - node.role == manager
+          - node.role == worker
       restart_policy:
         condition: on-failure
       replicas: 1
@@ -275,6 +278,7 @@ services:
   # =========================================================================
   nuclei:
     image: projectdiscovery/nuclei:latest
+    entrypoint: /bin/sh
     networks:
       - backend
       - pentest
@@ -284,7 +288,9 @@ services:
       - /opt/bojemoi/volumes/nuclei/config:/root/.config/nuclei
     environment:
       - NUCLEI_TEMPLATES=/root/nuclei-templates
-    command: sh -c "nuclei -update-templates && tail -f /dev/null"
+    command:
+      - -c
+      - nuclei -update-templates && tail -f /dev/null
     deploy:
       mode: replicated
       replicas: 1
@@ -304,32 +310,46 @@ services:
           memory: 512M
 
   nuclei-api:
-    image: python:3.11-slim
+    image: projectdiscovery/nuclei:latest
+    entrypoint: /bin/sh
     networks:
       - backend
       - pentest
     volumes:
       - /opt/bojemoi/samsonov/nuclei_api:/app
       - nuclei-results:/results
+      - nuclei-templates:/root/nuclei-templates
     working_dir: /app
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - NUCLEI_HOST=nuclei
       - RESULTS_DIR=/results
-    command: >
-      sh -c "pip install fastapi uvicorn redis httpx --break-system-packages &&
-             python -m uvicorn main:app --host 0.0.0.0 --port 8001"
+      - NUCLEI_TEMPLATES=/root/nuclei-templates
+    command:
+      - -c
+      - |
+        apk add --no-cache python3 py3-pip
+        pip install fastapi uvicorn redis httpx --break-system-packages
+        nuclei -update-templates
+        python -m uvicorn main:app --host 0.0.0.0 --port 8001
     deploy:
       mode: replicated
       replicas: 1
       placement:
         constraints:
-          - node.role == manager
+          - node.role == worker
       restart_policy:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
 
   # =========================================================================
   # FROM: 56-service-vulnx.yml - VulnX Scanner
@@ -385,7 +405,7 @@ services:
     deploy:
       placement:
         constraints:
-          - node.role == manager
+          - node.role == worker
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -413,7 +433,7 @@ services:
     deploy:
       placement:
         constraints:
-          - node.role == manager
+          - node.role == worker
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -458,7 +478,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.role == manager
+          - node.role == worker
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -482,7 +502,8 @@ services:
           cpus: '0.25'
           memory: 64M
       placement:
-        constraints: []
+        constraints:
+          - node.role == worker
 
   pentest-exporter:
     image: python:latest
@@ -500,5 +521,5 @@ services:
         - "prometheus.path=/metrics"
       placement:
         constraints:
-          - node.role == manager
+          - node.role == worker
 
