@@ -109,9 +109,7 @@ services:
   zaproxy:
     image: localhost:5000/oblast:latest
     hostname: zaproxy
-    ports:
-      - "18080:18080"
-      - "8090:8090"
+    # ports removed - internal pentest service, accessed via overlay network
     environment:
       - ZAP_HOST=0.0.0.0
       - ZAP_PORT=8090
@@ -120,6 +118,7 @@ services:
     networks:
       - backend
       - pentest
+      - proxy
     dns_search:
       - bojemoi.lab
     healthcheck:
@@ -133,6 +132,13 @@ services:
       placement:
         constraints:
           - node.role == worker
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=proxy
+        - traefik.http.routers.zaproxy.rule=Host(`zap.bojemoi.lab`)
+        - traefik.http.routers.zaproxy.entrypoints=websecure
+        - traefik.http.routers.zaproxy.tls=true
+        - traefik.http.services.zaproxy.loadbalancer.server.port=8090
 
   # ZAP Scanner application
   zap-scanner:
@@ -206,8 +212,7 @@ services:
     volumes:
       - karacho-logs:/var/log/karacho
       - karacho-run:/var/run/karacho
-    ports:
-      - "5100:5100"
+    # ports removed - internal blockchain service
     environment:
       - DEBUG=false
       - TOKEN_EXPIRY=3600
@@ -220,6 +225,7 @@ services:
       - MSF_DB_NAME=msf
     networks:
       - backend
+      - proxy
     deploy:
       placement:
         constraints:
@@ -234,6 +240,13 @@ services:
         limits:
           cpus: '1'
           memory: 2G
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=proxy
+        - traefik.http.routers.karacho.rule=Host(`karacho.bojemoi.lab`)
+        - traefik.http.routers.karacho.entrypoints=websecure
+        - traefik.http.routers.karacho.tls=true
+        - traefik.http.services.karacho.loadbalancer.server.port=5100
     restart: unless-stopped
 
   # =========================================================================
@@ -315,6 +328,7 @@ services:
     networks:
       - backend
       - pentest
+      - proxy
     volumes:
       - /opt/bojemoi/samsonov/nuclei_api:/app
       - nuclei-results:/results
@@ -350,6 +364,13 @@ services:
         reservations:
           cpus: '0.5'
           memory: 512M
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=proxy
+        - traefik.http.routers.nuclei-api.rule=Host(`nuclei.bojemoi.lab`)
+        - traefik.http.routers.nuclei-api.entrypoints=websecure
+        - traefik.http.routers.nuclei-api.tls=true
+        - traefik.http.services.nuclei-api.loadbalancer.server.port=8001
 
   # =========================================================================
   # FROM: 56-service-vulnx.yml - VulnX Scanner
@@ -456,8 +477,7 @@ services:
       - pentest
     dns_search:
       - bojemoi.lab
-    ports:
-      - 5985:5985
+    # ports removed - access via Traefik (faraday.bojemoi.lab)
     configs:
       - source: faraday-server_config
         target: /home/faraday/.faraday/config/server.ini

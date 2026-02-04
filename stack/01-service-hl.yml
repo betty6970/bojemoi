@@ -17,7 +17,8 @@ networks:
     external: true
   mail:
     name: mail
-    external: true
+    driver: overlay
+    attachable: true
 
 volumes:
   postgres_data:
@@ -160,6 +161,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       placement:
         constraints:
           - node.role == manager
@@ -193,6 +198,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       placement:
         constraints:
            - node.role == manager
@@ -252,6 +261,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       labels:
         - prometheus.enable=false  # Utilise l'exporter dédié
         - prometheus.label.team=security
@@ -269,9 +282,8 @@ services:
     networks:
       - monitoring
       - backend
-    ports:
-      - 9917:9917
-    command: 
+    # ports removed - Prometheus scrapes via overlay network
+    command:
       - '--suricata.socket-path=/var/run/suricata/suricata-command.socket'
     deploy:
       mode: global  # Clé importante : déploie une instance sur chaque node
@@ -279,6 +291,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       labels:
         - prometheus.enable=true
         - prometheus.port=9917
@@ -299,8 +315,7 @@ services:
       - monitoring
     dns_search:
       - bojemoi.lab
-    ports:
-      -  3000:3000
+    # ports removed - access via Traefik (grafana.bojemoi.lab)
     environment:
       GF_SERVER_ROOT_URL: http://localhost:3000
       GF_SECURITY_ADMIN_PASSWORD: admin_password
@@ -333,6 +348,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       labels:
         - prometheus.enable=true
         - prometheus.port="3000"
@@ -342,23 +361,23 @@ services:
         - prometheus.label.stack=base
         - prometheus.label.tier=monitoring
         - traefik.enable=true
-        - traefik.swarm.network=proxy       
+        - traefik.swarm.network=proxy
       # Définir le router HTTP (avec redirection HTTPS)
         - traefik.http.routers.grafana.rule=Host(`grafana.bojemoi.lab`)
         - traefik.http.routers.grafana.entrypoints=web
         - traefik.http.routers.grafana.middlewares=redirect-to-https
-  
+
       # Définir le router HTTPS
         - traefik.http.routers.grafana-secure.rule=Host(`grafana.bojemoi.lab`)
         - traefik.http.routers.grafana-secure.entrypoints=websecure
         - traefik.http.routers.grafana-secure.tls=true
-  
+
   # Définir le service et le port
         - traefik.http.services.grafana.loadbalancer.server.port=3000
-  
+
   # Middleware de redirection HTTPS (si pas déjà défini globalement)
         - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
-        - traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true  
+        - traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true
 
   #================================================
   #
@@ -372,10 +391,10 @@ services:
       - /opt/bojemoi/volumes/tempo/config/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo
     ports:
-      - "3200:3200"   # Tempo API
-      - "4317:4317"   # OTLP gRPC (← C'est ce port dans ton erreur!)
-      - "4318:4318"   # OTLP HTTP
-      - "9411:9411"   # Zipkin
+      # API port removed - access via Traefik (tempo.bojemoi.lab)
+      - "4317:4317"   # OTLP gRPC - required for trace ingestion
+      - "4318:4318"   # OTLP HTTP - required for trace ingestion
+      - "9411:9411"   # Zipkin - required for trace ingestion
     networks:
       - proxy 
       - monitoring
@@ -383,6 +402,14 @@ services:
     dns_search:
       - bojemoi.lab
     deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       labels:
         # Prometheus scraping
         - prometheus.enable=true
@@ -399,7 +426,7 @@ services:
         - traefik.http.routers.tempo.entrypoints=websecure
         - traefik.http.routers.tempo.tls=true
         - traefik.http.services.tempo.loadbalancer.server.port=3200
-        
+
       placement:
         constraints:
           - node.role == manager
@@ -429,8 +456,7 @@ services:
       - rsync_network
       - proxy
       - backend  # Required for docker-socket-proxy access
-    ports:
-      - 9090:9090
+    # ports removed - access via Traefik (prometheus.bojemoi.lab)
     command:
       - --log.level=debug
       - --config.file=/etc/prometheus/prometheus.yml
@@ -455,6 +481,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       placement:
         constraints:
           - node.role == manager
@@ -469,7 +499,7 @@ services:
           - com.docker.stack.image=prom/prometheus:latest
           - com.docker.stack.namespace=base
           - traefik.enable=true
-          - traefik.swarm.network=proxy       
+          - traefik.swarm.network=proxy
   # Router Prometheus
           - traefik.http.routers.prometheus.rule=Host(`prometheus.bojemoi.lab`)
           - traefik.http.routers.prometheus.entrypoints=websecure
@@ -491,8 +521,7 @@ services:
       - backend
     dns_search:
       - bojemoi.lab
-    ports:
-      - 3100:3100
+    # ports removed - services push logs via overlay network
     command:
       -  -config.file=/etc/loki/local-config.yml
       -  -config.expand-env=true 
@@ -504,7 +533,7 @@ services:
       - loki_data:/loki
     deploy:
       mode: replicated
-      replicas: 1  
+      replicas: 1
       placement:
         constraints:
           - node.role == manager
@@ -512,6 +541,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       labels:
         - prometheus.enable=true
         - prometheus.port=3100
@@ -524,8 +557,7 @@ services:
   # =========================================================================
   alloy:
     image: localhost:5000/alloy:latest
-    ports:
-      - 12345:12345
+    # ports removed - internal telemetry collector
     configs:
       - source: alloy_config
         target: /etc/alloy/config.alloy
@@ -549,6 +581,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       labels:
         - prometheus.enable=false
         - prometheus.port=12345
@@ -562,8 +598,7 @@ services:
   # =========================================================================
   alertmanager:
     image: localhost:5000/alertmanager:latest
-    ports:
-      - 9093:9093
+    # ports removed - access via Traefik (alertmanager.bojemoi.lab)
     configs:
       - source: tls_alertmanager_config
         target: /etc/alertmanager/certs/protonmail-bridge.crt
@@ -588,6 +623,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       placement:
         constraints:
           - node.role == manager
@@ -600,7 +639,7 @@ services:
         - prometheus.label.stack=base
         - prometheus.label.tier=monitoring
         - traefik.enable=true
-        - traefik.swarm.network=proxy      
+        - traefik.swarm.network=proxy
         # Router HTTP
         - traefik.http.routers.alertmanager.rule=Host(`alertmanager.bojemoi.lab`)
         - traefik.http.routers.alertmanager.entrypoints=web
@@ -646,6 +685,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       labels:
         - prometheus.enable=true
         - prometheus.port=9100
@@ -708,11 +751,19 @@ services:
     # and Docker configs are read-only. Environment variables handle configuration.
     deploy:
       replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       placement:
         constraints:
           - node.role == manager
       labels:
-        - traefik.swarm.network=proxy      
+        - traefik.swarm.network=proxy
         - prometheus.enable=false  # Utilise l'exporter dédié
         - prometheus.label.team=infrastructure
         - prometheus.label.component=mail-server
@@ -744,6 +795,14 @@ services:
       - postfix_log:/var/log
     deploy:
       replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       placement:
         constraints:
           - node.role == manager  # Même node que Postfix
@@ -769,11 +828,7 @@ services:
 
   cadvisor:
     image: localhost:5000/cadvisor:latest
-    ports:
-      - target: 8080
-        published: 8088
-        protocol: tcp
-        mode: host
+    # ports removed - access via Traefik (cadvisor.bojemoi.lab)
     volumes:
       - /:/rootfs
       - /var/run:/var/run
@@ -785,6 +840,14 @@ services:
       - proxy
     deploy:
       mode: global
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       labels:
         - prometheus.enable=true
         - prometheus.port=8080
@@ -794,7 +857,7 @@ services:
         - prometheus.label.stack=base
         - prometheus.label.tier=monitoring
         - traefik.enable=true
-        - traefik.swarm.network=proxy      
+        - traefik.swarm.network=proxy
         # Router HTTP
         - traefik.http.routers.cadvisor.rule=Host(`cadvisor.bojemoi.lab`)
         - traefik.http.routers.cadvisor.entrypoints=web
@@ -820,8 +883,7 @@ services:
     <<: *mode-template  # H..rite du template de base
     image: localhost:5000/koursk-2:latest
     hostname: rsync-master
-    ports:
-       - 8084:8080
+    # ports removed - internal backup service
     deploy:
       <<: *deploy-template  # H..rite du template de d..
       replicas: 1 
@@ -838,6 +900,15 @@ services:
        - type: bind
          source: /opt/bojemoi
          target: /opt/bojemoi
+       - type: bind
+         source: /opt/bojemoi_boot
+         target: /opt/bojemoi_boot
+       - type: bind
+         source: /opt/bojemoi-ml-threat
+         target: /opt/bojemoi-ml-threat
+       - type: bind
+         source: /opt/bojemoi-telegram
+         target: /opt/bojemoi-telegram
        - ssh_keys:/root/.ssh:ro
        - shared_logs:/var/log/rsync
     environment:
@@ -875,6 +946,15 @@ services:
       - type: bind
         source: /opt/bojemoi
         target: /opt/bojemoi
+      - type: bind
+        source: /opt/bojemoi_boot
+        target: /opt/bojemoi_boot
+      - type: bind
+        source: /opt/bojemoi-ml-threat
+        target: /opt/bojemoi-ml-threat
+      - type: bind
+        source: /opt/bojemoi-telegram
+        target: /opt/bojemoi-telegram
       - ssh_keys:/root/.ssh
       - shared_logs:/var/log/rsync
     environment:
@@ -897,6 +977,14 @@ services:
       - backend
     deploy:
       replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       placement:
         constraints:
           - node.role == manager
@@ -920,8 +1008,7 @@ services:
     image: localhost:5000/provisioning:latest
     hostname: orchestrator.bojemoi.lab
     command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --app-dir /app
-    ports:
-      - "28080:8080"
+    # ports removed - access via Traefik (provisioning.bojemoi.lab)
 #    configs:
 #      - source: provisioning_env
 #        target: /app/.env
@@ -952,6 +1039,10 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       resources:
         limits:
           memory: 512M
@@ -1019,6 +1110,14 @@ services:
     networks:
       - mail
     deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+#        failure_action: rollback
       placement:
         constraints:
           - node.role == manager
