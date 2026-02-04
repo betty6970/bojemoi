@@ -20,7 +20,27 @@ echo -e "\n=== Recent Failed Tasks ===" && docker service ls -q | xargs -I {} do
 ```
 
 ### For `deploy <stack>`:
-The stack file should be at `/opt/bojemoi/stack/*.yml`. Run:
+
+**IMPORTANT: Always create an Alertmanager silence BEFORE deploying to prevent alert spam.**
+
+1. First, create a silence (15 minutes duration):
+```bash
+ALERTMANAGER_URL="http://alertmanager.bojemoi.lab:9093"
+START_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+END_TIME=$(date -u -d "+15 minutes" +"%Y-%m-%dT%H:%M:%S.000Z")
+SILENCE_RESPONSE=$(curl -s -X POST "${ALERTMANAGER_URL}/api/v2/silences" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"matchers\": [{\"name\": \"alertname\", \"value\": \".*\", \"isRegex\": true, \"isEqual\": true}],
+    \"startsAt\": \"${START_TIME}\",
+    \"endsAt\": \"${END_TIME}\",
+    \"createdBy\": \"claude-swarm-deploy\",
+    \"comment\": \"Stack deployment in progress\"
+  }")
+echo "Silence created: $SILENCE_RESPONSE"
+```
+
+2. Then deploy the stack:
 ```bash
 docker stack deploy -c /opt/bojemoi/stack/<stack-file>.yml <stack-name> --prune
 ```
@@ -28,6 +48,13 @@ docker stack deploy -c /opt/bojemoi/stack/<stack-file>.yml <stack-name> --prune
 Common stacks:
 - `base` → `01-service-hl.yml`
 - `borodino` → `40-service-borodino.yml`
+- `ml-threat` → `45-service-ml-threat-intel.yml`
+- `boot` → `/opt/bojemoi_boot/stack/01-boot-service.yml`
+
+3. After deployment, show status:
+```bash
+docker service ls --filter "label=com.docker.stack.namespace=<stack-name>" --format "table {{.Name}}\t{{.Replicas}}"
+```
 
 ### For `scale <service> <replicas>`:
 ```bash
@@ -53,7 +80,7 @@ done
 ### If no argument or `help`:
 Show available commands:
 - `/swarm status` - Cluster and service overview
-- `/swarm deploy <stack>` - Deploy stack (base, borodino)
+- `/swarm deploy <stack>` - Deploy stack (base, borodino, ml-threat)
 - `/swarm scale <service> <n>` - Scale service replicas
 - `/swarm logs <service>` - View service logs
 - `/swarm nodes` - Node status and resources
@@ -63,3 +90,4 @@ Show available commands:
 - Always confirm before scaling to 0 replicas
 - Warn if deploying to production stacks
 - Check for pending config changes before deploy
+- **Alert silence is automatically created for 15 minutes during deploy**
