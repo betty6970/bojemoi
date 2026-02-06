@@ -1,2 +1,29 @@
 __pycache__/
 *.pyc
+
+# Secrets & credentials
+.env
+*.key
+*.pem
+auth.txt
+api_credentials
+volumes/rsync/ssh-keys/
+volumes/wireguard/config/
+volumes/telegram_bot/
+volumes/openvpn/openvpn-config/auth.txt
+oblast/vpn-swarm/secrets/
+
+# Certificates
+volumes/traefik/certs/
+volumes/alertmanager/certs/
+
+# Logs
+*.log
+volumes/suricata/logs/
+volumes/suricata/suricata-command.socket
+
+# Scan results
+samsonov/pentest_orchestrator/results/
+
+# Archives
+*.tar.gz
