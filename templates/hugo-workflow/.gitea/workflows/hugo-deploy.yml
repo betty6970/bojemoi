@@ -1,0 +1,28 @@
+name: Hugo Build & Deploy
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:3.19
+      volumes:
+        - /var/www/blog.bojemoi.me:/deploy
+    steps:
+      - name: Install dependencies
+        run: apk add --no-cache hugo git
+
+      - name: Checkout repo
+        run: |
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "http://gitea:3000/${GITHUB_REPOSITORY}.git" .
+
+      - name: Build Hugo site
+        run: hugo --minify
+
+      - name: Deploy to web root
+        run: |
+          rm -rf /deploy/*
+          cp -r public/* /deploy/
+          echo "Deployed $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > /deploy/.deployed
