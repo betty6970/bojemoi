@@ -1,0 +1,23 @@
+name: Hugo Build & Deploy
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: klakegg/hugo:ext-alpine
+      volumes:
+        - /var/www/blog.bojemoi.me:/deploy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Hugo site
+        run: hugo --minify
+
+      - name: Deploy to web root
+        run: |
+          rm -rf /deploy/*
+          cp -r public/* /deploy/
+          echo "Deployed $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > /deploy/.deployed

@@ -1,0 +1,9 @@
+{{ define "title" }}{{ .Title }} - {{ .Site.Title }}{{ end }}
+{{ define "main" }}
+  <article>
+    <h2>{{ .Title }}</h2>
+    <time>{{ .Date.Format "2 January 2006" }}</time>
+    {{ .Content }}
+  </article>
+  <a href="/">&larr; Retour</a>
+{{ end }}

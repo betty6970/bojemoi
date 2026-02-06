@@ -1,0 +1,10 @@
+baseURL = 'https://blog.bojemoi.me/'
+languageCode = 'fr'
+title = 'Bojemoi Blog'
+theme = ''
+
+[params]
+  description = "Blog technique - Bojemoi Lab"
+
+[markup.goldmark.renderer]
+  unsafe = true
