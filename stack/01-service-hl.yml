@@ -57,14 +57,13 @@ volumes:
     driver: local
 
 secrets:
-   rsync_config:
-     file: /opt/bojemoi/volumes/rsync/configs/rsyncd.conf
+   # All secrets are now external - create them with /opt/bojemoi_boot/scripts/create-secrets.sh
    ssh_private_key:
-     file: /opt/bojemoi/volumes/rsync/ssh-keys/id_rsa
+     external: true
    telegram_bot_token:
-     file: /opt/bojemoi/volumes/telegram_bot/tohen
+     external: true
    telegram_api_credentials:
-     file: /opt/bojemoi/volumes/telegram_bot/api_credentials
+     external: true
    proton_username:
      external: true
    proton_password:
@@ -90,8 +89,6 @@ configs:
      file: /opt/bojemoi/volumes/postfix/main.cf
    prometheus_config:
      file: /opt/bojemoi/volumes/prometheus/prometheus.yml
-   rsync_config:
-     file: /opt/bojemoi/volumes/rsync/configs/rsyncd.conf
    suricata_config:
      file: /opt/bojemoi/volumes/suricata/suricata.yaml
    suricata_rules_config:
