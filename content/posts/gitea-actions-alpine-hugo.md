@@ -1,6 +1,6 @@
 ---
 title: "CI/CD Hugo avec Gitea Actions et Alpine"
-date: 2026-02-06T20:00:00+00:00
+date: 2026-02-06T19:00:00+00:00
 draft: false
 ---
 
