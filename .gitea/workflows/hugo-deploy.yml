@@ -11,10 +11,12 @@ jobs:
       volumes:
         - /var/www/blog.bojemoi.me:/deploy
     steps:
-      - name: Install Hugo
+      - name: Install dependencies
         run: apk add --no-cache hugo git
 
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        run: |
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "http://gitea:3000/${GITHUB_REPOSITORY}.git" .
 
       - name: Build Hugo site
         run: hugo --minify
