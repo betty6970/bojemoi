@@ -12,7 +12,10 @@ jobs:
         - /var/www/blog.bojemoi.me:/deploy
     steps:
       - name: Install dependencies
-        run: apk add --no-cache hugo git
+        run: |
+          apk add --no-cache git curl libstdc++ gcompat
+          curl -sL https://github.com/gohugoio/hugo/releases/download/v0.146.0/hugo_extended_0.146.0_linux-amd64.tar.gz | tar xz -C /usr/local/bin hugo
+          hugo version
 
       - name: Checkout repo
         run: |
