@@ -2,6 +2,8 @@
 title: "Premier article"
 date: 2026-02-06
 draft: false
+tags: ["hugo", "blog"]
+summary: "Bienvenue sur le blog Bojemoi Lab. Présentation de la stack technique."
 ---
 
 Bienvenue sur le blog Bojemoi Lab.

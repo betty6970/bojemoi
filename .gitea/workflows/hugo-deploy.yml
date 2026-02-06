@@ -16,7 +16,7 @@ jobs:
 
       - name: Checkout repo
         run: |
-          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "http://gitea:3000/${GITHUB_REPOSITORY}.git" .
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" --recurse-submodules --shallow-submodules "http://gitea:3000/${GITHUB_REPOSITORY}.git" .
 
       - name: Build Hugo site
         run: hugo --minify

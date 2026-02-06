@@ -2,6 +2,8 @@
 title: "CI/CD Hugo avec Gitea Actions et Alpine"
 date: 2026-02-06T19:00:00+00:00
 draft: false
+tags: ["gitea", "ci-cd", "alpine", "hugo", "devops"]
+summary: "Comment ce blog se déploie tout seul en moins de 15 secondes avec un pipeline Alpine + Hugo minimaliste."
 ---
 
 Comment ce blog se déploie tout seul en moins de 15 secondes, avec un pipeline minimaliste.

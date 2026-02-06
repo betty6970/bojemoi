@@ -1,9 +1,48 @@
 baseURL = 'https://blog.bojemoi.me/'
 languageCode = 'fr'
 title = 'Bojemoi Blog'
+theme = 'PaperMod'
 
 [params]
+  env = 'production'
   description = "Blog technique - Bojemoi Lab"
+  author = 'Bojemoi'
+  defaultTheme = 'auto'
+  ShowReadingTime = true
+  ShowShareButtons = false
+  ShowPostNavLinks = true
+  ShowBreadCrumbs = true
+  ShowCodeCopyButtons = true
+  ShowToc = true
+
+  [params.homeInfoParams]
+    Title = "Bojemoi Lab"
+    Content = "Blog technique - Infrastructure, DevOps, S\u00e9curit\u00e9"
+
+  [[params.socialIcons]]
+    name = 'gitea'
+    url = 'https://gitea.bojemoi.me'
 
 [markup.goldmark.renderer]
   unsafe = true
+
+[markup.highlight]
+  style = 'monokai'
+
+[[menu.main]]
+  name = 'Articles'
+  url = '/posts/'
+  weight = 10
+
+[[menu.main]]
+  name = 'Tags'
+  url = '/tags/'
+  weight = 20
+
+[[menu.main]]
+  name = 'Search'
+  url = '/search/'
+  weight = 30
+
+[outputs]
+  home = ['HTML', 'RSS', 'JSON']
