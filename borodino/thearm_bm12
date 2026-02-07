@@ -34,25 +34,37 @@ def is_postgres_ready(ip):
 
 # Récupérer un hôte aléatoire depuis la base de données
 def get_random_host():
+    conn = None
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
-            with conn.cursor() as cur:
+        conn = psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST)
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.001) LIMIT 1;")
+            row = cur.fetchone()
+            if not row:
                 cur.execute("SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.01) LIMIT 1;")
-                return cur.fetchone() or (None, None)
+                row = cur.fetchone()
+            return row or (None, None)
     except psycopg2.Error as e:
         print(f"[ERREUR] Problème lors de la récupération d'un hôte : {e}")
         return None, None
+    finally:
+        if conn:
+            conn.close()
 
 # Exécuter un scan Metasploit
 def run_msf_scan(host, host_id, pg_ip):
+    conn = None
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT port, name FROM services WHERE host_id = %s;", (host_id,))
-                services = cur.fetchall()
+        conn = psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST)
+        with conn.cursor() as cur:
+            cur.execute("SELECT port, name FROM services WHERE host_id = %s;", (host_id,))
+            services = cur.fetchall()
     except psycopg2.Error as e:
         print(f"[ERREUR] Récupération des services échouée : {e}")
-        return  # On sort proprement de la fonction
+        return
+    finally:
+        if conn:
+            conn.close()
 
     if not services:
         print(f"[INFO] Aucun service ouvert trouvé pour {host}, scan annulé.")
