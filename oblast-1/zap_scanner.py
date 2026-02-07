@@ -43,50 +43,62 @@ class DatabaseManager:
             logger.error(f"Erreur de connexion à la base de données: {e}")
             sys.exit(1)
     
+    def _ensure_connection(self):
+        """Vérifier et rétablir la connexion si nécessaire"""
+        try:
+            if self.connection is None or self.connection.closed:
+                self.connect()
+                return
+            # Test the connection
+            with self.connection.cursor() as cur:
+                cur.execute("SELECT 1")
+        except Exception:
+            logger.info("Connexion perdue, reconnexion...")
+            self.connect()
+
     def get_all_hosts(self) -> List[Dict]:
         """Récupérer tous les hôtes de la base de données"""
+        self._ensure_connection()
         try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                SELECT id, address, name, state, os_name, os_flavor, 
-                       workspace_id, purpose, info, last_scanned
-                FROM hosts 
-                WHERE state = 'alive' OR state IS NULL
-                ORDER BY random()
-                LIMIT 1000
-            """)
-            
-            columns = [desc[0] for desc in cursor.description]
-            hosts = []
-            for row in cursor.fetchall():
-                hosts.append(dict(zip(columns, row)))
-            
-            cursor.close()
-            logger.info(f"Récupération de {len(hosts)} hôtes")
-            return hosts
-            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, address, name, state, os_name, os_flavor,
+                           workspace_id, purpose, info, last_scanned
+                    FROM hosts TABLESAMPLE SYSTEM(0.02)
+                    WHERE state = 'alive' OR state IS NULL
+                    LIMIT 1000
+                """)
+
+                columns = [desc[0] for desc in cursor.description]
+                hosts = []
+                for row in cursor.fetchall():
+                    hosts.append(dict(zip(columns, row)))
+
+                logger.info(f"Récupération de {len(hosts)} hôtes")
+                return hosts
+
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des hôtes: {e}")
             return []
     
     def get_host_services(self, host_id: int) -> List[Dict]:
         """Récupérer tous les services d'un hôte"""
+        self._ensure_connection()
         try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                SELECT id, host_id, port, proto, state, name, info
-                FROM services 
-                WHERE host_id = %s AND (state = 'open' OR state IS NULL)
-            """, (host_id,))
-            
-            columns = [desc[0] for desc in cursor.description]
-            services = []
-            for row in cursor.fetchall():
-                services.append(dict(zip(columns, row)))
-            
-            cursor.close()
-            return services
-            
+            with self.connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, host_id, port, proto, state, name, info
+                    FROM services
+                    WHERE host_id = %s AND (state = 'open' OR state IS NULL)
+                """, (host_id,))
+
+                columns = [desc[0] for desc in cursor.description]
+                services = []
+                for row in cursor.fetchall():
+                    services.append(dict(zip(columns, row)))
+
+                return services
+
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des services pour l'hôte {host_id}: {e}")
             return []

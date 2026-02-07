@@ -47,8 +47,7 @@ RUN apk update && \
         py3-urllib3  \
         py3-certifi  \
         py3-charset-normalizer  \
-        py3-idna \
-    # Nettoyer le cache
+        py3-idna && \
     rm -rf /var/cache/apk/*
 
 # Créer les répertoires de travail
