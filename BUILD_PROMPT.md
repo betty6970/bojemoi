@@ -1,538 +1,323 @@
-# BUILD PROMPT: BOJEMOI LAB - Infrastructure-as-Code Platform
+# BUILD PROMPT: Recréer le projet Bojemoi Lab de zéro
 
-> Ce document est un prompt de reconstruction. Il contient toutes les spécifications
-> nécessaires pour recréer le projet Bojemoi Lab depuis zéro.
-
----
-
-## 1. Vision du Projet
-
-Construire une plateforme **Infrastructure-as-Code hybride** nommée **Bojemoi Lab** qui orchestre :
-
-- Déploiement de VMs sur XenServer/XCP-ng avec cloud-init
-- Orchestration de conteneurs via Docker Swarm (multi-noeud)
-- Scanning de sécurité unifié avec orchestrateur de pentest (7+ outils)
-- Audit trail immuable via blockchain SHA-256
-- Stack de monitoring entreprise (métriques, logs, traces)
-- Backup distribué rsync master/slave
-- NFS partagé entre noeuds
-- Pipeline CI/CD GitLab avec scanning de sécurité intégré
-- Threat intelligence par ML
-- Alerting via Prometheus → Alertmanager → ProtonMail/Slack
-
-**Convention de nommage** : Les répertoires utilisent des noms de batailles historiques comme noms de code (Borodino, Koursk, Stalingrad, Tsushima, Narva, Berezina, Kyiv, Samsonov, Zarovnik...).
+> Ce document est un prompt complet permettant de recréer l'intégralité du projet Bojemoi Lab.
+> Il peut être utilisé comme référence architecturale ou comme instruction pour un agent IA.
 
 ---
 
-## 2. Arborescence Complète du Projet
+## 1. Vision du projet
+
+**Bojemoi Lab** est une plateforme Infrastructure-as-Code (IaC) pour un lab de sécurité offensive/défensive sur infrastructure hybride. Elle orchestre :
+
+- **VMs** sur XenServer/XCP-ng via XenAPI + cloud-init
+- **Conteneurs** via Docker Swarm (3 nœuds)
+- **Scanning de sécurité** avec orchestration multi-outils (Nmap, Metasploit, ZAP, Nuclei, Masscan, Burp, VulnX)
+- **Monitoring** complet (Prometheus, Grafana, Loki, Tempo, Alertmanager, Suricata IDS)
+- **Audit immuable** par blockchain SHA-256 stockée en PostgreSQL
+- **Backup distribué** via rsync master/slaves avec Prometheus metrics
+
+---
+
+## 2. Infrastructure cible
+
+### Swarm Cluster (3 nœuds)
+```
+meta-76 (manager/leader) : Intel i9-10900X, 8 cores, 16 GB RAM, Alpine Linux
+meta-68 (worker)         : Nœud de travail pour scanning
+meta-70 (worker)         : Nœud de travail pour scanning
+```
+
+### Services critiques
+- **PostgreSQL 15** : base partagée (~9 GB), 6 bases (msf, ip2location, faraday, karacho, deployments, grafana)
+- **Docker Registry** : localhost:5000, toutes les images poussées localement
+- **Gitea** : gitea.bojemoi.me, source GitOps pour configs cloud-init
+- **Traefik** : reverse proxy + TLS Let's Encrypt
+
+---
+
+## 3. Structure du projet
 
 ```
-bojemoi/
-├── CLAUDE.md                    # Instructions pour Claude Code
-├── BUILD_PROMPT.md              # Ce fichier (prompt de reconstruction)
+/opt/bojemoi/
 │
-├── stack/                       # Stacks Docker Swarm
-│   ├── 01-service-hl.yml       # Services core (monitoring, proxy, DB, mail, IDS)
-│   ├── 40-service-borodino.yml # Stack sécurité/pentest (fusionnée)
-│   ├── 45-service-ml-threat-intel.yml  # ML threat intelligence
-│   ├── .gitlab-ci.yml          # Pipeline CI/CD
-│   └── README.md
-│
-├── provisioning/                # Orchestrateur FastAPI
+├── provisioning/              # Orchestrateur FastAPI (composant central)
 │   ├── orchestrator/
-│   │   └── app/
-│   │       ├── main.py
-│   │       ├── config.py
-│   │       ├── auth/           # JWT + CORS + router
-│   │       ├── models/         # Pydantic schemas
-│   │       ├── services/       # Clients (Gitea, XenServer, Docker, DB, Blockchain)
-│   │       └── middleware/     # IP validation, métriques Prometheus
-│   ├── alembic/                # Migrations DB
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── .env
+│   │   ├── app/
+│   │   │   ├── main.py              # App FastAPI, lifespan, health, metrics
+│   │   │   ├── config.py            # Pydantic BaseSettings
+│   │   │   ├── models/
+│   │   │   │   └── schemas.py       # VMDeployRequest, ContainerDeployRequest, enums
+│   │   │   ├── services/
+│   │   │   │   ├── gitea_client.py       # Client Gitea (cache ETag, raw file API)
+│   │   │   │   ├── xenserver_client_real.py  # XenAPI avec retry, 23 codes erreur
+│   │   │   │   ├── docker_client.py      # Docker Swarm service management
+│   │   │   │   ├── cloudinit_gen.py      # Templates Jinja2 cloud-init
+│   │   │   │   ├── database.py           # PostgreSQL async (asyncpg + SQLAlchemy 2.0)
+│   │   │   │   ├── blockchain.py         # Chaîne SHA-256 immuable
+│   │   │   │   └── ip2location_client.py # Validation géolocalisation
+│   │   │   ├── middleware/
+│   │   │   │   ├── ip_validation.py      # Contrôle d'accès par pays
+│   │   │   │   └── metrics.py            # Prometheus metrics middleware
+│   │   │   └── auth/                     # JWT authentication
+│   │   ├── alembic/                      # Migrations DB
+│   │   └── requirements.txt
+│   └── Dockerfile.provisioning
 │
-├── samsonov/                    # Pentest Orchestrator
+├── samsonov/                  # Orchestrateur Pentest (plugin architecture)
 │   ├── pentest_orchestrator/
-│   │   ├── main.py             # PluginManager + daemon Redis
-│   │   ├── import_results.py   # Import vers Faraday
-│   │   ├── config/config.json
-│   │   ├── results/
-│   │   └── plugins/            # 7 plugins (nuclei, masscan, zap, burp, vulnx, metasploit, faraday)
-│   └── nuclei_api/             # API FastAPI wrapper pour Nuclei
-│       └── main.py
+│   │   ├── main.py                  # PluginManager + PentestOrchestrator (~24KB)
+│   │   ├── import_results.py        # Import vers Faraday
+│   │   ├── config/config.json       # Registry des plugins
+│   │   └── plugins/
+│   │       ├── base.py              # Classes de base (ScanType, Severity, Finding)
+│   │       ├── plugin_nuclei.py     # Scanner de vulns par templates
+│   │       ├── plugin_masscan.py    # Port scanner rapide (10K-100K pps)
+│   │       ├── plugin_zap.py        # OWASP ZAP automation
+│   │       ├── plugin_burp.py       # Burp Suite API
+│   │       ├── plugin_vulnx.py      # Scanner CMS
+│   │       ├── plugin_metasploit.py # Client RPC Metasploit
+│   │       ├── plugin_faraday.py    # Plateforme d'agrégation
+│   │       └── plugin_nmap.py       # Network mapping
+│   ├── nuclei_api/                  # API REST wrapper pour Nuclei + Redis
+│   ├── vulnx_wrapper/               # Wrapper CMS scanning
+│   ├── faraday-security-stack/       # Intégration Faraday
+│   └── Dockerfile.samsonov
 │
-├── koursk/                      # Rsync base (Dockerfile + docs)
-├── koursk-1/                    # Rsync avec métriques Prometheus
-│   ├── metrics_exporter.py
-│   └── metrics_server.sh
-├── koursk-2/                    # Rsync production master/slave
-│   ├── Dockerfile.koursk-2
-│   ├── scripts/
-│   │   ├── rsync-start.sh      # Démarrage master
-│   │   ├── rsync-slave.sh      # Démarrage slave
-│   │   └── rsync-master.py     # Orchestration Python
-│   ├── config/                  # Jobs rsync (JSON)
-│   └── modules/
+├── borodino/                  # Services de scanning armé (nmap + metasploit)
+│   ├── Dockerfile.borodino          # Alpine + Ruby 3.5 + Rust + Metasploit from source
+│   ├── thearm_ak47                  # Scanner nmap CIDR (ash script, 15 replicas)
+│   ├── thearm_bm12                  # Scanner nmap services (python, 15 replicas)
+│   ├── thearm_uzi                   # Runner Metasploit RPC (python, 5 replicas)
+│   └── list_vpn/                    # Credentials OpenVPN (ProtonVPN)
 │
-├── oblast/                      # OWASP ZAP proxy
-│   └── Dockerfile
-├── oblast-1/                    # ZAP scanner automatisé
+├── karacho/                   # Service Blockchain
+│   ├── Dockerfile.karacho
+│   ├── blockchain_postgres_api.py   # FastAPI pour gestion de blocs (~33KB)
+│   ├── blockchain_service.py        # Service daemon avec auto-restart (~11KB)
+│   └── client_api.py                # Client REST
+│
+├── oblast/                    # OWASP ZAP Proxy
+│   ├── Dockerfile.zaproxy
+│   ├── zap-script.sh               # Orchestration scanning
+│   ├── zap_scanner.py              # Moteur de scan Python
+│   └── docker-compose.yaml
+│
+├── oblast-1/                  # ZAP Scanner (variante)
 │   ├── Dockerfile.oblast-1
-│   └── zap_scanner.py
-│
-├── kyiv/                        # Burp Suite Community
-│   ├── api_server.py
-│   ├── burp_automation.py
-│   └── docker-compose.yml
-│
-├── tsushima/                    # Masscan scanner
-│   └── vpn_masscan_pipeline.py  # VPN rotation + scan
-│
-├── borodino/                    # Weapon services (ak47, bm12, uzi)
-│   └── Dockerfile
-│
-├── karacho/                     # Blockchain audit trail
-│   ├── blockchain_postgres_api.py  # Flask API (port 5100)
-│   └── blockchain_service.py
-│
-├── narva/                       # Service auxiliaire
-│   └── Dockerfile
-│
-├── stalingrad/                  # Règles et configurations
-│   ├── config/
-│   └── rules/
-│
-├── berezina/                    # Service auxiliaire
-│   └── Dockerfile
-│
-├── vladimir/                    # NFS server
-│   ├── Dockerfile.vladimir
-│   ├── start-nfs.sh
-│   └── supervisord.conf
-├── vladimir-1/                  # NFS client v1
-│   ├── Dockerfile.vladimir-1
+│   ├── zap_scanner.py
 │   └── entrypoint.sh
-├── vladimir-2/                  # NFS client v2
+│
+├── tsushima/                  # Scanner Masscan + VPN
+│   ├── Dockerfile.tsushima          # Alpine + Python + masscan + VPN
+│   ├── vpn_masscan_pipeline.py      # Pipeline VPN + CIDR + masscan + MSF (~37KB)
+│   ├── masscan_msf_script.py        # Agrégation résultats
+│   └── entrypoint.sh
+│
+├── kyiv/                      # Intégration Burp Suite
+│   ├── Dockerfile.burp              # Burp Enterprise headless
+│   ├── burpsuite-daemon/
+│   │   └── api_server.py            # API REST wrapper (~6KB)
 │   └── docker-compose.yml
 │
-├── zarovnik/                    # GitLab
+├── koursk-2/                  # Rsync Master (backup distribué)
+│   ├── Dockerfile.koursk-2          # Alpine + Python + rsync + prometheus-client
+│   ├── config/rsync_jobs.json       # Jobs de backup (cycle 10 min)
+│   └── scripts/
+│       ├── rsync-master.py          # Orchestrateur master
+│       └── rsync-start.sh           # Entrypoint
+│
+├── koursk/ & koursk-1/        # Rsync Slaves
+│
+├── narva/                     # Gateway VPN
+│   └── Dockerfile.narva
+│
+├── stalingrad/                # Gestion règles IDS
+│   └── Dockerfile.stalingrad
+│
+├── vladimir/ & vladimir-1/    # Répliques de services
+│
+├── berezina/                  # Versions legacy des scanners
+│
+├── zarovnik/                  # Intégration GitLab CI/CD
 │   ├── gitlab-stack.yml
 │   ├── deploy-gitlab.sh
-│   ├── gitlab-maintenance.sh
-│   └── GITLAB-SETUP.md
+│   └── gitlab-maintenance.sh
 │
-├── ml-threat-intel/             # ML Threat Intelligence
-│   └── (API FastAPI pour classification IoC)
+├── ml-threat-intel/           # Intelligence de menaces ML
 │
-├── cloud-init/                  # Templates cloud-init
-│   ├── user-data
-│   ├── network-config
-│   ├── network-config-static
-│   ├── meta-data
-│   └── templates/               # Templates Jinja2
+├── cloud-init/                # Templates cloud-init pour VMs
 │
-├── scripts/                     # Scripts utilitaires
-│   ├── CI_CD_deploy.sh          # Déploiement production
-│   ├── CI_CD_check.sh           # Validation pré-déploiement
-│   ├── sync-stack-images.sh     # Sync images vers registry local
-│   ├── sync_registry.py         # Synchronisation registry
-│   ├── cleaning_registry.sh     # Nettoyage registry
-│   ├── images_cross_build.py    # Builds cross-platform
-│   ├── check_image.py           # Validation images
-│   ├── init_postgres.sh         # Init PostgreSQL
-│   ├── create-nfs-volume.sh     # Création volumes NFS
-│   ├── send_email.sh            # Notifications email
-│   ├── import_2_faraday.py      # Import résultats Faraday
-│   ├── tannenberg.py            # Orchestration custom
-│   └── download_ip.py           # Téléchargement base IP
+├── scripts/                   # ~50 utilitaires
+│   ├── bojemoiBuild.sh              # Build orchestrator complet
+│   ├── cccp.sh / cccp-v2.sh         # Automatisation build
+│   ├── push_registry_onebyone.sh    # Push images au registry
+│   ├── check_image*.py              # Validation images (3 versions)
+│   ├── download_ip.py               # Sync DB IP2Location
+│   ├── sync_registry.py             # Synchronisation registry
+│   ├── cleanDocker.sh               # Nettoyage conteneurs/images
+│   ├── init_postgres.sh             # Init DB
+│   ├── bojemoi2.py                  # Orchestration avancée (~34KB)
+│   └── ...
 │
-├── volumes/                     # Configurations persistantes
-│   ├── prometheus/prometheus.yml
-│   ├── alertmanager/alertmanager.yml
-│   ├── grafana/
-│   │   ├── grafana.ini
-│   │   └── provisioning/        # Dashboards + datasources
-│   ├── loki/loki-config.yml
-│   ├── tempo/config/tempo.yaml
-│   ├── alloy/config/config.alloy
-│   ├── suricata/suricata.yaml
-│   ├── traefik/                 # Certs SSL + config dynamique
-│   ├── crowdsec/
-│   ├── postfix/main.cf
-│   ├── faraday/config/server.ini
-│   ├── nuclei/
-│   ├── dnsmask/dnsmask.conf
-│   ├── registry/config.yml
-│   ├── openvpn/
-│   ├── rsync/configs/rsyncd.conf
-│   ├── provisioning/.env
-│   └── telegram_bot/
+├── stack/                     # Fichiers Docker Swarm Stack
+│   ├── 01-service-hl.yml            # Infrastructure core (~1125 lignes)
+│   ├── 40-service-borodino.yml      # Services pentest (~545 lignes)
+│   ├── 45-service-ml-threat-intel.yml # ML threat intel (~75 lignes)
+│   └── .gitlab-ci.yml               # Pipeline CI/CD
 │
-├── nfs-exports/                 # Points de montage NFS
-├── dump/                        # Dumps divers
-├── bacasable/                   # Sandbox / tests
+├── volumes/                   # Données persistantes (26 sous-dossiers)
+│   ├── alertmanager/                # Règles d'alerte + TLS
+│   ├── prometheus/                  # Config + recording rules
+│   ├── grafana/                     # Dashboards + provisioning
+│   ├── loki/                        # Config pipeline logs
+│   ├── tempo/                       # Config tracing distribué
+│   ├── faraday/                     # Config serveur vulns
+│   ├── nuclei/                      # Templates Nuclei
+│   ├── suricata/                    # Règles IDS (emerging-threats)
+│   ├── traefik/                     # Config reverse proxy + TLS
+│   ├── postfix/                     # Config relay email
+│   ├── provisioning/                # .env orchestrateur
+│   ├── telegram_bot/                # État et logs bot
+│   └── ...
 │
-└── wiki/                        # Documentation
-    ├── Home.md
-    ├── Docker-Swarm.md
-    ├── Pentest-Orchestrator.md
-    ├── Faraday.md
-    ├── Monitoring.md
-    ├── Alertes.md
-    └── Claude-Skills.md
+├── CLAUDE.md                  # Instructions pour Claude Code
+├── BUILD_PROMPT.md            # CE FICHIER
+├── .gitignore
+└── README.md
 ```
 
 ---
 
-## 3. Stack Docker Swarm - Services Core (01-service-hl.yml)
+## 4. Stack Docker Swarm détaillé
 
-### 3.1 Reverse Proxy - Traefik
+### 4.1 Stack Core — `01-service-hl.yml` (déployé comme `base`)
 
-```yaml
-traefik:
-  image: traefik:v3.x
-  ports:
-    - "80:80"
-    - "443:443"
-  # Let's Encrypt ACME
-  # Labels Traefik pour dashboard
-  # Montage docker.sock (lecture seule)
-  networks: [proxy, monitoring]
-```
-
-Domaines routés via Traefik :
-- `grafana.bojemoi.lab` → 3000
-- `prometheus.bojemoi.lab` → 9090 (avec basic auth)
-- `alertmanager.bojemoi.lab` → 9093
-- `pgadmin.bojemoi.lab` → 80
-- `cadvisor.bojemoi.lab` → 8080
-- `tempo.bojemoi.lab` → 3200
-- `nuclei.bojemoi.lab` → 8001
-- `faraday.bojemoi.lab` → 5985
-- `zap.bojemoi.lab` → 8090
-- `provisioning.bojemoi.lab` → 8000
-- `karacho.bojemoi.lab` → 5100
-- `threat-intel.bojemoi.lab.local` → 8001
-
-### 3.2 Monitoring
-
-```yaml
-prometheus:
-  image: prom/prometheus
-  port: 9090
-  # Docker Swarm service discovery
-  # Scrape configs pour tous les exporters
-  networks: [monitoring]
-
-grafana:
-  image: grafana/grafana
-  port: 3000
-  # Provisioning auto : dashboards + datasources
-  networks: [monitoring, proxy]
-
-loki:
-  image: grafana/loki
-  port: 3100
-  networks: [monitoring]
-
-alertmanager:
-  image: prom/alertmanager
-  port: 9093
-  # Routing : email (ProtonMail), Slack
-  networks: [monitoring]
-
-tempo:
-  image: grafana/tempo
-  port: 3200
-  # Distributed tracing
-  networks: [monitoring]
-
-alloy:
-  image: grafana/alloy
-  # Collecteur OpenTelemetry
-  # Mode global (tous les noeuds)
-  networks: [monitoring]
-```
-
-### 3.3 Exporters (mode global)
-
-```yaml
-node-exporter:    # port 9100, mode global
-cadvisor:         # port 8080, mode global
-postgres-exporter: # port 9187
-postfix-exporter:  # métriques mail
-```
-
-### 3.4 Base de Données
-
-```yaml
-postgres:
-  image: postgres:15
-  port: 5432
-  volumes: [postgres_data:/var/lib/postgresql/data]
-  networks: [backend, monitoring]
-
-pgadmin:
-  image: dpage/pgadmin4
-  networks: [backend, proxy]
-```
-
-### 3.5 Sécurité (IDS/IPS)
-
-```yaml
-suricata:
-  image: jasonish/suricata
-  # Mode global, network_mode: host
-  # ET Open rules, custom rules
-  networks: [monitoring]
-
-crowdsec:
-  image: crowdsecurity/crowdsec
-  # Analyse logs, bouncer Traefik
-  networks: [monitoring, proxy]
-```
-
-### 3.6 Mail
-
-```yaml
-postfix:
-  image: boky/postfix (ou custom)
-  port: 25
-  networks: [mail, monitoring]
-
-protonmail-bridge:
-  # Relais SMTP ProtonMail
-  networks: [mail]
-```
-
-### 3.7 Rsync Backup
-
-```yaml
-rsync-master:
-  image: localhost:5000/koursk-2
-  # Déployé sur manager
-  # Cron-based, syncs /opt/bojemoi vers slaves
-  networks: [rsync_network]
-
-rsync-slave:
-  image: localhost:5000/koursk-2
-  # Déployé sur workers (label rsync.slave=true)
-  networks: [rsync_network]
-```
-
-### 3.8 Provisioning Orchestrator
-
-```yaml
-orchestrator:
-  image: localhost:5000/provisioning
-  port: 8000 (exposé 28080 en Swarm)
-  # FastAPI + PostgreSQL
-  networks: [backend, monitoring, proxy]
-```
-
-### 3.9 Docker Registry
-
-```yaml
-registry:
-  image: registry:2
-  port: 5000
-  # Registry local pour images custom
-```
-
-### Réseaux Overlay
-
+#### Réseaux overlay
 ```yaml
 networks:
-  monitoring:
+  monitoring:    # Prometheus scraping, metrics collection
     driver: overlay
-  backend:
+  backend:       # Communication inter-services
     driver: overlay
-  proxy:
+  proxy:         # Ingress Traefik
     driver: overlay
-  mail:
+  rsync_network: # Réplication backup
     driver: overlay
-  rsync_network:
+  mail:          # Services email
     driver: overlay
+    attachable: true
+```
+
+#### Services (18+)
+
+| Service | Image | Placement | Réseaux | Ports | Notes |
+|---------|-------|-----------|---------|-------|-------|
+| **PostgreSQL** | postgres:15 | manager | backend | 5432 | Volume externe `bojemoi`, 6 bases |
+| **PgAdmin** | dpage/pgadmin4 | manager | backend, proxy | - | Traefik: pgadmin.bojemoi.lab |
+| **Prometheus** | prom/prometheus | manager | monitoring, rsync | 9090 | Rétention 15j, max 10GB, WAL compression |
+| **Grafana** | grafana/grafana | manager | monitoring, proxy | 3000 | Backend PostgreSQL |
+| **Loki** | grafana/loki | worker | monitoring | 3100 | Agrégation logs |
+| **Tempo** | grafana/tempo | manager | monitoring, proxy | 4317/4318/9411 | OTLP gRPC + HTTP + Zipkin |
+| **Alertmanager** | prom/alertmanager | manager | monitoring | 9093 | Config: volumes/alertmanager/ |
+| **Suricata** | jasonish/suricata | global | monitoring | - | IDS/IPS, CAP_NET_ADMIN, raw sockets |
+| **Suricata Exporter** | - | global | monitoring | 9917 | Métriques Prometheus IDS |
+| **Traefik** | traefik:v2 | manager | proxy | 80/443 | Let's Encrypt auto-TLS |
+| **Provisioning API** | localhost:5000/provisioning | manager | backend, proxy | 28080/9000 | Orchestrateur principal |
+| **Node Exporter** | prom/node-exporter | global | monitoring | 9100 | Métriques host |
+| **cAdvisor** | gcr.io/cadvisor | global | monitoring | 8080 | Métriques conteneurs |
+| **Postgres Exporter** | wrouesnel/postgres_exporter | manager | monitoring | 9187 | Métriques DB |
+| **Postfix** | - | manager | mail | 25 | Relay TLS ProtonMail |
+| **ProtonMail Bridge** | - | manager | mail | - | SMTP relay sécurisé |
+| **Alloy** | grafana/alloy | - | monitoring | - | Agent observabilité |
+| **Docker Registry** | registry:2 | manager | - | 5000 | Registry privé local |
+
+### 4.2 Stack Pentest — `40-service-borodino.yml` (déployé comme `borodino`)
+
+#### Réseau additionnel
+```yaml
+networks:
   pentest:
     driver: overlay
     attachable: true
 ```
 
----
+#### Services (13)
 
-## 4. Stack Docker Swarm - Sécurité (40-service-borodino.yml)
+| Service | Image | Replicas | Placement | Notes |
+|---------|-------|----------|-----------|-------|
+| **ak47-service** | localhost:5000/borodino | 15 | workers | Scanner nmap CIDR, max 5/node, CPU 0.5/0.1, RAM 512M/256M |
+| **bm12-service** | localhost:5000/borodino | 15 | workers | Scanner nmap services, même contraintes |
+| **uzi-service** | localhost:5000/borodino | 5 | workers | Runner Metasploit RPC (msfrpc 192.168.1.47:55553) |
+| **zaproxy** | localhost:5000/zaproxy | 1 | - | OWASP ZAP proxy (port 8090) |
+| **zap-scanner** | localhost:5000/zap-scanner | 1 | - | Orchestration ZAP automatisée |
+| **masscan-scanner** | localhost:5000/tsushima | global | - | Port scanner rapide + VPN |
+| **nuclei** | localhost:5000/nuclei | 1 | workers | Scanner vuln par templates |
+| **nuclei-api** | localhost:5000/nuclei-api | 1 | - | API REST (port 8001), Traefik route |
+| **vulnx** | localhost:5000/vulnx | 1 | workers | Scanner CMS |
+| **redis** | redis:7-alpine | 1 | - | Queue jobs pentest |
+| **pentest-orchestrator** | localhost:5000/samsonov | 1 | - | Plugin orchestrator daemon |
+| **faraday** | localhost:5000/faraday | 1 | - | Vulns management (port 5985), Traefik route |
+| **karacho-blockchain** | localhost:5000/karacho | 1 | - | Audit trail (port 5100), Traefik route |
 
-### 4.1 OWASP ZAP
+### 4.3 Stack ML — `45-service-ml-threat-intel.yml` (déployé comme `ml-threat-intel`)
 
-```yaml
-zaproxy:
-  image: localhost:5000/oblast
-  port: 8090
-  networks: [pentest, proxy]
-
-zap-scanner:
-  image: localhost:5000/oblast-1
-  # Scanner automatisé
-  networks: [pentest]
-```
-
-### 4.2 Nuclei
-
-```yaml
-nuclei:
-  image: projectdiscovery/nuclei
-  # Scanner basé sur templates
-  networks: [pentest]
-
-nuclei-api:
-  image: localhost:5000/nuclei-api
-  port: 8001
-  # Wrapper FastAPI pour Nuclei
-  networks: [pentest, proxy]
-```
-
-### 4.3 Autres scanners
-
-```yaml
-vulnx:          # CMS vulnerability scanner (Python wrapper)
-masscan-scanner: # Port scanner global, support VPN
-burp:           # Burp Suite Community (kyiv)
-```
-
-### 4.4 Weapon Services (Borodino)
-
-```yaml
-ak47-service:   # 15 replicas
-bm12-service:   # 15 replicas
-uzi-service:    # 5 replicas
-# Services d'attaque / simulation
-```
-
-### 4.5 Faraday + Pentest Orchestrator
-
-```yaml
-faraday:
-  image: faradaysec/faraday
-  port: 5985
-  networks: [pentest, proxy, backend]
-
-redis:
-  image: redis:alpine
-  # File d'attente pour orchestration
-  networks: [pentest]
-
-pentest-orchestrator:
-  image: localhost:5000/samsonov
-  # Daemon Python, plugin architecture
-  # Connecté à Redis, Faraday, tous les scanners
-  networks: [pentest]
-
-redis-exporter:    # Métriques Redis
-pentest-exporter:  # Métriques pentest
-```
-
-### 4.6 Blockchain Audit
-
-```yaml
-karacho-blockchain:
-  image: localhost:5000/karacho
-  port: 5100
-  # Flask API, SHA-256 hash chain
-  # Token-based auth (3600s expiry)
-  networks: [pentest, proxy, backend]
-```
+| Service | Image | Notes |
+|---------|-------|-------|
+| **ml-threat-intel-api** | localhost:5000/ml-threat-intel | DB: bojemoi_threat_intel, secrets: VT/AbuseIPDB/OTX/Shodan API keys |
 
 ---
 
-## 5. Stack ML Threat Intelligence (45-service-ml-threat-intel.yml)
+## 5. Composant : Orchestrateur de Provisioning (FastAPI)
 
-```yaml
-ml-threat-intel-api:
-  image: localhost:5000/ml-threat-intel
-  port: 8001
-  # Classification IoC par ML
-  # Intégrations : VirusTotal, AbuseIPDB, OTX, Shodan
-  # Secrets Docker pour clés API
-  networks: [monitoring, proxy]
-```
-
----
-
-## 6. Provisioning Orchestrator (FastAPI)
-
-### 6.1 Structure
-
-```
-provisioning/orchestrator/app/
-├── main.py              # FastAPI avec lifespan management
-├── config.py            # Pydantic BaseSettings
-├── auth/
-│   ├── security.py      # JWT tokens + CORS
-│   ├── dependencies.py  # Dependency injection
-│   ├── models.py        # User schemas
-│   └── router.py        # /auth/login, /auth/register
-├── models/
-│   └── schemas.py       # Enums + Request/Response models
-├── services/
-│   ├── gitea_client.py       # Fetch configs depuis Gitea (httpx async)
-│   ├── xenserver_client_real.py  # XenAPI pour déploiement VMs
-│   ├── docker_client.py      # docker-py pour Docker Swarm
-│   ├── cloudinit_gen.py      # Jinja2 templates cloud-init
-│   ├── database.py           # PostgreSQL async (asyncpg + SQLAlchemy 2.0)
-│   ├── blockchain.py         # SHA-256 hash chain audit
-│   └── ip2location_client.py # Géolocalisation IP
-└── middleware/
-    ├── ip_validation.py      # Filtrage par pays (FR,DE,CH,BE,LU,NL,AT)
-    └── metrics.py            # Prometheus client métriques
-```
-
-### 6.2 Endpoints API
-
-```
-POST /deploy/vm/{vm_name}              - Déployer VM sur XenServer
-POST /deploy/container/{container_name} - Déployer conteneur
-POST /deploy/service/{service_name}    - Déployer service Swarm
-POST /deploy/all                       - Déploiement complet
-GET  /deployments                      - Lister les déploiements (paginé)
-GET  /status                           - Health check connexions
-GET  /health                           - Liveness probe
-GET  /metrics                          - Métriques Prometheus
-POST /auth/login                       - Authentification JWT
-POST /auth/register                    - Création utilisateur
-```
-
-### 6.3 Stack technique
-
-| Composant | Version |
-|-----------|---------|
-| FastAPI | 0.109 |
-| Uvicorn | latest |
-| Pydantic | 2.5 |
-| SQLAlchemy | 2.0 |
-| asyncpg | latest |
-| docker-py | 7.0 |
-| httpx | latest |
-| APScheduler | latest |
-| Jinja2 | latest |
-| prometheus-client | latest |
-
-### 6.4 Modèles de données
-
-#### Enums
+### 5.1 Configuration (Pydantic BaseSettings)
 
 ```python
+class Settings(BaseSettings):
+    # PostgreSQL
+    POSTGRES_HOST: str = "postgres"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str            # REQUIS
+    POSTGRES_DB: str = "deployments"
+
+    # Gitea (source GitOps)
+    GITEA_URL: str                    # https://gitea.bojemoi.me
+    GITEA_TOKEN: str                  # REQUIS
+    GITEA_REPO_OWNER: str = "bojemoi"
+    GITEA_REPO: str = "bojemoi-configs"
+
+    # XenServer
+    XENSERVER_URL: str
+    XENSERVER_HOST: str
+    XENSERVER_USER: str = "root"
+    XENSERVER_PASS: str               # REQUIS
+
+    # Docker Swarm
+    DOCKER_HOST: str = "unix:///var/run/docker.sock"
+    DOCKER_SWARM_MANAGER: bool = True
+
+    # Sécurité
+    IP_VALIDATION_ENABLED: bool = True
+    ALLOWED_COUNTRIES: str = "FR,DE,CH,BE,LU,NL,AT"
+
+    # API
+    API_HOST: str = "0.0.0.0"
+    API_PORT: int = 8000
+    LOG_LEVEL: str = "INFO"
+
+    # Scheduler
+    CHECK_INTERVAL_MINUTES: int = 5
+    ENABLE_SCHEDULER: bool = True
+```
+
+### 5.2 Modèles de données
+
+```python
+# Enums
 class OSType(str, Enum):
     ALPINE = "alpine"
     UBUNTU = "ubuntu"
-    UBUNTU_20 = "ubuntu-20"
-    UBUNTU_22 = "ubuntu-22"
-    UBUNTU_24 = "ubuntu-24"
     DEBIAN = "debian"
-    DEBIAN_11 = "debian-11"
-    DEBIAN_12 = "debian-12"
-    CENTOS = "centos"
-    ROCKY = "rocky"
 
 class Environment(str, Enum):
     PRODUCTION = "production"
@@ -544,82 +329,54 @@ class DeploymentStatus(str, Enum):
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
-```
 
-#### XenServer Template Mapping
-
-```python
-TEMPLATE_MAP = {
-    "alpine": "alpine-meta",
-    "ubuntu": "Ubuntu Focal Fossa 20.04",
-    "ubuntu-20": "Ubuntu Focal Fossa 20.04",
-    "ubuntu-22": "Ubuntu Jammy Jellyfish 22.04",
-    "ubuntu-24": "Ubuntu Noble Numbat 24.04",
-    "debian": "Debian Bookworm 12",
-    "debian-11": "Debian Bullseye 11",
-    "debian-12": "Debian Bookworm 12",
-    "centos": "CentOS 7",
-    "rocky": "Rocky Linux 8",
-}
-```
-
-#### VM Deploy Request
-
-```python
+# Requêtes
 class VMDeployRequest(BaseModel):
-    name: str
-    template: str            # Nom du template cloud-init
+    name: str                         # Nom de la VM
+    template: str                     # Template cloud-init
     os_type: OSType
-    cpu: int = 2             # 1-32
-    memory: int = 2048       # MB, min 512
-    disk: int = 20           # GB, min 10
+    cpu: int = 2                      # 1-32
+    memory: int = 2048                # MB, min 512, max 131072
+    disk: int = 20                    # GB, min 10, max 2048
     network: str = "default"
     environment: Environment
-    variables: Dict[str, Any]  # Variables cloud-init additionnelles
-```
+    variables: Dict[str, Any] = {}    # Variables Jinja2 additionnelles
 
-#### Container Deploy Request
-
-```python
 class ContainerDeployRequest(BaseModel):
     name: str
     image: str
     replicas: int = 1
-    environment: Dict[str, str]
-    ports: List[str]          # ["80:80", "443:443"]
-    networks: List[str]
-    labels: Dict[str, str]    # Labels Traefik, etc.
+    environment: Dict[str, str] = {}
+    ports: List[str] = []             # "80:80"
+    networks: List[str] = []
+    labels: Dict[str, str] = {}       # Labels Traefik etc.
 ```
 
-#### Blockchain Block
+### 5.3 Endpoints API
 
-```python
-class BlockchainBlock(BaseModel):
-    id: int
-    block_number: int
-    previous_hash: Optional[str]
-    current_hash: str         # SHA-256
-    deployment_type: str      # vm, container
-    name: str
-    config: Dict[str, Any]
-    resource_ref: Optional[str]
-    status: DeploymentStatus
-    source_ip: Optional[str]
-    source_country: Optional[str]
-    created_at: datetime
+```
+POST /api/v1/vm/deploy                    # Déployer VM sur XenServer
+POST /api/v1/container/deploy             # Déployer service Docker Swarm
+POST /api/v1/service/deploy               # Déployer service Swarm
+POST /deploy/all                          # Déploiement complet infra
+GET  /api/v1/deployments                  # Lister déploiements (paginé)
+GET  /api/v1/blockchain/verify            # Vérifier intégrité chaîne audit
+GET  /health                              # Probe liveness
+GET  /metrics                             # Métriques Prometheus (port 9000)
+GET  /status                              # Santé des connexions
 ```
 
-### 6.5 Schéma Base de Données
+### 5.4 Schéma base de données
 
 ```sql
 -- Table des déploiements
 CREATE TABLE deployments (
     id SERIAL PRIMARY KEY,
-    type VARCHAR(50) NOT NULL,
+    type VARCHAR(50) NOT NULL,          -- 'vm', 'container', 'service'
     name VARCHAR(255) NOT NULL,
     config JSONB NOT NULL,
-    resource_ref VARCHAR(255),
-    status VARCHAR(50) NOT NULL,
+    resource_ref VARCHAR(255),          -- ID XenServer ou Docker
+    status VARCHAR(50) NOT NULL,        -- pending/running/success/failed
     error TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
@@ -627,12 +384,12 @@ CREATE TABLE deployments (
 CREATE INDEX idx_deployments_type ON deployments(type);
 CREATE INDEX idx_deployments_status ON deployments(status);
 
--- Table blockchain (audit trail immuable)
+-- Blockchain d'audit
 CREATE TABLE deployment_blocks (
     id SERIAL PRIMARY KEY,
     block_number INTEGER UNIQUE NOT NULL,
     previous_hash VARCHAR(64),
-    current_hash VARCHAR(64) NOT NULL,
+    current_hash VARCHAR(64) NOT NULL,  -- SHA-256
     deployment_type VARCHAR(50) NOT NULL,
     name VARCHAR(255) NOT NULL,
     config JSONB NOT NULL,
@@ -646,484 +403,507 @@ CREATE TABLE deployment_blocks (
 CREATE INDEX idx_blocks_number ON deployment_blocks(block_number);
 ```
 
-### 6.6 Variables d'environnement
+### 5.5 Services internes
 
-```env
-# PostgreSQL
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-POSTGRES_DB=deployments
-POSTGRES_USER=orchestrator
-POSTGRES_PASSWORD=secret
+| Service | Rôle | Détails clés |
+|---------|------|--------------|
+| **gitea_client** | Fetch configs depuis Git | Cache ETag en mémoire, TTL 5min, API raw file |
+| **xenserver_client** | Déploiement VM XenAPI | 23 codes erreur documentés, retry auto, SSL self-signed |
+| **docker_client** | Gestion Swarm | Création services avec replicas, networks, labels Traefik |
+| **cloudinit_gen** | Templating cloud-init | Jinja2, validation variables (bloque eval/exec/__import__) |
+| **database** | PostgreSQL async | asyncpg + SQLAlchemy 2.0 ORM, connection pool |
+| **blockchain** | Audit trail | SHA-256 chain, vérification intégrité, immutable |
+| **ip2location_client** | Géolocalisation | Validation pays source, bypass IP privées |
 
-# Gitea (source GitOps)
-GITEA_URL=https://gitea.bojemoi.lab
-GITEA_TOKEN=xxx
-GITEA_REPO=bojemoi-configs
+### 5.6 Middleware
 
-# XenServer
-XENSERVER_URL=https://xenserver.local
-XENSERVER_USER=root
-XENSERVER_PASSWORD=xxx
+- **IP Validation** : Bloque requêtes hors pays autorisés (FR/DE/CH/BE/LU/NL/AT). Bypass pour IPs privées (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+- **Metrics** : Enregistrement automatique latence/status code vers Prometheus
 
-# Docker Swarm
-DOCKER_HOST=unix:///var/run/docker.sock
-DOCKER_SWARM_MANAGER=manager.bojemoi.lab.local
+### 5.7 Flux de déploiement VM
 
-# IP Validation
-IP_VALIDATION_ENABLED=true
-ALLOWED_COUNTRIES=FR,DE,CH,BE,LU,NL,AT
-
-# Scheduler
-CHECK_INTERVAL_MINUTES=5
-ENABLE_SCHEDULER=true
+```
+1. POST /api/v1/vm/deploy avec VMDeployRequest
+2. Middleware vérifie IP source (géolocalisation)
+3. Fetch template cloud-init depuis Gitea (cache ETag)
+4. Rendu Jinja2 avec variables utilisateur
+5. Appel XenAPI pour création VM
+6. Polling statut VM jusqu'au boot
+7. Enregistrement dans blockchain (hash SHA-256 chaîné)
+8. Mise à jour table deployments en PostgreSQL
+9. Métriques Prometheus incrémentées
+10. Retour deployment_id + référence VM
 ```
 
 ---
 
-## 7. Pentest Orchestrator (Samsonov)
+## 6. Composant : Orchestrateur Pentest (Plugin Architecture)
 
-### 7.1 Architecture Plugin
+### 6.1 Architecture
 
 ```python
-# base.py - Classe de base
-class BasePlugin:
+class PluginManager:
+    """Auto-découverte des plugins depuis plugins/plugin_*.py"""
+    # Charge dynamiquement chaque module
+    # Extrait les fonctions callables avec métadonnées
+    # Gère le cycle de vie des plugins
+
+class PentestOrchestrator:
+    """Orchestre les scans multi-outils"""
+    # Mode daemon via Redis pour exécution async
+    # Agrégation des résultats vers Faraday
+    # Gestion des sessions de scan
+```
+
+### 6.2 Classes de base
+
+```python
+class ScanType(str, Enum):
+    FULL = "full"
+    WEB = "web"
+    NETWORK = "network"
+    VULN = "vuln"
+    CMS = "cms"
+    RECON = "recon"
+    API = "api"
+
+class Severity(str, Enum):
+    CRITICAL = "critical"    # CVSS 9.0-10.0
+    HIGH = "high"            # CVSS 7.0-8.9
+    MEDIUM = "medium"        # CVSS 4.0-6.9
+    LOW = "low"              # CVSS 0.1-3.9
+    INFO = "info"            # Informatif
+
+@dataclass
+class Finding:
+    """Résultat de vulnérabilité normalisé"""
     name: str
-    scan_types: List[str]  # ["full", "web", "network", "vuln", "cms"]
-
-    def configure(self, target, options) -> None
-    def run(self) -> dict
-    def get_results(self) -> dict
-    def cleanup(self) -> None
+    severity: Severity
+    description: str
+    target: str
+    port: Optional[int]
+    cvss: Optional[float]
+    cve: Optional[str]
+    evidence: Optional[str]
+    remediation: Optional[str]
+    plugin_name: str
 ```
 
-### 7.2 Plugins
+### 6.3 Plugins
 
-| Plugin | Outil | Types de scan | Port/Protocole |
-|--------|-------|---------------|----------------|
-| plugin_nuclei | Nuclei | full, vuln, web | CLI subprocess |
-| plugin_masscan | Masscan | full, network | CLI subprocess |
-| plugin_zap | OWASP ZAP | full, web | API REST 8090 |
-| plugin_burp | Burp Suite | web | API REST |
-| plugin_vulnx | VulnX | cms | CLI subprocess |
-| plugin_metasploit | Metasploit | full, network, vuln | MSFRPC |
-| plugin_faraday | Faraday | (agrégation) | API REST 5985 |
+| Plugin | Outil | Fonctionnalité |
+|--------|-------|----------------|
+| **plugin_nuclei** | Nuclei | Scan par templates YAML, détection vulns connues |
+| **plugin_masscan** | Masscan | Port scan ultra-rapide (10K-100K pps), découverte réseau |
+| **plugin_zap** | OWASP ZAP | Scan apps web automatisé, spider + active scan |
+| **plugin_burp** | Burp Suite | Scan Enterprise via API, crawl + audit |
+| **plugin_vulnx** | VulnX | Détection vulnérabilités CMS (WordPress, Joomla, etc.) |
+| **plugin_metasploit** | Metasploit | Exploitation automatisée via MSFRPC |
+| **plugin_faraday** | Faraday | Agrégation et gestion des vulnérabilités |
+| **plugin_nmap** | Nmap | Cartographie réseau, détection OS et services |
 
-### 7.3 Flux d'exécution
-
-1. Configurer cible et type de scan
-2. `PluginManager` charge dynamiquement les plugins via `importlib`
-3. Exécution séquentielle : Masscan → ZAP → Nuclei → VulnX
-4. Agrégation des résultats avec breakdown par sévérité
-5. Sauvegarde locale JSON dans `results/`
-6. Import automatique vers workspace Faraday
-7. Stockage Redis pour traitement asynchrone
-
-### 7.4 Mode daemon Redis
-
-```python
-# main.py - Mode daemon
-orchestrator = PentestOrchestrator(config)
-orchestrator.run_daemon(workspace="default")
-# Écoute Redis pour commandes : scan, status, stop
-```
-
-### 7.5 Nuclei API (FastAPI wrapper)
+### 6.4 Flux de scan
 
 ```
-POST /scan          - Lancer un scan Nuclei
-GET  /scan/{id}     - Statut d'un scan
-GET  /templates     - Lister les templates disponibles
-GET  /health        - Health check
+1. Configuration cible + type de scan (ScanType)
+2. PluginManager charge plugins depuis plugins/plugin_*.py
+3. Exécution séquence de scan (ex: Masscan → Nmap → ZAP → Nuclei)
+4. Chaque plugin retourne List[Finding] normalisé
+5. Agrégation résultats avec breakdown par sévérité
+6. Sauvegarde locale JSON
+7. Import vers workspace Faraday (import_results.py)
+8. Stockage Redis pour traitement async
 ```
 
 ---
 
-## 8. Système de Backup Rsync (Koursk)
+## 7. Composant : Borodino (Scanning armé)
+
+### 7.1 Image Docker
+
+```dockerfile
+# Dockerfile.borodino
+FROM alpine:3.22
+# Ruby 3.5.0-preview compilé from source (pour Metasploit)
+# Rust compiler (dépendance MSF)
+# Metasploit Framework depuis git
+# PostgreSQL client (psql pour requêtes directes)
+# Nmap avec scripts
+# OpenVPN client
+```
+
+### 7.2 Scripts de scanning
+
+#### thearm_ak47 (ash/shell) — Scanner CIDR
+- Sélectionne un CIDR aléatoire depuis `ip2location` DB
+- Utilise `TABLESAMPLE SYSTEM()` (pas `ORDER BY RANDOM()` — critique pour performance)
+- Lance `nmap` sur le CIDR
+- Insère résultats dans base `msf` (tables hosts/services)
+- **15 replicas** sur workers
+
+#### thearm_bm12 (python) — Scanner Services
+- Sélectionne un host aléatoire depuis `msf.hosts` via `TABLESAMPLE SYSTEM()`
+- Lance `nmap` avec scripts de détection de services
+- Met à jour table `services` dans base `msf`
+- **15 replicas** sur workers
+
+#### thearm_uzi (python) — Runner Metasploit
+- Sélectionne un host Linux aléatoire via `TABLESAMPLE SYSTEM()`
+- Se connecte à MSFRPC (192.168.1.47:55553)
+- Exécute exploits adaptés à l'OS détecté
+- Requêtes SQL paramétrées (pas d'injection)
+- **5 replicas** sur workers
+
+### 7.3 Optimisation critique
+
+> **IMPORTANT** : Ne JAMAIS utiliser `ORDER BY RANDOM() LIMIT 1` sur les tables msf (6.15M hosts, 33.7M services).
+> Utiliser `TABLESAMPLE SYSTEM(0.001)` avec fallback. Cette optimisation a réduit le CPU PostgreSQL de 459% à 29%.
+
+---
+
+## 8. Composant : Karacho (Blockchain Audit)
 
 ### 8.1 Architecture
+- **FastAPI** service (~33KB) exposé port 5100
+- **PostgreSQL** backend (base `karacho`)
+- Chaîne de blocs SHA-256 avec hash du bloc précédent
+- Service daemon avec auto-restart
+- Client REST pour intégration avec l'orchestrateur
 
-- **Master** (koursk-2) : déployé sur le noeud manager, exécute les jobs rsync
-- **Slave** (koursk-2) : déployé sur les workers (label `rsync.slave=true`)
-- Communication via réseau overlay `rsync_network`
-- Planification par cron
-
-### 8.2 Jobs de synchronisation
-
-```json
+### 8.2 Structure d'un bloc
+```python
 {
-  "jobs": [
-    {"name": "bojemoi", "source": "/opt/bojemoi/", "dest": "/backup/bojemoi/"},
-    {"name": "bojemoi_boot", "source": "/opt/bojemoi_boot/", "dest": "/backup/bojemoi_boot/"},
-    {"name": "bojemoi-ml", "source": "/opt/bojemoi-ml-threat/", "dest": "/backup/ml-threat/"},
-    {"name": "bojemoi-telegram", "source": "/opt/bojemoi-telegram/", "dest": "/backup/telegram/"}
-  ]
+    "block_number": int,            # Séquentiel
+    "previous_hash": str,           # SHA-256 du bloc N-1
+    "current_hash": str,            # SHA-256(previous_hash + data)
+    "deployment_type": str,         # "vm" | "container"
+    "name": str,                    # Nom de la ressource
+    "config": dict,                 # Configuration complète
+    "resource_ref": str,            # ID XenServer ou Docker
+    "status": str,                  # Statut du déploiement
+    "source_ip": str,               # IP de l'appelant
+    "source_country": str,          # Pays (2 lettres)
+    "created_at": datetime
 }
 ```
 
-### 8.3 Métriques Prometheus
+---
 
-```python
-# metrics_exporter.py (koursk-1)
-rsync_job_duration_seconds    # Durée des jobs
-rsync_job_status              # Succès/échec
-rsync_bytes_transferred       # Volume transféré
-rsync_files_transferred       # Nombre de fichiers
+## 9. Composant : Koursk (Backup distribué)
+
+### 9.1 Architecture Master/Slave
+- **koursk-2** : Master, orchestre les jobs rsync
+- **koursk/koursk-1** : Slaves, reçoivent les réplications
+
+### 9.2 Configuration des jobs
+```json
+{
+    "jobs": [
+        {"name": "bojemoi", "source": "/opt/bojemoi/", "interval_minutes": 10},
+        {"name": "bojemoi_boot", "source": "/opt/bojemoi_boot/", "interval_minutes": 10},
+        {"name": "bojemoi-telegram", "source": "/opt/bojemoi-telegram/", "interval_minutes": 10},
+        {"name": "bojemoi-ml-threat", "source": "/opt/bojemoi-ml-threat/", "interval_minutes": 10}
+    ]
+}
+```
+
+### 9.3 Métriques
+- Prometheus metrics pour chaque job (succès/échec, durée, taille)
+
+---
+
+## 10. Monitoring & Observabilité
+
+### 10.1 Stack complète
+
+```
+Prometheus (métriques) ──→ Grafana (visualisation)
+     ↑                          ↑
+Node Exporter (host)        Loki (logs)
+cAdvisor (containers)       Tempo (traces)
+Postgres Exporter (DB)      Alertmanager (alertes)
+Suricata Exporter (IDS)
+Alloy (multi-signal)
+Postfix Exporter (mail)
+```
+
+### 10.2 Configuration Prometheus
+- **Rétention** : 15 jours
+- **Taille max TSDB** : 10 GB
+- **WAL compression** : activée
+- **Scrape targets** : tous les exporters + services avec /metrics
+- **Recording rules** : volumes/prometheus/
+
+### 10.3 Alertmanager
+- Configuration : `volumes/alertmanager/alertmanager.yml`
+- Notifications via email (Postfix → ProtonMail Bridge)
+- API de silence pour suppression d'alertes pendant les déploiements
+
+### 10.4 Suricata IDS
+- Déploiement global (1 instance par nœud)
+- Règles : emerging-threats + custom
+- CAP_NET_ADMIN pour accès raw sockets
+- Métriques exportées vers Prometheus (port 9917)
+
+---
+
+## 11. Sécurité
+
+### 11.1 Couches de sécurité
+
+| Couche | Mécanisme | Détails |
+|--------|-----------|---------|
+| **Réseau** | Overlay networks | Segmentation monitoring/backend/proxy/pentest/mail |
+| **Ingress** | Traefik + TLS | Let's Encrypt automatique, terminaison TLS |
+| **API** | IP Validation | Contrôle par pays (géolocalisation IP2Location) |
+| **Auth** | JWT | Framework d'authentification |
+| **Audit** | Blockchain | SHA-256 hash chain immuable |
+| **IDS/IPS** | Suricata | Détection intrusions, déployé globalement |
+| **Threat Intel** | CrowdSec | IP blocking basé sur réputation |
+| **Secrets** | Docker Secrets | ssh_private_key, telegram tokens, API keys |
+| **Cloud-init** | Validation Jinja2 | Bloque eval(), exec(), __import__() dans templates |
+| **DB** | Requêtes paramétrées | Protection injection SQL (fix borodino/uzi) |
+| **Email** | ProtonMail Bridge | Chiffrement email via relay TLS |
+
+### 11.2 Docker Secrets (externes)
+```
+ssh_private_key          # Opérations Git
+telegram_bot_token       # Notifications Telegram
+telegram_api_credentials # Auth API Telegram
+proton_username          # Credentials email
+proton_password
+vt_api_key               # VirusTotal
+abuseipdb_api_key        # AbuseIPDB
+otx_api_key              # AlienVault OTX
+shodan_api_key           # Shodan
 ```
 
 ---
 
-## 9. NFS (Vladimir)
+## 12. CI/CD Pipeline
 
-### 9.1 Architecture
-
-- **vladimir** : Serveur NFS (Dockerfile + supervisord + start-nfs.sh)
-- **vladimir-1** : Client NFS v1 (entrypoint.sh + run.sh)
-- **vladimir-2** : Client NFS v2 (docker-compose)
-- **nfs-exports/** : Répertoires de montage
-
----
-
-## 10. Blockchain Audit Trail (Karacho)
-
-### 10.1 API Flask
-
-```
-POST /block                  - Créer un nouveau bloc
-GET  /chain                  - Récupérer la chaîne complète
-GET  /verify                 - Vérifier l'intégrité de la chaîne
-GET  /block/{block_number}   - Récupérer un bloc spécifique
-```
-
-### 10.2 Logique
-
-- Chaque déploiement (VM ou conteneur) génère un bloc
-- Hash SHA-256 : `sha256(block_number + previous_hash + timestamp + data)`
-- Stockage PostgreSQL (table `deployment_blocks`)
-- Authentification par token (expiration 3600s)
-- Port 5100
-
----
-
-## 11. Cloud-Init Templates
-
-### 11.1 Fichiers
-
-```
-cloud-init/
-├── user-data              # Configuration principale
-├── network-config         # Réseau DHCP
-├── network-config-static  # Réseau IP statique
-├── meta-data              # Métadonnées instance
-└── templates/             # Templates Jinja2
-```
-
-### 11.2 Workflow
-
-1. Template Jinja2 stocké dans Gitea (`cloud-init/{template}.yaml`)
-2. Orchestrateur fetch le template via `gitea_client.py`
-3. Variables injectées via `cloudinit_gen.py` (Jinja2)
-4. Cloud-init rendu passé à XenAPI lors du déploiement VM
-
----
-
-## 12. GitLab CI/CD (Zarovnik)
-
-### 12.1 Pipeline Stages
-
+### 12.1 GitLab CI Stages
 ```yaml
 stages:
-  - validate    # Syntaxe YAML, variables d'env
-  - build       # Build images Docker
-  - test        # Tests unitaires + intégration
-  - security    # Trivy, OWASP ZAP, upload Faraday
-  - deploy      # Staging auto, production manuelle
-  - verify      # Health checks, métriques Prometheus
-  - notify      # Annotations Grafana, Slack/Email
+  - validate    # Docker Compose syntax + env vars
+  - build       # Image compilation + registry push
+  - test        # Unit + integration tests
+  - security    # Trivy vulnerability scanning
+  - deploy      # docker stack deploy
+  - verify      # Health checks post-déploiement
+  - notify      # Notifications succès/échec
 ```
 
-### 12.2 Ordre de déploiement
-
-```
-traefik → monitoring → crowdsec → suricata → faraday → (autres services)
-```
-
-### 12.3 Fichiers GitLab
-
-```
-zarovnik/
-├── gitlab-stack.yml                # Stack de déploiement GitLab
-├── deploy-gitlab.sh                # Script de déploiement
-├── gitlab-maintenance.sh           # Script de maintenance
-├── gitlab-ci-example.yml           # Template pipeline CI/CD
-├── gitlab-runner-config-example.toml
-└── GITLAB-SETUP.md
-```
-
----
-
-## 13. ML Threat Intelligence
-
-### 13.1 Service
-
-- API FastAPI pour classification d'IoC (Indicators of Compromise)
-- Intégrations externes via Docker secrets :
-  - VirusTotal API
-  - AbuseIPDB API
-  - AlienVault OTX
-  - Shodan API
-
----
-
-## 14. Configuration Monitoring (volumes/)
-
-### 14.1 Prometheus
-
-```yaml
-# volumes/prometheus/prometheus.yml
-# 100+ lignes de scrape configs
-# Docker Swarm service discovery
-# Scrape : node-exporter, cadvisor, postgres, postfix, redis, pentest, etc.
-```
-
-### 14.2 Alertmanager
-
-```yaml
-# volumes/alertmanager/alertmanager.yml
-# Routing : sévérité → receiver
-# Receivers : email (ProtonMail SMTP), Slack webhook
-# Groupement par alertname, job
-# Silences pendant les déploiements de stack
-```
-
-### 14.3 Grafana
-
-```
-volumes/grafana/
-├── grafana.ini
-└── provisioning/
-    ├── dashboards/    # Dashboards auto-provisionnés
-    └── datasources/   # Prometheus, Loki, Tempo
-```
-
-### 14.4 Suricata
-
-```yaml
-# volumes/suricata/suricata.yaml
-# IDS/IPS en mode global (tous les noeuds)
-# Règles ET Open + règles custom
-# Logs vers Loki
-```
-
-### 14.5 Autres configs
-
-| Fichier | Service |
-|---------|---------|
-| `loki/loki-config.yml` | Agrégation de logs |
-| `tempo/config/tempo.yaml` | Tracing distribué |
-| `alloy/config/config.alloy` | Collecteur OpenTelemetry |
-| `traefik/` | Certificats SSL + config dynamique |
-| `crowdsec/` | Détection d'intrusion |
-| `postfix/main.cf` | Serveur mail |
-| `faraday/config/server.ini` | Plateforme vulnérabilités |
-| `dnsmask/dnsmask.conf` | DNS masquerading |
-| `registry/config.yml` | Docker registry local |
-| `openvpn/` | Configuration VPN |
-
----
-
-## 15. Scripts Utilitaires
-
-| Script | Rôle |
-|--------|------|
-| `CI_CD_deploy.sh` | Orchestration de déploiement production |
-| `CI_CD_check.sh` | Validation pré-déploiement |
-| `test_deploiement.sh` | Tests de déploiement |
-| `sync-stack-images.sh` | Sync images vers registry local (localhost:5000) |
-| `sync_registry.py` | Synchronisation registry Python |
-| `cleaning_registry.sh` | Nettoyage du registry |
-| `images_cross_build.py` | Builds cross-platform (arm64/amd64) |
-| `check_image.py` | Validation d'images Docker |
-| `init_postgres.sh` | Initialisation PostgreSQL |
-| `create-nfs-volume.sh` | Création de volumes NFS |
-| `send_email.sh` | Envoi de notifications email |
-| `import_2_faraday.py` | Import de résultats vers Faraday |
-| `tannenberg.py` | Orchestration custom |
-| `download_ip.py` | Téléchargement base IP2Location |
-
----
-
-## 16. Workflows de Déploiement
-
-### 16.1 Déploiement VM
-
-```
-1. POST /deploy/vm/{vm_name} avec VMDeployRequest
-2. Middleware IP validation vérifie le pays source
-3. Fetch template cloud-init depuis Gitea
-4. Rendu Jinja2 avec variables
-5. Création VM sur XenServer via XenAPI
-6. Log dans blockchain (SHA-256 hash chain)
-7. Log dans PostgreSQL (table deployments)
-8. Retour deployment_id + référence VM
-```
-
-### 16.2 Déploiement Conteneur
-
-```
-1. POST /deploy/container/{name} avec ContainerDeployRequest
-2. IP validation
-3. Création service Docker Swarm via docker-py
-4. Log blockchain
-5. Log PostgreSQL
-6. Retour deployment_id + service ID
-```
-
-### 16.3 Scan Pentest
-
-```
-1. Configurer cible + type (full/web/network/vuln/cms)
-2. PluginManager charge les plugins dynamiquement
-3. Exécution séquentielle : Masscan → ZAP → Nuclei → VulnX
-4. Agrégation résultats avec breakdown sévérité
-5. Sauvegarde JSON locale
-6. Import Faraday workspace
-7. Stockage Redis pour async
-```
-
----
-
-## 17. Sécurité
-
-| Mesure | Détail |
-|--------|--------|
-| IP Validation | Whitelist par pays (Europe occidentale par défaut) |
-| Private IP Bypass | 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 skip géoloc |
-| JWT Auth | Authentification API par tokens |
-| CORS | Origines configurables |
-| DB Credentials | Variables d'environnement, jamais hardcodées |
-| XenServer SSL | Support certificats auto-signés |
-| Docker Socket | Accès direct requis pour gestion services |
-| Blockchain | SHA-256 hash chain = audit immuable |
-| Suricata | IDS/IPS global sur tous les noeuds |
-| CrowdSec | Détection d'intrusion communautaire |
-| Traefik | TLS termination + Let's Encrypt |
-| Basic Auth | Prometheus et endpoints sensibles |
-
----
-
-## 18. Ports Clés
-
-| Port | Service |
-|------|---------|
-| 80/443 | Traefik (HTTP/HTTPS) |
-| 3000 | Grafana |
-| 3100 | Loki |
-| 3200 | Tempo |
-| 5000 | Docker Registry local |
-| 5100 | Karacho (Blockchain API) |
-| 5432 | PostgreSQL |
-| 5985 | Faraday |
-| 8000/28080 | Orchestrator API |
-| 8001 | Nuclei API / ML Threat Intel |
-| 8080 | cAdvisor |
-| 8090 | OWASP ZAP |
-| 9090 | Prometheus |
-| 9093 | Alertmanager |
-| 9100 | Node Exporter |
-| 9187 | Postgres Exporter |
-
----
-
-## 19. Commandes de Lancement
-
+### 12.2 Processus de build et déploiement
 ```bash
-# Déployer le stack core
-docker stack deploy -c stack/01-service-hl.yml base --prune --resolve-image always
+# 1. Build image
+cd /opt/bojemoi/<composant>
+docker build -f Dockerfile.<composant> -t localhost:5000/<composant>:latest .
 
-# Déployer le stack sécurité
-docker stack deploy -c stack/40-service-borodino.yml security --prune --resolve-image always
+# 2. Push au registry local
+docker push localhost:5000/<composant>:latest
 
-# Déployer ML threat intel
-docker stack deploy -c stack/45-service-ml-threat-intel.yml ml --prune --resolve-image always
+# 3. Déployer la stack
+docker stack deploy -c stack/<stack-file>.yml <stack-name> --resolve-image always --prune
 
-# Démarrer l'orchestrateur en dev
-cd provisioning && pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Démarrer le pentest orchestrator en daemon
-cd samsonov/pentest_orchestrator
-python main.py --daemon --workspace default
-
-# Sync images vers registry local
-./scripts/sync-stack-images.sh
-
-# Tester l'API
-curl http://localhost:8000/health
-curl -X POST http://localhost:8000/deploy/vm/test-vm \
-  -H "Content-Type: application/json" \
-  -d '{"name":"test-vm","template":"webserver","os_type":"alpine","cpu":2,"memory":2048}'
-
-# Vérifier la blockchain
-curl http://localhost:5100/verify
+# 4. OU forcer la mise à jour d'un service spécifique (avec digest pour garantir le refresh)
+docker service update \
+    --image localhost:5000/<composant>:latest@sha256:<digest> \
+    --force --detach --update-parallelism 5 \
+    <stack>_<service>
 ```
 
 ---
 
-## 20. Dockerfiles à Construire (26 images custom)
+## 13. Contraintes de ressources
 
-| Image | Répertoire | Base |
-|-------|-----------|------|
-| provisioning | provisioning/ | python:3.11-slim |
-| samsonov | samsonov/ | python:3.11-slim |
-| nuclei-api | samsonov/nuclei_api/ | python:3.11-slim |
-| koursk-2 | koursk-2/ | alpine + rsync + python |
-| koursk-1 | koursk-1/ | alpine + rsync |
-| oblast | oblast/ | ghcr.io/zaproxy/zaproxy |
-| oblast-1 | oblast-1/ | python:3.11-slim + zaproxy |
-| kyiv | kyiv/ | burp suite base |
-| tsushima | tsushima/ | alpine + masscan |
-| borodino | borodino/ | custom (weapon services) |
-| karacho | karacho/ | python:3.11-slim + flask |
-| vladimir | vladimir/ | alpine + nfs-utils |
-| vladimir-1 | vladimir-1/ | alpine + nfs client |
-| narva | narva/ | custom |
-| berezina | berezina/ | custom |
-| stalingrad | stalingrad/ | custom |
-| ml-threat-intel | ml-threat-intel/ | python:3.11-slim |
+### Règles de placement
+- **Manager node** : PostgreSQL, Prometheus, Grafana, Traefik, PgAdmin, Tempo, Provisioning API
+- **Worker nodes** : Tous les scanners (borodino, nuclei, vulnx, masscan)
+- **Global** : Suricata, Node Exporter, cAdvisor, Suricata Exporter
 
-Toutes les images custom sont poussées vers `localhost:5000/{nom}`.
+### Limites par service
+```yaml
+# Borodino (ak47, bm12, uzi)
+resources:
+  limits: { cpus: "0.5", memory: "512M" }
+  reservations: { cpus: "0.1", memory: "256M" }
+deploy:
+  replicas: 15  # (ak47/bm12) ou 5 (uzi)
+  placement:
+    max_replicas_per_node: 5
+    constraints: [node.role == worker]
 
----
+# Nuclei / VulnX
+resources:
+  limits: { cpus: "2", memory: "2G" }
+  reservations: { cpus: "0.5", memory: "512M" }
 
-## 21. Documentation Wiki
-
-| Page | Contenu |
-|------|---------|
-| Home.md | Vue d'ensemble + diagramme d'architecture |
-| Docker-Swarm.md | Gestion du cluster Swarm |
-| Pentest-Orchestrator.md | Types de scan et utilisation |
-| Faraday.md | Gestion des vulnérabilités |
-| Monitoring.md | Métriques et alerting |
-| Alertes.md | Configuration des alertes |
-| Claude-Skills.md | Commandes CLI Claude Code |
+# Prometheus
+storage.tsdb.retention.time: 15d
+storage.tsdb.retention.size: 10GB
+```
 
 ---
 
-## 22. Résumé des Fonctionnalités Clés
+## 14. Bases de données PostgreSQL
 
-1. **Infrastructure Hybride** - VM (XenServer) + Conteneurs (Docker Swarm)
-2. **Orchestrateur Unifié** - API FastAPI pour tous les déploiements
-3. **Pentest Orchestration** - 7+ outils de scanning intégrés via plugins
-4. **Blockchain Audit** - Trail immuable SHA-256 pour chaque déploiement
-5. **Monitoring Entreprise** - Métriques (Prometheus), Logs (Loki), Traces (Tempo)
-6. **IDS/IPS** - Suricata (global) + CrowdSec
-7. **GitOps** - Configuration via Gitea
-8. **CI/CD** - Pipeline GitLab avec scanning sécurité
-9. **Backup Distribué** - Rsync master/slave avec métriques
-10. **NFS Partagé** - Volumes partagés entre noeuds
-11. **Mail** - Postfix + ProtonMail Bridge + alerting
-12. **ML Threat Intel** - Classification IoC (VirusTotal, AbuseIPDB, OTX, Shodan)
-13. **Registry Local** - Images custom sur localhost:5000
-14. **Cloud-Init** - Templates Jinja2 pour provisioning VMs
-15. **Géolocalisation** - Filtrage d'accès par pays
+| Base | Usage | Taille estimée |
+|------|-------|----------------|
+| **msf** | Metasploit Framework — hosts (6.15M), services (33.7M) | ~9 GB |
+| **ip2location** | Géolocalisation CIDR pour ciblage scan | Variable |
+| **faraday** | Findings de vulnérabilités agrégés | Variable |
+| **karacho** | Blockchain audit trail immuable | Croissante |
+| **deployments** | État orchestrateur (VMs, conteneurs) | Petit |
+| **grafana** | Configuration dashboards | Petit |
+| **bojemoi_threat_intel** | Intelligence de menaces ML | Variable |
+
+---
+
+## 15. Routage Traefik
+
+| Service | Route | Port interne |
+|---------|-------|--------------|
+| Grafana | grafana.bojemoi.lab | 3000 |
+| Prometheus | prometheus.bojemoi.lab | 9090 |
+| PgAdmin | pgadmin.bojemoi.lab | 5050 |
+| Tempo | tempo.bojemoi.lab | 3200 |
+| Faraday | faraday.bojemoi.lab | 5985 |
+| Nuclei API | nuclei.bojemoi.lab | 8001 |
+| Karacho | karacho.bojemoi.lab | 5100 |
+| ZAP Proxy | zap.bojemoi.lab | 8090 |
+| Threat Intel | threat-intel.bojemoi.lab.local | 8000 |
+| Provisioning | (port direct 28080) | 8000 |
+
+---
+
+## 16. .gitignore
+
+```gitignore
+# Secrets et certificats
+*.key
+*.pem
+*.crt
+**/secrets/
+**/*secret*
+**/*password*
+**/privatekey-*
+**/id_rsa
+**/id_ed25519
+
+# Variables d'environnement
+.env
+*.env.local
+*.env.production
+
+# VPN credentials
+**/auth.txt
+
+# Fichiers temporaires
+*.tmp
+*.log
+*.swp
+*~
+.DS_Store
+*.socket
+eve.json
+
+# Sauvegardes
+*.bak
+*.backup
+
+# Données sensibles
+**/data/
+
+# IDE
+.vscode/
+.idea/
+```
+
+---
+
+## 17. Tech Stack complet
+
+| Catégorie | Technologies |
+|-----------|-------------|
+| **Langage principal** | Python 3.11 |
+| **API** | FastAPI 0.109, Uvicorn 0.27, Pydantic 2.5 |
+| **ORM** | SQLAlchemy 2.0.25, asyncpg 0.29 |
+| **Base de données** | PostgreSQL 15 |
+| **HTTP async** | httpx 0.26 |
+| **Templates** | Jinja2 3.1.3, PyYAML 6.0.1 |
+| **Scheduler** | APScheduler |
+| **Docker** | docker-py 7.0, Docker Swarm |
+| **VM** | XenAPI (XenServer/XCP-ng) |
+| **Migrations** | Alembic 1.13.1 |
+| **CLI** | Click + Rich |
+| **Monitoring** | Prometheus, Grafana, Loki, Tempo, Alertmanager |
+| **Sécurité** | Suricata, CrowdSec, Traefik TLS |
+| **Scanning** | Nmap, Metasploit 6, OWASP ZAP, Nuclei, Masscan, Burp, VulnX |
+| **Messaging** | Redis 7 |
+| **Backup** | rsync (master/slave) |
+| **CI/CD** | GitLab CI, Gitea |
+| **Conteneurs** | Alpine Linux, Docker Registry v2 |
+| **Email** | Postfix, ProtonMail Bridge |
+| **ML** | Python ML stack (threat intel) |
+
+---
+
+## 18. Instructions de reconstruction
+
+### Phase 1 : Infrastructure de base
+1. Provisionner 3 nœuds (1 manager + 2 workers)
+2. Initialiser Docker Swarm (`docker swarm init` sur manager, join sur workers)
+3. Déployer registry local (`docker service create --name registry -p 5000:5000 registry:2`)
+4. Créer réseaux overlay : monitoring, backend, proxy, rsync_network, mail, pentest
+5. Créer volume externe PostgreSQL
+6. Déployer stack `01-service-hl.yml` (PostgreSQL, Traefik, Prometheus, Grafana, etc.)
+7. Initialiser les 7 bases PostgreSQL
+8. Configurer Gitea avec repo `bojemoi-configs` pour templates cloud-init
+
+### Phase 2 : Orchestrateur
+1. Développer l'orchestrateur FastAPI (`provisioning/`)
+2. Implémenter les 7 services (gitea, xenserver, docker, cloudinit, database, blockchain, ip2location)
+3. Ajouter middleware IP validation + metrics
+4. Configurer Alembic migrations
+5. Builder et pusher image `localhost:5000/provisioning:latest`
+
+### Phase 3 : Pentest Orchestrator
+1. Développer le framework plugin (`samsonov/pentest_orchestrator/`)
+2. Implémenter les 8 plugins (nuclei, masscan, zap, burp, vulnx, metasploit, faraday, nmap)
+3. Développer Nuclei API wrapper (`samsonov/nuclei_api/`)
+4. Builder images : samsonov, nuclei-api, vulnx
+
+### Phase 4 : Scanners
+1. Builder image Borodino (Alpine + Ruby + Metasploit from source)
+2. Développer scripts ak47/bm12/uzi avec `TABLESAMPLE SYSTEM()`
+3. Builder image Tsushima (masscan + VPN pipeline)
+4. Builder images ZAP (oblast, oblast-1)
+5. Déployer stack `40-service-borodino.yml`
+
+### Phase 5 : Services auxiliaires
+1. Développer et déployer Karacho (blockchain audit)
+2. Configurer Koursk rsync master/slaves
+3. Configurer Suricata IDS avec règles emerging-threats
+4. Configurer Alertmanager + notifications email
+5. Déployer stack ML threat intel `45-service-ml-threat-intel.yml`
+
+### Phase 6 : CI/CD & Ops
+1. Configurer GitLab CI pipeline
+2. Configurer scripts de build (`scripts/bojemoiBuild.sh`, `cccp.sh`)
+3. Configurer Grafana dashboards (provisioning automatique)
+4. Tester flux end-to-end : déploiement VM → audit blockchain → monitoring
+
+---
+
+## 19. Leçons apprises et pièges à éviter
+
+1. **`ORDER BY RANDOM()` est catastrophique** sur tables de millions de lignes → utiliser `TABLESAMPLE SYSTEM()`
+2. **`docker stack deploy` avec tag `:latest`** ne force PAS le rolling update → utiliser `--force` avec digest d'image
+3. **Rolling update parallelism 1** est très lent pour 15+ replicas → utiliser `--update-parallelism 5`
+4. **`max_replicas_per_node: 5`** avec 2 workers = 10 max replicas (pas 15 comme configuré)
+5. **BusyBox `top`** (Alpine) ne supporte pas `-o` → utiliser `top -bn1` simple
+6. **Metasploit RPC** doit être accessible à 192.168.1.47:55553 pour que uzi-service fonctionne
+7. **Toujours utiliser des requêtes SQL paramétrées** — l'injection SQL a été trouvée et corrigée dans thearm_uzi
+8. **Prometheus consomme ~950 MB RAM** — c'est le plus gros consommateur mémoire après PostgreSQL
+9. **PostgreSQL partage une seule instance** pour 7+ bases — surveiller CPU/RAM en continu
