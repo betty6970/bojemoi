@@ -206,10 +206,7 @@ class RsyncScheduler:
     def setup_schedules(self, node):
         """Configure les planifications avec le module schedule"""
         jobs = self.load_jobs_config()
-        
-        # Nettoyage des anciennes planifications
-        schedule.clear()
-        
+
         for job in jobs:
             if not job.get('enabled', True):
                 self.log(f"Job {job['name']} désactivé, ignoré")
@@ -343,6 +340,7 @@ def main():
     
     # Configuration des planifications
     nodes = scheduler.get_rsync_slave_list()
+    schedule.clear()
     for node in nodes:
          scheduler.setup_schedules(node)
     scheduler.log("Planifications configurées")
@@ -359,6 +357,7 @@ def main():
             if int(time.time()) % 600 < 31:
                 scheduler.log("Rechargement de la configuration")
                 nodes = scheduler.get_rsync_slave_list()
+                schedule.clear()
                 for node in nodes:
                     scheduler.setup_schedules(node)
                 scheduler.log("Rechargement des nodes rsync-slave")
