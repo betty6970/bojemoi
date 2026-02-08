@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  telegram-bot:
+    image: localhost:5000/telegram-bot:latest
+    hostname: telegram-bot
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:bojemoi@postgres:5432/telegram_bot
+      # Redis configuration for pentest-orchestrator communication (borodino stack)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PENTEST_CHANNEL=pentest:commands
+      - REDIS_RESULTS_CHANNEL=pentest:results
+      # Docker socket proxy for checking pentest-orchestrator service status
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+    secrets:
+      - telegram_bot_token
+    networks:
+      - backend
+      - telegram_net
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      labels:
+        - "traefik.enable=false"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+secrets:
+  telegram_bot_token:
+    external: true
+
+networks:
+  backend:
+    external: true
+  telegram_net:
+    driver: overlay
+    attachable: true
+  socket_proxy:
+    external: true
+    name: boot_socket_proxy
+

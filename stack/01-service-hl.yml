@@ -99,6 +99,10 @@ configs:
      file: /opt/bojemoi/volumes/tempo/config/tempo.yaml
    provisioning_env:
      file: /opt/bojemoi/volumes/provisioning/.env
+   rsync_rsyncd:
+     file: /opt/bojemoi/volumes/rsync/configs/rsyncd.conf
+   rsync_jobs:
+     file: /opt/bojemoi/volumes/rsync/configs/rsync_jobs.json
 
 # Template de base avec anchor                                                   
 x-mode-template: &mode-template                                             
@@ -893,6 +897,11 @@ services:
          - prometheus.label.component=backup-master
          - prometheus.label.stack=base
          - prometheus.label.tier=backup
+    configs:
+       - source: rsync_rsyncd
+         target: /etc/rsyncd.conf
+       - source: rsync_jobs
+         target: /config/rsync_jobs.json
     volumes:
        - type: bind
          source: /opt/bojemoi
@@ -939,6 +948,11 @@ services:
       update_config:
         parallelism: 1
         delay: 10s
+    configs:
+       - source: rsync_rsyncd
+         target: /etc/rsyncd.conf
+       - source: rsync_jobs
+         target: /config/rsync_jobs.json
     volumes:
       - type: bind
         source: /opt/bojemoi

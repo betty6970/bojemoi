@@ -17,7 +17,6 @@ RUN for dir in /scripts /config /data /var/log/rsync; do \
     done
 
 COPY scripts/ /scripts/
-COPY config/ /config/
 COPY modules/  /usr/lib/python3.12/site-packages/
 
 # Application des permissions en une seule couche

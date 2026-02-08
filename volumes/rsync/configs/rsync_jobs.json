@@ -1,0 +1,45 @@
+[
+  {
+    "name": "swarm_data",
+    "source": "/opt/bojemoi/",
+    "destination": "/opt/bojemoi/",
+    "options": "-av --delete --stats",
+    "schedule": "every_10_minutes",
+    "enabled": true,
+    "description": "Sauvegarde 10mn des données"
+  },
+  {
+    "name": "swarm_boot",
+    "source": "/opt/bojemoi_boot/",
+    "destination": "/opt/bojemoi_boot/",
+    "options": "-av --delete --stats",
+    "schedule": "every_10_minutes",
+    "enabled": true,
+    "description": "Sauvegarde 10mn des données"
+  },
+  {
+    "name": "swarm_telegram",
+    "source": "/opt/bojemoi-telegram/",
+    "destination": "/opt/bojemoi-telegram/",
+    "options": "-av --delete --stats",
+    "schedule": "every_10_minutes",
+    "enabled": true,
+    "description": "Sauvegarde 10mn des données"
+  },
+  {
+    "name": "swarm_ml_threat",
+    "source": "/opt/bojemoi-ml-threat/",
+    "destination": "/opt/bojemoi-ml-threat/",
+    "options": "-av --delete --stats",
+    "schedule": "every_10_minutes",
+    "enabled": true,
+    "description": "Sauvegarde 10mn des données"
+  },
+  {
+    "name": "swarm_logs",
+    "source": "/config/",
+    "destination": "/data/backup/configs/",
+    "options": "-av --stats",
+    "description": "Synchronisation des logs"
+  }
+]
