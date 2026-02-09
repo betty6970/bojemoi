@@ -25,5 +25,22 @@ volumes/suricata/suricata-command.socket
 # Scan results
 samsonov/pentest_orchestrator/results/
 
-# Archives
+# Archives & binaries
 *.tar.gz
+*.jar
+*.war
+
+# SQL dumps
+dump/
+*.sql.gz
+
+# Virtual environments
+venv/
+toto/
+.venv/
+
+# Large tool binaries
+kyiv/
+
+# Suricata rules (managed externally)
+volumes/suricata/rules/
