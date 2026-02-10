@@ -1,0 +1,68 @@
+# Hardened SSH Configuration - Bojemoi Lab (meta-76)
+# Port 22 redirected to honeypot, real SSH on 4422
+
+Port 4422
+AddressFamily inet
+ListenAddress 0.0.0.0
+
+# Host keys - ED25519 only
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Logging
+SyslogFacility AUTH
+LogLevel VERBOSE
+
+# Authentication
+LoginGraceTime 30
+PermitRootLogin no
+StrictModes yes
+MaxAuthTries 3
+MaxSessions 3
+
+# Key-based auth only
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+
+# Disable all password-based auth
+PasswordAuthentication no
+PermitEmptyPasswords no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+
+# Disable unused auth methods
+HostbasedAuthentication no
+KerberosAuthentication no
+GSSAPIAuthentication no
+
+# Strong crypto only
+KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+
+# Hardening
+AllowTcpForwarding no
+GatewayPorts no
+X11Forwarding no
+PermitTunnel no
+AllowAgentForwarding no
+PermitUserEnvironment no
+
+# Restrict to specific users
+AllowUsers docker alpine yoh
+
+# Rate limiting - slow down brute force
+MaxStartups 3:50:10
+
+# Keep-alive (detect dead connections)
+ClientAliveInterval 300
+ClientAliveCountMax 2
+TCPKeepAlive no
+
+# Banner
+Banner /etc/ssh/banner
+
+# SFTP
+Subsystem sftp internal-sftp
+
+# Include any cloud-init overrides
+# Include /etc/ssh/sshd_config.d/*.conf

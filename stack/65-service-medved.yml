@@ -1,6 +1,7 @@
 # Medved - Multi-protocol honeypot
 # Captures SSH, HTTP, RDP, SMB, FTP, Telnet attempts
 # Logs to PostgreSQL (honeypot_events) and reports to Faraday
+# NOTE: Real SSH moved to port 4422 - honeypot SSH on port 22 to trap attackers
 
 networks:
   backend:
@@ -25,7 +26,7 @@ services:
       - backend
     ports:
       - target: 2222
-        published: 2222
+        published: 22
         protocol: tcp
         mode: host
       - target: 8080
