@@ -1,0 +1,74 @@
+# Medved - Multi-protocol honeypot
+# Captures SSH, HTTP, RDP, SMB, FTP, Telnet attempts
+# Logs to PostgreSQL (honeypot_events) and reports to Faraday
+
+networks:
+  backend:
+    external: true
+
+services:
+  medved-honeypot:
+    image: localhost:5000/medved:latest
+    hostname: medved-{{.Node.Hostname}}
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: postgres
+      PG_PASSWORD: bojemoi
+      PG_DATABASE: msf
+      FARADAY_URL: http://faraday:5985
+      FARADAY_TOKEN: 9a48aa3fb074b442e0fae943f9a0a7d93a3214401d08821a14a1dcc6165b6659
+      FARADAY_WORKSPACE: honeypot
+      FARADAY_REPORT_INTERVAL: "60"
+      IGNORE_NETWORKS: "10.0.0.0/8,172.16.0.0/12"
+    networks:
+      - backend
+    ports:
+      - target: 2222
+        published: 2222
+        protocol: tcp
+        mode: host
+      - target: 8080
+        published: 8888
+        protocol: tcp
+        mode: host
+      - target: 3389
+        published: 3389
+        protocol: tcp
+        mode: host
+      - target: 445
+        published: 445
+        protocol: tcp
+        mode: host
+      - target: 2121
+        published: 2121
+        protocol: tcp
+        mode: host
+      - target: 2323
+        published: 2323
+        protocol: tcp
+        mode: host
+      - target: 9200
+        published: 9200
+        protocol: tcp
+        mode: host
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+      labels:
+        - "prometheus.enable=true"
+        - "prometheus.port=9200"
+        - "prometheus.path=/metrics"
