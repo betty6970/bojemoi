@@ -45,6 +45,7 @@ services:
       ABUSEIPDB_API_KEY_FILE: /run/secrets/abuseipdb_api_key
       OTX_API_KEY_FILE: /run/secrets/otx_api_key
       SHODAN_API_KEY_FILE: /run/secrets/shodan_api_key
+      ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
     volumes:
       - ml-threat-intel-models:/app/models
       - /opt/bojemoi-ml-threat/config:/app/config:ro
@@ -56,6 +57,7 @@ services:
       - abuseipdb_api_key
       - otx_api_key
       - shodan_api_key
+      - anthropic_api_key
     deploy:
       <<: *deploy-template
       labels:
@@ -72,4 +74,6 @@ secrets:
   otx_api_key:
     external: true
   shodan_api_key:
+    external: true
+  anthropic_api_key:
     external: true
