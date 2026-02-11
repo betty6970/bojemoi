@@ -54,10 +54,11 @@ services:
         protocol: tcp
         mode: host
     deploy:
-      mode: global
+      mode: replicated
+      replicas: 1
       placement:
         constraints:
-          - node.role == worker
+          - node.role == manager
       restart_policy:
         condition: on-failure
         delay: 10s

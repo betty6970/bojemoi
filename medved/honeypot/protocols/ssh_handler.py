@@ -66,12 +66,11 @@ class HoneypotSSHServer(asyncssh.SSHServer):
 
 async def start_ssh_server(host_key_path: str = "/app/ssh_host_key"):
     import os
-    try:
+    if os.path.exists(host_key_path):
         host_key = asyncssh.read_private_key(host_key_path)
-    except Exception:
-        # Generate key via ssh-keygen to avoid asyncssh serialization bugs
-        os.system(f"ssh-keygen -t rsa -b 2048 -f {host_key_path} -N '' -q")
-        host_key = asyncssh.read_private_key(host_key_path)
+    else:
+        host_key = asyncssh.generate_private_key("ssh-rsa", comment="medved-honeypot")
+        host_key.write_private_key(host_key_path)
         logger.info("Generated new SSH host key")
 
     await asyncssh.create_server(
