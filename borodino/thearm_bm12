@@ -97,21 +97,30 @@ def run_msf_scan(host, host_id, pg_ip):
 
 # Boucle principale
 def main():
-    pg_ip = get_postgres_ip()
-    if not pg_ip:
-        return
+    import time
 
-    if is_postgres_ready(pg_ip):
-        print(f"[INFO] PostgreSQL détecté à {pg_ip}")
-    else:
-        print(f"[ERREUR] Port 5432 ouvert mais PostgreSQL ne répond pas à {pg_ip}")
-        return
+    # Attendre que PostgreSQL soit prêt (retry indéfini)
+    while True:
+        pg_ip = get_postgres_ip()
+        if not pg_ip:
+            print("[ATTENTE] Résolution DNS postgres... retry dans 10s")
+            time.sleep(10)
+            continue
 
+        if is_postgres_ready(pg_ip):
+            print(f"[INFO] PostgreSQL détecté à {pg_ip}")
+            break
+        else:
+            print(f"[ATTENTE] PostgreSQL pas prêt à {pg_ip}... retry dans 10s")
+            time.sleep(10)
+
+    # Boucle de scan continue
     while True:
         host_id, host = get_random_host()
         if not host:
-            print("[INFO] Aucun hôte disponible.")
-            break
+            print("[INFO] Aucun hôte disponible, retry dans 5s...")
+            time.sleep(5)
+            continue
 
         print(f"[INFO] Scan de {host} en cours...")
         run_msf_scan(host, host_id, pg_ip)
