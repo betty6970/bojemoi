@@ -461,13 +461,13 @@ services:
         max_attempts: 3
 
   faraday:
-    image: faradaysec/faraday:latest
+    image: localhost:5000/faraday:latest
     environment:
       - PGSQL_USER=postgres
       - PGSQL_PASSWD=bojemoi
       - PGSQL_HOST=postgres
       - PGSQL_DBNAME=faraday
-      - REDIS_SERVER=redis.bojemoi.lab
+      - REDIS_SERVER=redis
       - REDIS_PORT=6379
       - REDIS_HOST=redis
       - REDIS_DB=0
