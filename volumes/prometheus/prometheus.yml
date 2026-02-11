@@ -87,7 +87,7 @@ scrape_configs:
         target_label: availability
       - source_labels: [__meta_dockerswarm_node_manager_reachability]
         target_label: reachability
-      # CRITIQUE : Forcer le port 9100 pour node-exporter
+      # Forcer le port 9100 pour node-exporter
       - source_labels: [__address__]
         regex: '([^:]+):.*'
         replacement: '${1}:9100'
@@ -100,21 +100,17 @@ scrape_configs:
         role: tasks
         refresh_interval: 30s
     relabel_configs:
-      # Drop services with prometheus.enable=false label
+      # Keep only services with prometheus.enable=true
       - source_labels: [__meta_dockerswarm_service_label_prometheus_enable]
         regex: 'true'
         action: keep
-      
+
       # Only keep tasks that are running
       - source_labels: [__meta_dockerswarm_task_desired_state]
         regex: running
         action: keep
-      # Drop si le label existe ET vaut false
-      - source_labels: [__meta_dockerswarm_service_label_prometheus_enable]
-        regex: '(false|)'  # Matche 'false' OU vide (pas de label)
-        action: drop
 
-      # NOUVEAU: Construire l'adresse avec le nom du service au lieu de l'IP
+      # Build address from service name and published port
       - source_labels: [__meta_dockerswarm_service_name]
         target_label: __tmp_service_name
       - source_labels: [__meta_dockerswarm_task_port_publish_port]
@@ -125,108 +121,91 @@ scrape_configs:
         regex: '(.+):(.+)'
         replacement: '${1}:${2}'
         target_label: __address__
- 
+
       # Service name as job label
       - source_labels: [__meta_dockerswarm_service_name]
         target_label: job
-      
+
       # Service ID
       - source_labels: [__meta_dockerswarm_service_id]
         target_label: service_id
-      
+
       # Task ID
       - source_labels: [__meta_dockerswarm_task_id]
         target_label: task_id
-      
+
       # Task slot
       - source_labels: [__meta_dockerswarm_task_slot]
         target_label: task_slot
-      
+
       # Container ID
       - source_labels: [__meta_dockerswarm_container_label_com_docker_swarm_task_id]
         target_label: container_id
-      
+
       # Node hostname
       - source_labels: [__meta_dockerswarm_node_hostname]
         target_label: node_hostname
-      
+
       # Node ID
       - source_labels: [__meta_dockerswarm_node_id]
         target_label: node_id
-      
+
       # Network name
       - source_labels: [__meta_dockerswarm_network_name]
         target_label: network
-      
+
       # Stack name (if available from labels)
       - source_labels: [__meta_dockerswarm_service_label_com_docker_stack_namespace]
         target_label: stack
-      
+
       # Custom prometheus port from label
       - source_labels: [__meta_dockerswarm_service_name, __meta_dockerswarm_service_label_prometheus_port]
         regex: '(.+);(\d+)'
         target_label: __address__
         replacement: 'tasks.${1}:${2}'
-      
+
       # Default metrics path
       - source_labels: [__meta_dockerswarm_service_label_prometheus_path]
         regex: '(.+)'
         target_label: __metrics_path__
-      
+
       # Custom labels from service labels (prometheus.label.*)
       - regex: __meta_dockerswarm_service_label_prometheus_label_(.+)
         action: labelmap
         replacement: ${1}
-      
+
       # Preserve all service labels
       - regex: __meta_dockerswarm_service_label_(.+)
         action: labelmap
         replacement: swarm_service_${1}
 
-  # Docker Swarm - Container discovery with cAdvisor
-  - job_name: 'docker-containers'
-    dockerswarm_sd_configs:
-      - host: http://docker-socket-proxy:2375
-        role: tasks
+  # cAdvisor - Container metrics via DNS discovery (global service on all nodes)
+  - job_name: 'cadvisor'
+    dns_sd_configs:
+      - names:
+          - 'tasks.base_cadvisor'
+        type: 'A'
+        port: 8080
         refresh_interval: 30s
     relabel_configs:
-      # Drop if prometheus.enable=false
-      - source_labels: [__meta_dockerswarm_service_label_prometheus_enable]
-        regex: 'false'
-        action: drop
-      
-      # Only running tasks
-      - source_labels: [__meta_dockerswarm_task_desired_state]
-        regex: running
-        action: keep
-      
-      # Target cAdvisor endpoint
-      - source_labels: [__meta_dockerswarm_node_address]
-        target_label: __address__
-        replacement: '${1}:8088'
-
-      # NOUVEAU: Corriger le chemin des métriques pour cAdvisor
-      - target_label: __metrics_path__
-        replacement: /metrics
-    
-      # Ajouter le nom du nœud comme label
-      - source_labels: [__meta_dockerswarm_node_hostname]
-        target_label: node
- 
-      
-      - source_labels: [__meta_dockerswarm_service_name]
-        target_label: service_name
-      
-      - source_labels: [__meta_dockerswarm_task_id]
-        target_label: container_id
+      - source_labels: [__address__]
+        target_label: instance
 
   # Security Stack Services
   - job_name: 'suricata'
-    static_configs:
-      - targets: ['suricata-exporter:9917']
-        labels:
-          service: 'suricata'
-          stack: 'security'
+    dns_sd_configs:
+      - names:
+          - 'tasks.base_suricata-exporter'
+        type: 'A'
+        port: 9917
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: service
+        replacement: 'suricata'
+      - target_label: stack
+        replacement: 'security'
 
   # Infrastructure Services
   - job_name: 'postgresql'
@@ -247,6 +226,3 @@ scrape_configs:
       - source_labels: [__meta_dockerswarm_node_address]
         target_label: __address__
         replacement: '${1}:9100'
-
-
-

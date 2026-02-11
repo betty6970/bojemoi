@@ -355,7 +355,7 @@ services:
 #        failure_action: rollback
       labels:
         - prometheus.enable=true
-        - prometheus.port="3000"
+        - prometheus.port=3000
         - prometheus.path=/metrics
         - prometheus.label.team=infrastructure
         - prometheus.label.component=visualization
