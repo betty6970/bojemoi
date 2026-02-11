@@ -256,6 +256,7 @@ services:
     volumes:
       - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata
       - /opt/bojemoi/volumes/suricata:/etc/suricata
+      - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
     deploy:
       mode: global  # Clé importante : déploie une instance sur chaque node
       restart_policy:
@@ -280,6 +281,7 @@ services:
     image: localhost:5000/suricata_exporter
     volumes:
       - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata
+      - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
     networks:
       - monitoring
       - backend
