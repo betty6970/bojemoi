@@ -99,13 +99,29 @@ async def _start_telegram() -> tuple:
     )
 
     telegram_code = os.environ.get("TELEGRAM_CODE", "")
-    if telegram_code:
-        await client.start(
-            phone=settings.telegram_phone,
-            code_callback=lambda: telegram_code,
-        )
-    else:
-        await client.start(phone=settings.telegram_phone)
+    try:
+        if telegram_code:
+            await client.start(
+                phone=settings.telegram_phone,
+                code_callback=lambda: telegram_code,
+            )
+        elif os.environ.get("TELEGRAM_INTERACTIVE"):
+            await client.start(phone=settings.telegram_phone)
+        else:
+            # Non-interactive mode: connect with existing session only
+            await client.connect()
+            if not await client.is_user_authorized():
+                logger.error(
+                    "Telegram session expired or missing. "
+                    "Run with TELEGRAM_INTERACTIVE=1 to re-authenticate, "
+                    "or set TELEGRAM_CODE=<code> for one-shot auth."
+                )
+                await client.disconnect()
+                return None, {}
+    except Exception as exc:
+        logger.error("Telegram authentication failed: %s", exc)
+        await client.disconnect()
+        return None, {}
     logger.info("Telegram client connected")
 
     # Resolve and join channels

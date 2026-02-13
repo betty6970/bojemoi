@@ -21,8 +21,8 @@ secrets:
     external: true
   telegram_alert_chat_id:
     external: true
-  twitter_bearer_token:
-    external: true
+  # twitter_bearer_token:  # uncomment after: docker secret create twitter_bearer_token -
+  #   external: true
 
 services:
   razvedka:
@@ -63,7 +63,7 @@ services:
       - telegram_phone
       - telegram_bot_token
       - telegram_alert_chat_id
-      - twitter_bearer_token
+      # - twitter_bearer_token  # uncomment after creating the secret
     volumes:
       - razvedka-session:/data
     networks:
@@ -73,7 +73,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.role == worker
+          - node.role == manager
       restart_policy:
         condition: on-failure
         delay: 10s
