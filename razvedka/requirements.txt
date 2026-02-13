@@ -5,3 +5,4 @@ pydantic-settings==2.7.1
 lingua-language-detector==2.1.0
 spacy==3.8.4
 prometheus-client==0.21.1
+tweepy==4.15.0

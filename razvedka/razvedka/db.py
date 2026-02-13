@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS buzz_log (
     id BIGSERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     channel TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'telegram',
     langue TEXT,
     entites_cibles TEXT[],
     pays TEXT[],
@@ -31,13 +32,18 @@ CREATE INDEX IF NOT EXISTS idx_buzz_france ON buzz_log (score_france)
 CREATE INDEX IF NOT EXISTS idx_buzz_intention ON buzz_log (score_intention)
     WHERE score_intention > 0;
 CREATE INDEX IF NOT EXISTS idx_buzz_channel ON buzz_log (channel);
+CREATE INDEX IF NOT EXISTS idx_buzz_source ON buzz_log (source);
+"""
+
+MIGRATE_SOURCE_COLUMN = """
+ALTER TABLE buzz_log ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'telegram';
 """
 
 INSERT_BUZZ = """
 INSERT INTO buzz_log
-    (timestamp, channel, langue, entites_cibles, pays, mots_intention,
+    (timestamp, channel, source, langue, entites_cibles, pays, mots_intention,
      temporalite, score_intention, score_france, message_id, raw_entities)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING id
 """
 
@@ -83,6 +89,7 @@ async def init_db():
     )
     async with pool.acquire() as conn:
         await conn.execute(CREATE_TABLE)
+        await conn.execute(MIGRATE_SOURCE_COLUMN)
     logger.info("Database initialized (host=%s, db=%s)", settings.pg_host, settings.pg_database)
 
 
@@ -104,6 +111,7 @@ async def insert_buzz(
     score_france: float,
     message_id: int | None,
     raw_entities: dict | None = None,
+    source: str = "telegram",
 ) -> int | None:
     if pool is None:
         logger.warning("DB pool not initialized")
@@ -115,6 +123,7 @@ async def insert_buzz(
                 INSERT_BUZZ,
                 datetime.now(timezone.utc),
                 channel,
+                source,
                 langue,
                 entites_cibles,
                 pays,

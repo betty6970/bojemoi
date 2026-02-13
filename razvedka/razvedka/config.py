@@ -34,6 +34,20 @@ class Settings(BaseSettings):
         "russian_hackers_team"
     )
 
+    # Twitter/X API
+    twitter_bearer_token: str = ""
+    twitter_accounts: str = (
+        "CyberArmyRussia_,"
+        "killnet_reserv,"
+        "XakNet_Team,"
+        "SolntsepekZ,"
+        "russian_hackers_team,"
+        "ddos_separ,"
+        "RVvoenkor"
+    )
+    twitter_search_queries: str = "ddos france lang:ru|ддос франция|ddos .fr"
+    twitter_poll_interval: int = 90
+
     # Scoring thresholds
     buzz_check_interval: int = 60  # minutes
     alert_channel_threshold: int = 3  # min distinct channels for alert
@@ -67,6 +81,9 @@ class Settings(BaseSettings):
         chat_id = _read_secret("telegram_alert_chat_id")
         if chat_id:
             self.telegram_alert_chat_id = chat_id
+        bearer = _read_secret("twitter_bearer_token")
+        if bearer:
+            self.twitter_bearer_token = bearer
 
 
 settings = Settings()

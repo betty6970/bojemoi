@@ -2,7 +2,7 @@ from prometheus_client import Counter, Gauge, Histogram
 
 messages_received_total = Counter(
     "razvedka_messages_received_total",
-    "Total messages received from Telegram",
+    "Total messages received from CTI sources",
     ["channel"],
 )
 
@@ -49,5 +49,5 @@ alerts_sent_total = Counter(
 
 active_channels = Gauge(
     "razvedka_active_channels",
-    "Number of actively monitored Telegram channels",
+    "Number of actively monitored CTI channels",
 )
