@@ -1,0 +1,66 @@
+# Vigie - CERT-FR Security Bulletin Monitor
+# Polls ANSSI RSS feeds, filters by product watchlist, alerts via Telegram + Alertmanager
+
+networks:
+  backend:
+    external: true
+
+secrets:
+  telegram_bot_token:
+    external: true
+  telegram_alert_chat_id:
+    external: true
+
+services:
+  vigie:
+    image: localhost:5000/vigie:latest
+    hostname: vigie
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: postgres
+      PG_PASSWORD: bojemoi
+      PG_DATABASE: vigie
+      FEED_URLS: >-
+        https://cert.ssi.gouv.fr/alerte/feed/,
+        https://cert.ssi.gouv.fr/avis/feed/,
+        https://cert.ssi.gouv.fr/ioc/feed/
+      POLL_INTERVAL: "300"
+      WATCHLIST: >-
+        linux,docker,postgresql,postgres,traefik,grafana,prometheus,
+        suricata,nginx,python,alpine,openssl,openssh,git,curl,
+        ruby,node,fastapi,redis,loki
+      ALERTMANAGER_WEBHOOK_URL: "http://alertmanager:9093/api/v1/alerts"
+      METRICS_PORT: "9301"
+    secrets:
+      - telegram_bot_token
+      - telegram_alert_chat_id
+    networks:
+      - backend
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      labels:
+        - "prometheus.enable=true"
+        - "prometheus.port=9301"
+        - "prometheus.path=/metrics"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9301/metrics')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
