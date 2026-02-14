@@ -85,7 +85,8 @@ deploy_stack "${DIR}_boot/stack/01-boot-service.yml" "boot" 15
 deploy_stack "$DIR/stack/01-service-hl.yml" "base" 15
 deploy_stack "$DIR/stack/40-service-borodino.yml" "borodino" 15
 deploy_stack "$DIR/stack/45-service-ml-threat-intel.yml" "ml-threat" 15
-deploy_stack "${DIR}-telegram/telegram/stack/60-service-telegram.yml" "telegram" 0
+deploy_stack "${DIR}/stack/60-service-telegram.yml" "telegram" 5	
+deploy_stack "${DIR}/stack/65-service-medved.yml" "honeypot" 5
 
 # Afficher le statut
 log_info "Deployment complete. Services status:"

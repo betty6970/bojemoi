@@ -39,7 +39,7 @@ async def send_telegram_alert(item: dict, matched: list[str]) -> bool:
 
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
     payload = {
-        "chat_id": settings.telegram_alert_chat_id,
+        "chat_id": int(settings.telegram_alert_chat_id),
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
@@ -48,6 +48,8 @@ async def send_telegram_alert(item: dict, matched: list[str]) -> bool:
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.error("Telegram API %d: %s", resp.status_code, resp.text)
             resp.raise_for_status()
         alerts_sent_total.labels(channel="telegram", status="success").inc()
         return True

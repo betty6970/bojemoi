@@ -36,7 +36,12 @@ CREATE INDEX IF NOT EXISTS idx_buzz_source ON buzz_log (source);
 """
 
 MIGRATE_SOURCE_COLUMN = """
-ALTER TABLE buzz_log ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'telegram';
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'buzz_log') THEN
+        ALTER TABLE buzz_log ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'telegram';
+    END IF;
+END $$;
 """
 
 INSERT_BUZZ = """
@@ -88,8 +93,8 @@ async def init_db():
         max_size=10,
     )
     async with pool.acquire() as conn:
-        await conn.execute(CREATE_TABLE)
         await conn.execute(MIGRATE_SOURCE_COLUMN)
+        await conn.execute(CREATE_TABLE)
     logger.info("Database initialized (host=%s, db=%s)", settings.pg_host, settings.pg_database)
 
 

@@ -19,7 +19,7 @@ x-deploy-template: &deploy-template
   placement:
     constraints:
       - node.role == worker
-    max_replicas_per_node: 5
+    max_replicas_per_node: 3
   restart_policy:
     condition: on-failure
     delay: 5s
@@ -204,7 +204,7 @@ services:
       - TARGET=container1
     deploy:
       <<: *deploy-template
-      replicas: 5
+      replicas: 0
     command: /usr/bin/thearm_uzi
 
   karacho-blockchain:

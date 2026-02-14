@@ -18,7 +18,8 @@ services:
       PG_PASSWORD: bojemoi
       PG_DATABASE: msf
       FARADAY_URL: http://faraday:5985
-      FARADAY_TOKEN: 9a48aa3fb074b442e0fae943f9a0a7d93a3214401d08821a14a1dcc6165b6659
+      FARADAY_USER: faraday
+      FARADAY_PASSWORD: changeme
       FARADAY_WORKSPACE: honeypot
       FARADAY_REPORT_INTERVAL: "60"
       IGNORE_NETWORKS: "10.0.0.0/8,172.16.0.0/12"

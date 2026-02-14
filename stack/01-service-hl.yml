@@ -89,12 +89,9 @@ configs:
      file: /opt/bojemoi/volumes/postfix/main.cf
    prometheus_config:
      file: /opt/bojemoi/volumes/prometheus/prometheus.yml
-   suricata_config:
-     file: /opt/bojemoi/volumes/suricata/suricata.yaml
-   suricata_rules_config:
-     file: /opt/bojemoi/volumes/suricata/rules/emerging-threats.rules
-   suricata_rules1_config:
-     file: /opt/bojemoi/volumes/suricata/rules/suricata.rules
+   # suricata configs removed - suricata uses bind mounts instead
+   # (/opt/bojemoi/volumes/suricata:/etc/suricata)
+   # Rules files are 41MB+ which exceeds Docker's 4MB gRPC config limit
    tempo_config:
      file: /opt/bojemoi/volumes/tempo/config/tempo.yaml
    provisioning_env:

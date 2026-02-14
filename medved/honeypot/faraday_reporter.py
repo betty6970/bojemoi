@@ -4,10 +4,13 @@ import logging
 import httpx
 
 from .config import settings
-from .db import pool
+from . import db
 from .metrics import faraday_reports_total
 
 logger = logging.getLogger("medved.faraday")
+
+# Faraday session cookie cache
+_faraday_cookies = None
 
 # Severity mapping
 SEVERITY_MAP = {
@@ -47,22 +50,58 @@ WHERE source_ip = $2::INET
 """
 
 
+async def _get_faraday_client():
+    """Create an authenticated httpx client using Faraday session cookies."""
+    global _faraday_cookies
+    client = httpx.AsyncClient(base_url=settings.faraday_url, timeout=30)
+
+    # Try existing cookies first
+    if _faraday_cookies:
+        for name, value in _faraday_cookies.items():
+            client.cookies.set(name, value)
+        try:
+            resp = await client.get("/_api/v3/ws")
+            if resp.status_code == 200:
+                return client
+        except Exception:
+            pass
+
+    # Login to get fresh session
+    password = settings.faraday_password or settings.faraday_token
+    try:
+        resp = await client.post("/_api/login", json={
+            "email": settings.faraday_user,
+            "password": password,
+        })
+        resp.raise_for_status()
+        # Store cookies as a plain dict for reliability
+        _faraday_cookies = dict(client.cookies)
+        logger.info("Faraday session authenticated as %s (cookies: %s)",
+                     settings.faraday_user, list(_faraday_cookies.keys()))
+        return client
+    except Exception:
+        logger.exception("Faraday login failed")
+        _faraday_cookies = None
+        await client.aclose()
+        raise
+
+
 async def report_to_faraday():
-    if not settings.faraday_token:
+    if not settings.faraday_password and not settings.faraday_token:
         return
 
-    if pool is None:
+    if db.pool is None:
         return
 
     try:
-        async with pool.acquire() as conn:
+        async with db.pool.acquire() as conn:
             rows = await conn.fetch(UNREPORTED_EVENTS)
 
         if not rows:
             return
 
-        headers = {"Authorization": f"Token {settings.faraday_token}"}
-        async with httpx.AsyncClient(base_url=settings.faraday_url, headers=headers, timeout=30) as client:
+        client = await _get_faraday_client()
+        try:
             ws = settings.faraday_workspace
 
             for row in rows:
@@ -78,13 +117,16 @@ async def report_to_faraday():
 
                 # Ensure host exists
                 try:
-                    await client.post(f"/_api/v3/ws/{ws}/hosts/", json={"ip": ip})
-                except httpx.HTTPStatusError:
-                    pass  # host may already exist
+                    await client.post(f"/_api/v3/ws/{ws}/hosts", json={
+                        "ip": ip, "description": "Honeypot attacker",
+                    })
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code != 409:  # 409 = already exists
+                        logger.debug("Host create for %s: %s", ip, e)
 
                 # Get host ID
                 try:
-                    resp = await client.get(f"/_api/v3/ws/{ws}/hosts/", params={"search": ip})
+                    resp = await client.get(f"/_api/v3/ws/{ws}/hosts", params={"search": ip})
                     resp.raise_for_status()
                     hosts = resp.json().get("rows", [])
                     if not hosts:
@@ -112,10 +154,11 @@ async def report_to_faraday():
                 }
 
                 try:
-                    resp = await client.post(f"/_api/v3/ws/{ws}/vulns/", json=vuln_data)
+                    resp = await client.post(f"/_api/v3/ws/{ws}/vulns", json=vuln_data)
                     resp.raise_for_status()
                     vuln_id = resp.json().get("id", 0)
                     faraday_reports_total.labels(status="success").inc()
+                    logger.info("Reported %s %s from %s (vuln_id=%d)", protocol, event_type, ip, vuln_id)
                 except Exception:
                     logger.warning("Failed to create vuln for %s/%s/%s", ip, protocol, event_type)
                     faraday_reports_total.labels(status="error").inc()
@@ -124,10 +167,12 @@ async def report_to_faraday():
                 # Mark events as reported
                 if vuln_id:
                     try:
-                        async with pool.acquire() as conn:
+                        async with db.pool.acquire() as conn:
                             await conn.execute(MARK_REPORTED, vuln_id, ip, protocol, event_type)
                     except Exception:
                         logger.exception("Failed to mark events as reported")
+        finally:
+            await client.aclose()
 
     except Exception:
         logger.exception("Faraday reporter error")

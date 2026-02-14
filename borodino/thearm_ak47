@@ -8,23 +8,25 @@ password="bojemoi"             # Mot de passe PostgreSQL
 dbname="msf"               # Base de données par défaut
 
 
-# Scan du réseau avec nmap pour trouver les machines avec le port 5432 ouvert
-echo "Scanning du réseau pour les serveurs PostgreSQL sur le réseau $network_range..."
-ip=$(ping -c 1 -W 1 "postgres" | head -n 1 | awk '{print $3}' )
-sql_ip="${ip:1:-2}"
-if ping -c 1 -W 1 "postgres" &>/dev/null; then
-
-# Pour chaque IP avec le port 5432 ouvert, vérifier PostgreSQL
-    pg_isready -h $sql_ip -U $user -d $dbname > /dev/null 2>&1
-        if [ $? -eq 0 ]; then
-        printf "Serveur PostgreSQL trouvé à l'adresse : $sql_ip"
-        echo "$ip"
+# Attendre que PostgreSQL soit prêt (retry indéfini)
+echo "[ATTENTE] Résolution DNS postgres..."
+while true; do
+    ip=$(ping -c 1 -W 1 "postgres" 2>/dev/null | head -n 1 | awk '{print $3}')
+    sql_ip="${ip:1:-2}"
+    if [ -n "$sql_ip" ] && ping -c 1 -W 1 "postgres" &>/dev/null; then
+        if pg_isready -h "$sql_ip" -U "$user" -d "$dbname" > /dev/null 2>&1; then
+            echo "[INFO] PostgreSQL détecté à $sql_ip"
+            break
+        else
+            echo "[ATTENTE] PostgreSQL pas prêt à $sql_ip... retry dans 10s"
+        fi
     else
-        echo ''
-        printf "Port 5432 ouvert, mais PostgreSQL ne répond pas sur $sql_ip"
-     fi   
+        echo "[ATTENTE] Résolution DNS postgres... retry dans 10s"
+    fi
+    sleep 10
+done
 
-while (true) do
+while true; do
 ip=$(echo " select cidr_z from ip2location_db1 TABLESAMPLE SYSTEM(1) where country_code = 'RU' and nmap = '0' limit 1;" |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location -t )
 output="${ip#?}"
 echo "current cidr :$output on going"
@@ -38,5 +40,4 @@ tz=$(echo " update ip2location_db1 set nmap = '2', date_nmap = (SELECT CURRENT_T
 echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location 
 
 done
-fi
 

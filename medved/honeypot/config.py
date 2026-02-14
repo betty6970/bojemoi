@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # Faraday
     faraday_url: str = "http://faraday:5985"
     faraday_token: str = ""
+    faraday_user: str = "faraday"
+    faraday_password: str = ""
     faraday_workspace: str = "honeypot"
     faraday_report_interval: int = 60
 
