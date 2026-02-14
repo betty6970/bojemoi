@@ -1,0 +1,40 @@
+networks:
+  backend:
+    external: true
+
+services:
+  dozor:
+    image: localhost:5000/dozor:latest
+    environment:
+      POLL_INTERVAL: "3600"
+      RULES_OUTPUT_PATH: "/var/lib/suricata/rules/blocklist.rules"
+      SURICATA_SOCKET_PATH: "/var/run/suricata/suricata-command.socket"
+      METRICS_PORT: "9302"
+    volumes:
+      - /opt/bojemoi/volumes/suricata/rules:/var/lib/suricata/rules
+      - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
+    networks:
+      - backend
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      labels:
+        - "prometheus.enable=true"
+        - "prometheus.port=9302"
+        - "prometheus.path=/metrics"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9302/metrics')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

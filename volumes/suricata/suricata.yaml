@@ -137,10 +137,11 @@ app-layer:
       enabled: yes
 
 # Rules configuration
-default-rule-path: /var/lib/suricata/rules
+default-rule-path: /etc/suricata/rules
 rule-files:
   - suricata.rules
   - emerging-threats.rules
+  - blocklist.rules
 
 # Classification configuration
 classification-file: /etc/suricata/classification.config
@@ -181,7 +182,7 @@ host:
 # IP defrag
 defrag:
   memcap: 32mb
-  hash-s[Aize: 65536
+  hash-size: 65536
   trackers: 65535
   max-frags: 65535
   prealloc: yes
