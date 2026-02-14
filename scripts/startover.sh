@@ -88,6 +88,10 @@ deploy_stack "$DIR/stack/45-service-ml-threat-intel.yml" "ml-threat" 15
 deploy_stack "${DIR}/stack/60-service-telegram.yml" "telegram" 5	
 deploy_stack "${DIR}/stack/65-service-medved.yml" "honeypot" 5
 
+# Deploy suricata standalone (needs network_mode: host, not supported in Swarm)
+log_info "Deploying suricata (standalone docker compose)..."
+docker compose -f "$DIR/stack/01-suricata-host.yml" up -d
+
 # Afficher le statut
 log_info "Deployment complete. Services status:"
 docker service ls

@@ -225,54 +225,10 @@ services:
 
 
   # =========================================================================
-  # SERVICE: suricata 
+  # SERVICE: suricata — moved to standalone docker compose (01-suricata-host.yml)
+  # Requires network_mode: host for real packet capture, not supported in Swarm.
+  # Deploy: docker compose -f stack/01-suricata-host.yml up -d
   # =========================================================================
-  suricata:
-    image: localhost:5000/suricata:latest 
-    hostname: "suricata{{.Node.Hostname}}"
-    networks:
-      - monitoring
-    cap_add:
-      - NET_ADMIN
-      - SYS_NICE
-      - NET_RAW
-    environment:
-      - SURICATA_OPTIONS=-i eth0 --set stream.reassembly.depth=0 --set detect.profile=low
-#    configs:
-#      - source: suricata_config
-#        target: /etc/suricata/suricata.yaml
-#      - source: suricata_rules_config
-#        target: /etc/suricata/rules/suricata.rules
-#      - source: suricata_rules1_config
-#        target: /etc/suricata/rules/emerging-threats.rules
-#    command: 
-#       - "-c suricata.yaml"
-#       - "--unix-socket=/var/run/suricata/suricata-command.socket"
-#       - "-i eth0"
-
-    volumes:
-      - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata
-      - /opt/bojemoi/volumes/suricata:/etc/suricata
-      - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
-    deploy:
-      mode: global  # Clé importante : déploie une instance sur chaque node
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-      update_config:
-        parallelism: 1
-        delay: 10s
-#        failure_action: rollback
-      labels:
-        - prometheus.enable=false  # Utilise l'exporter dédié
-        - prometheus.label.team=security
-        - prometheus.label.component=ids-ips
-        - prometheus.label.stack=base
-        - prometheus.label.tier=security
-  #===============================
-  #
-  #===============================
   # Suricata Exporter pour les métriques Prometheus
   suricata-exporter:
     image: localhost:5000/suricata_exporter

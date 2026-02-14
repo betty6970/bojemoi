@@ -10,6 +10,33 @@ from .metrics import feeds_total, ips_by_feed
 
 log = logging.getLogger(__name__)
 
+# Private/reserved ranges to exclude — these overlap with HOME_NET and Docker networks
+_PRIVATE_NETS = [
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+    ipaddress.IPv4Network("192.168.0.0/16"),
+    ipaddress.IPv4Network("100.64.0.0/10"),   # CGNAT
+    ipaddress.IPv4Network("127.0.0.0/8"),
+    ipaddress.IPv4Network("0.0.0.0/8"),
+    ipaddress.IPv4Network("169.254.0.0/16"),
+    ipaddress.IPv4Network("224.0.0.0/4"),      # multicast
+    ipaddress.IPv4Network("240.0.0.0/4"),      # reserved
+    ipaddress.IPv4Network("255.255.255.255/32"),
+]
+
+
+def _is_private(s: str) -> bool:
+    """Return True if IP/CIDR overlaps with private/reserved ranges."""
+    try:
+        if "/" in s:
+            net = ipaddress.IPv4Network(s, strict=False)
+            return any(net.overlaps(p) for p in _PRIVATE_NETS)
+        else:
+            addr = ipaddress.IPv4Address(s)
+            return any(addr in p for p in _PRIVATE_NETS)
+    except (ValueError, ipaddress.AddressValueError):
+        return False
+
 
 def _valid_ip_or_cidr(s: str) -> bool:
     """Return True if s is a valid IPv4 address or CIDR."""
@@ -105,7 +132,11 @@ async def download_feeds(
             try:
                 resp = await client.get(url)
                 resp.raise_for_status()
-                ips = parser(resp.text)
+                raw_ips = parser(resp.text)
+                ips = {ip for ip in raw_ips if not _is_private(ip)}
+                filtered = len(raw_ips) - len(ips)
+                if filtered:
+                    log.info("feed %s: filtered %d private/reserved IPs", name, filtered)
                 results[name] = ips
                 feeds_total.labels(feed=name, status="ok").inc()
                 ips_by_feed.labels(feed=name).set(len(ips))
