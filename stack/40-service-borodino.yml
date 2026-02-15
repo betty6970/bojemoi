@@ -19,7 +19,7 @@ x-deploy-template: &deploy-template
   placement:
     constraints:
       - node.role == worker
-    max_replicas_per_node: 3
+    max_replicas_per_node: 5
   restart_policy:
     condition: on-failure
     delay: 5s

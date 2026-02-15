@@ -28,16 +28,24 @@ done
 
 while true; do
 ip=$(echo " select cidr_z from ip2location_db1 TABLESAMPLE SYSTEM(1) where country_code = 'RU' and nmap = '0' limit 1;" |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location -t )
-output="${ip#?}"
+output=$(echo "$ip" | tr -d '[:space:]')
+
+# Skip if CIDR is empty (TABLESAMPLE returned no rows)
+if [ -z "$output" ]; then
+    echo "[INFO] Aucun CIDR disponible, retry dans 10s..."
+    sleep 10
+    continue
+fi
+
 echo "current cidr :$output on going"
 tz=$(echo " update ip2location_db1 set nmap = '1', date_nmap = (SELECT CURRENT_TIMESTAMP) where cidr_z  >>= '$output' ;")
-echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location 
+echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location
 
 msfconsole -q -x "db_connect postgres:bojemoi@$sql_ip/$dbname;db_nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f  --mtu 16  --data-length 64 --randomize-hosts -PA -PM -Pn   $output; quit"
 
 echo "cidr :$output done"
 tz=$(echo " update ip2location_db1 set nmap = '2', date_nmap = (SELECT CURRENT_TIMESTAMP) where cidr_z  >>= '$output' ;")
-echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location 
+echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location
 
 done
 
