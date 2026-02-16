@@ -290,7 +290,7 @@ services:
   # FROM: 55-service-nuclei.yml - Nuclei Scanner
   # =========================================================================
   nuclei:
-    image: projectdiscovery/nuclei:latest
+    image: localhost:5000/nuclei:latest
     entrypoint: /bin/sh
     networks:
       - backend
@@ -323,7 +323,7 @@ services:
           memory: 512M
 
   nuclei-api:
-    image: projectdiscovery/nuclei:latest
+    image: localhost:5000/nuclei:latest
     entrypoint: /bin/sh
     networks:
       - backend
@@ -416,7 +416,7 @@ services:
   # FROM: 60-service-samsonov.yml - Faraday & Redis
   # =========================================================================
   redis:
-    image: redis:alpine
+    image: localhost:5000/redis:alpine
     command: redis-server --appendonly yes --protected-mode no
     networks:
       - pentest
@@ -526,7 +526,7 @@ services:
           - node.role == worker
 
   pentest-exporter:
-    image: python:latest
+    image: localhost:5000/python:latest
     command: >
       sh -c "pip3 install prometheus_client requests redis &&
              python3 /app/metrics_exporter.py"
