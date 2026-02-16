@@ -19,7 +19,8 @@ create_silence() {
     local comment=${2:-"Deployment in progress"}
 
     local start_time=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
-    local end_time=$(date -u -d "+${duration_minutes} minutes" +"%Y-%m-%dT%H:%M:%S.000Z")
+    local end_epoch=$(( $(date -u +%s) + duration_minutes * 60 ))
+    local end_time=$(date -u -d "@${end_epoch}" +"%Y-%m-%dT%H:%M:%S.000Z")
 
     log_info "Creating Alertmanager silence for ${duration_minutes} minutes..."
 
