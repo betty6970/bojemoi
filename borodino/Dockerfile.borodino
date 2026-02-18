@@ -61,6 +61,7 @@ RUN chown postgres:root /opt/metasploit/ || :
 RUN adduser postgres -g root || :
 
 COPY --chown=postgres:root --chmod=777 thearm_* /usr/bin/
+COPY --chmod=755 start_uzi.sh /usr/bin/start_uzi.sh
 
 WORKDIR /etc/openvpn
 COPY --chmod=777 ./list_vpn/fr.protonvpn.tcp.ovpn /etc/openvpn/

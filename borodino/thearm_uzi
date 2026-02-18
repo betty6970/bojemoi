@@ -92,7 +92,7 @@ def main():
 #        print(f"[ERREUR] Échec Lancement msfconsole en arrière-plan : {e}")
 #        return
 
-    client = MsfRpcClient('totototo', port=55553, server="192.168.1.47", ssl=True)
+    client = MsfRpcClient('totototo', port=55553, server="127.0.0.1", ssl=True)
     search_results = client.modules.search('linux')
     while True: 
 
