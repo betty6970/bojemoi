@@ -1,18 +1,181 @@
 #!/usr/bin/env python3
-# genere par chatgtp & code copilot
+"""
+thearm_bm12 v2 - Service Fingerprinting Deep Scanner
+Scans hosts from msf DB with targeted NSE scripts per service category.
+Classifies server type based on discovered services and stores results.
+"""
 import os
+import json
 import socket
 import subprocess
+import time
 import psycopg2
-import shlex
 
-# Récupération sécurisée des credentials PostgreSQL
+# ─── Configuration ───────────────────────────────────────────────────────────
 PG_USER = os.getenv("PG_USER", "postgres")
-PG_PASSWORD = os.getenv("PG_PASSWORD","bojemoi")  # Ne pas mettre de valeur par défaut pour plus de sécurité
+PG_PASSWORD = os.getenv("PG_PASSWORD", "bojemoi")
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 PG_HOST = "postgres"
+SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", "600"))  # 10 min max par host
 
-# Récupérer l'adresse IP du serveur PostgreSQL
+# ─── NSE Scripts par catégorie de service ────────────────────────────────────
+# Scripts ciblés au lieu du wildcard dangereux {service}*
+NSE_SCRIPTS = {
+    "http": "ssl-cert,ssl-enum-ciphers,http-headers,http-server-header,http-title,http-methods,http-robots.txt,http-favicon",
+    "https": "ssl-cert,ssl-enum-ciphers,http-headers,http-server-header,http-title,http-methods",
+    "ssl": "ssl-cert,ssl-enum-ciphers,ssl-date",
+    "ssh": "ssh2-enum-algos,ssh-hostkey,ssh-auth-methods",
+    "smtp": "smtp-commands,smtp-enum-users,smtp-ntlm-info",
+    "ftp": "ftp-anon,ftp-syst,ftp-vsftpd-backdoor",
+    "smb": "smb-os-discovery,smb-protocols,smb-security-mode",
+    "dns": "dns-nsid,dns-service-discovery,dns-recursion",
+    "mysql": "mysql-info,mysql-enum",
+    "ms-sql": "ms-sql-info,ms-sql-ntlm-info",
+    "postgresql": "pgsql-info",
+    "rdp": "rdp-ntlm-info,rdp-enum-encryption",
+    "telnet": "telnet-ntlm-info,telnet-encryption",
+    "snmp": "snmp-info,snmp-sysdescr",
+    "imap": "imap-capabilities,imap-ntlm-info",
+    "pop3": "pop3-capabilities,pop3-ntlm-info",
+    "vnc": "vnc-info,vnc-title",
+    "sip": "sip-methods,sip-enum-users",
+    "ntp": "ntp-info,ntp-monlist",
+    "ldap": "ldap-rootdse,ldap-search",
+    "mongodb": "mongodb-info,mongodb-databases",
+    "redis": "redis-info",
+    "docker": "docker-version",
+    "rtsp": "rtsp-methods",
+    "pptp": "pptp-version",
+    "upnp": "upnp-info",
+    "rpcinfo": "rpcinfo",
+    "oracle": "oracle-tns-version",
+}
+
+# Scripts par port connu (fallback quand le nom de service est générique)
+NSE_BY_PORT = {
+    21: "ftp",
+    22: "ssh",
+    23: "telnet",
+    25: "smtp",
+    53: "dns",
+    80: "http",
+    110: "pop3",
+    111: "rpcinfo",
+    143: "imap",
+    443: "https",
+    445: "smb",
+    993: "imap",
+    995: "pop3",
+    1433: "ms-sql",
+    1521: "oracle",
+    3306: "mysql",
+    3389: "rdp",
+    5432: "postgresql",
+    5900: "vnc",
+    5985: "http",  # WinRM uses HTTP transport
+    6379: "redis",
+    8080: "http",
+    8443: "https",
+    27017: "mongodb",
+}
+
+# ─── Classification de type de serveur ───────────────────────────────────────
+# Pondération par service pour déterminer le rôle principal du serveur
+SERVER_ROLES = {
+    "web": {
+        "services": ["http", "https", "http-proxy", "http-alt"],
+        "ports": [80, 443, 8080, 8443, 8000, 8888, 3000],
+        "weight": 1,
+    },
+    "mail": {
+        "services": ["smtp", "pop3", "imap", "submission"],
+        "ports": [25, 110, 143, 465, 587, 993, 995],
+        "weight": 2,
+    },
+    "dns": {
+        "services": ["dns", "domain"],
+        "ports": [53],
+        "weight": 2,
+    },
+    "database": {
+        "services": ["mysql", "ms-sql", "postgresql", "oracle", "mongodb", "redis", "memcached"],
+        "ports": [3306, 1433, 5432, 1521, 27017, 6379, 11211],
+        "weight": 2,
+    },
+    "file_server": {
+        "services": ["ftp", "smb", "nfs", "microsoft-ds", "netbios-ssn"],
+        "ports": [21, 139, 445, 2049],
+        "weight": 1,
+    },
+    "vpn_proxy": {
+        "services": ["pptp", "openvpn", "ipsec", "socks", "squid"],
+        "ports": [1723, 1194, 500, 1080, 3128],
+        "weight": 3,
+    },
+    "voip": {
+        "services": ["sip", "h323", "skinny", "mgcp"],
+        "ports": [5060, 5061, 1720, 2000, 2427],
+        "weight": 3,
+    },
+    "iot_embedded": {
+        "services": ["upnp", "rtsp", "telnet", "cwmp"],
+        "ports": [554, 1900, 7547, 37215],
+        "weight": 2,
+    },
+    "remote_access": {
+        "services": ["ssh", "rdp", "vnc", "telnet"],
+        "ports": [22, 3389, 5900, 23],
+        "weight": 0,  # presque tous les serveurs ont SSH, ne pas surpondérer
+    },
+}
+
+
+def classify_server(services_list):
+    """
+    Classifie le type de serveur basé sur les services/ports découverts.
+    Retourne (server_type, confidence, details).
+    services_list: [(port, service_name), ...]
+    """
+    scores = {}
+    matched = {}
+
+    for port, svc_name in services_list:
+        svc_lower = (svc_name or "").lower()
+        for role, criteria in SERVER_ROLES.items():
+            hit = False
+            if svc_lower in criteria["services"]:
+                hit = True
+            elif port in criteria["ports"]:
+                hit = True
+            if hit:
+                scores[role] = scores.get(role, 0) + 1 + criteria["weight"]
+                matched.setdefault(role, []).append(f"{svc_lower}:{port}")
+
+    if not scores:
+        return "server", 0, {}
+
+    # Trier par score décroissant
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    top_role, top_score = ranked[0]
+    total = sum(s for _, s in ranked)
+    confidence = round(top_score / total * 100) if total > 0 else 0
+
+    details = {
+        "primary_role": top_role,
+        "confidence": confidence,
+        "scores": dict(ranked),
+        "evidence": matched,
+    }
+    return top_role, confidence, details
+
+
+# ─── Helpers DB ──────────────────────────────────────────────────────────────
+def get_db_connection():
+    return psycopg2.connect(
+        dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST
+    )
+
+
 def get_postgres_ip():
     try:
         return socket.gethostbyname(PG_HOST)
@@ -20,101 +183,212 @@ def get_postgres_ip():
         print(f"[ERREUR] Impossible de résoudre {PG_HOST}")
         return None
 
-# Vérifier si PostgreSQL est prêt
+
 def is_postgres_ready(ip):
     try:
         result = subprocess.run(
             ["pg_isready", "-h", ip, "-U", PG_USER, "-d", PG_DBNAME],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         return result.returncode == 0
     except Exception as e:
         print(f"[ERREUR] Vérification PostgreSQL échouée : {e}")
         return False
 
-# Récupérer un hôte aléatoire depuis la base de données
+
 def get_random_host():
     conn = None
     try:
-        conn = psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST)
+        conn = get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.001) LIMIT 1;")
+            # TABLESAMPLE progressif : 0.001% d'abord, puis 0.01%
+            cur.execute(
+                "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.001) LIMIT 1;"
+            )
             row = cur.fetchone()
             if not row:
-                cur.execute("SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.01) LIMIT 1;")
+                cur.execute(
+                    "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.01) LIMIT 1;"
+                )
                 row = cur.fetchone()
             return row or (None, None)
     except psycopg2.Error as e:
-        print(f"[ERREUR] Problème lors de la récupération d'un hôte : {e}")
+        print(f"[ERREUR] Récupération hôte : {e}")
         return None, None
     finally:
         if conn:
             conn.close()
 
-# Exécuter un scan Metasploit
-def run_msf_scan(host, host_id, pg_ip):
+
+def get_host_services(host_id):
     conn = None
     try:
-        conn = psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST)
+        conn = get_db_connection()
         with conn.cursor() as cur:
-            cur.execute("SELECT port, name FROM services WHERE host_id = %s;", (host_id,))
-            services = cur.fetchall()
+            cur.execute(
+                "SELECT port, name FROM services WHERE host_id = %s AND state = 'open';",
+                (host_id,),
+            )
+            return cur.fetchall()
     except psycopg2.Error as e:
-        print(f"[ERREUR] Récupération des services échouée : {e}")
-        return
+        print(f"[ERREUR] Récupération services : {e}")
+        return []
     finally:
         if conn:
             conn.close()
 
+
+def update_host_classification(host_id, server_type, details):
+    """Met à jour la classification du serveur dans hosts."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE hosts
+                   SET purpose = %s,
+                       comments = %s,
+                       scan_details = %s,
+                       last_scanned = CURRENT_DATE,
+                       scan_status = 'bm12_v2'
+                   WHERE id = %s;""",
+                (
+                    "server",  # purpose reste dans les valeurs Metasploit standard
+                    f"bm12: {server_type} (confidence: {details.get('confidence', 0)}%)",
+                    json.dumps(details),
+                    host_id,
+                ),
+            )
+            conn.commit()
+            print(f"[CLASS] Host {host_id} classifié: {server_type} ({details.get('confidence', 0)}%)")
+    except psycopg2.Error as e:
+        print(f"[ERREUR] Update classification : {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+# ─── Construction des commandes nmap ─────────────────────────────────────────
+def resolve_nse_scripts(port, service_name):
+    """Résout les scripts NSE à utiliser pour un service donné."""
+    svc = (service_name or "").lower().split("/")[0].strip()
+
+    # 1. Chercher par nom de service exact
+    if svc in NSE_SCRIPTS:
+        return NSE_SCRIPTS[svc]
+
+    # 2. Chercher par préfixe (ex: "http-proxy" → "http")
+    for key in NSE_SCRIPTS:
+        if svc.startswith(key):
+            return NSE_SCRIPTS[key]
+
+    # 3. Fallback par port connu
+    if port in NSE_BY_PORT:
+        category = NSE_BY_PORT[port]
+        if category in NSE_SCRIPTS:
+            return NSE_SCRIPTS[category]
+
+    # 4. Fallback minimal — banner grab uniquement
+    return "banner"
+
+
+def build_nmap_command(host, services_list, pg_ip):
+    """
+    Construit UNE SEULE commande msfconsole qui scanne tous les ports d'un host.
+    Au lieu de lancer N processus msfconsole (un par service).
+    """
+    # Collecter tous les ports et scripts
+    all_ports = []
+    all_scripts = set()
+
+    for port, svc_name in services_list:
+        all_ports.append(str(port))
+        scripts = resolve_nse_scripts(port, svc_name)
+        for s in scripts.split(","):
+            all_scripts.add(s.strip())
+
+    ports_str = ",".join(all_ports)
+    scripts_str = ",".join(sorted(all_scripts))
+
+    # Scan profond unique : version + OS + scripts ciblés
+    nmap_cmd = (
+        f"db_nmap -n -p {ports_str} "
+        f"--script={scripts_str} "
+        f"-sV -O --reason --traceroute "
+        f"--spoof-mac 0 -f --mtu 16 --data-length 64 "
+        f"--randomize-hosts -PA -PM -Pn "
+        f"{host}"
+    )
+
+    msf_cmd = (
+        f'msfconsole -q -x "'
+        f"db_connect {PG_USER}:{PG_PASSWORD}@{pg_ip}/{PG_DBNAME}; "
+        f"{nmap_cmd}; "
+        f'quit"'
+    )
+    return msf_cmd
+
+
+# ─── Exécution du scan ──────────────────────────────────────────────────────
+def run_scan(host, host_id, pg_ip):
+    services = get_host_services(host_id)
     if not services:
-        print(f"[INFO] Aucun service ouvert trouvé pour {host}, scan annulé.")
+        print(f"[INFO] Aucun service ouvert pour {host}, skip.")
         return
 
-    # Exécuter un scan pour chaque service trouvé
-    print(f"[INFO] Scan en cours sur  ({services})")
-    for index_ligne , ligne in enumerate( services):
-            port=ligne[0]
-            service_name=ligne[1]
-            if index_ligne  == 1:
-               command = f"""
-               msfconsole -q -x  "db_connect {PG_USER}:{PG_PASSWORD}@{pg_ip}/{PG_DBNAME};
-               db_nmap -n -script={service_name}* -sS -A -O --reason --traceroute --spoof-mac 0 -f --mtu 16 --data-length 64 --randomize-hosts -PA -PM -Pn {host};
-               quit"
-                """
-            else:
-               command = f"""
-               msfconsole -q -x "db_connect {PG_USER}:{PG_PASSWORD}@{pg_ip}/{PG_DBNAME};
-               db_nmap -n -script={service_name}*  --spoof-mac 0  -f --mtu 16 --data-length 64 --randomize-hosts -PA -PM -Pn {host};
-               quit"
-                """
+    print(f"[INFO] {host} — {len(services)} services: {[(p, s) for p, s in services]}")
 
-            print(f"[INFO] Scan en cours sur {host}:{host_id}:{port}:  ({service_name})")
+    # 1. Classifier le serveur
+    server_type, confidence, details = classify_server(services)
+    print(f"[CLASS] {host} → {server_type} (confidence: {confidence}%)")
 
-            try:
-               subprocess.run(shlex.split(command), shell=False, check=True)
-            except subprocess.CalledProcessError as e:
-                print(f"[ERREUR] Échec du scan sur {host}:{port} : {e}")
+    # 2. Construire et lancer le scan nmap unifié
+    msf_cmd = build_nmap_command(host, services, pg_ip)
+    print(f"[SCAN] Lancement scan profond sur {host}...")
 
-# Boucle principale
+    try:
+        result = subprocess.run(
+            ["/bin/sh", "-c", msf_cmd],
+            timeout=SCAN_TIMEOUT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"[WARN] msfconsole retour {result.returncode} pour {host}")
+    except subprocess.TimeoutExpired:
+        print(f"[TIMEOUT] Scan de {host} interrompu après {SCAN_TIMEOUT}s")
+    except Exception as e:
+        print(f"[ERREUR] Scan {host} : {e}")
+
+    # 3. Re-lire les services après scan (nmap a pu en découvrir de nouveaux)
+    updated_services = get_host_services(host_id)
+    if updated_services and len(updated_services) != len(services):
+        print(f"[INFO] Services mis à jour: {len(services)} → {len(updated_services)}")
+        server_type, confidence, details = classify_server(updated_services)
+
+    # 4. Stocker la classification
+    update_host_classification(host_id, server_type, details)
+
+    print(f"[DONE] {host} — type={server_type}, services={len(updated_services or services)}")
+
+
+# ─── Boucle principale ──────────────────────────────────────────────────────
 def main():
-    import time
-
-    # Attendre que PostgreSQL soit prêt (retry indéfini)
+    # Attendre PostgreSQL
     while True:
         pg_ip = get_postgres_ip()
         if not pg_ip:
             print("[ATTENTE] Résolution DNS postgres... retry dans 10s")
             time.sleep(10)
             continue
-
         if is_postgres_ready(pg_ip):
             print(f"[INFO] PostgreSQL détecté à {pg_ip}")
             break
-        else:
-            print(f"[ATTENTE] PostgreSQL pas prêt à {pg_ip}... retry dans 10s")
-            time.sleep(10)
+        print(f"[ATTENTE] PostgreSQL pas prêt à {pg_ip}... retry dans 10s")
+        time.sleep(10)
 
-    # Boucle de scan continue
+    # Boucle de scan
     while True:
         host_id, host = get_random_host()
         if not host:
@@ -122,9 +396,10 @@ def main():
             time.sleep(5)
             continue
 
-        print(f"[INFO] Scan de {host} en cours...")
-        run_msf_scan(host, host_id, pg_ip)
-        print(f"[INFO] Scan de {host} terminé.")
+        host_str = str(host)
+        print(f"\n[INFO] ═══ Scan de {host_str} (id={host_id}) ═══")
+        run_scan(host_str, host_id, pg_ip)
+
 
 if __name__ == "__main__":
     main()
