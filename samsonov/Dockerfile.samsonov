@@ -12,7 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3-dev bui
     && pip install -U pip --no-cache-dir \
     && rm -rf /var/lib/{apt,dpkg,cache,log}/ \
 #    && pip install . --no-cache-dir \
-    && chmod +x /entrypoint.sh 
+    && chmod +x /entrypoint.sh
+
+# Install shared MITRE ATT&CK library
+COPY bojemoi-mitre-attack/ /tmp/bojemoi-mitre-attack/
+RUN pip install --no-cache-dir /tmp/bojemoi-mitre-attack/ && rm -rf /tmp/bojemoi-mitre-attack 
 #    && rm -rf /src
 
 WORKDIR /home/faraday
