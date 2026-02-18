@@ -32,6 +32,24 @@ datasources:
     jsonData:
       implementation: prometheus
 
+  # PostgreSQL - Threat Intel (ATT&CK data)
+  - name: PostgreSQL-ThreatIntel
+    type: postgres
+    access: proxy
+    url: 192.168.1.76:5432
+    database: bojemoi_threat_intel
+    user: bojemoi
+    editable: true
+    jsonData:
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: ${DB_PASSWORD}
+
   # Tempo (Distributed Tracing)
   - name: Tempo
     type: tempo
