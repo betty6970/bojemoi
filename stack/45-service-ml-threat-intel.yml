@@ -60,9 +60,6 @@ services:
       - anthropic_api_key
     deploy:
       <<: *deploy-template
-      placement:
-        constraints:
-          - node.hostname == meta-70
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.ml-threat-intel.rule=Host(`threat-intel.bojemoi.lab.local`)"

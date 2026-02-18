@@ -9,12 +9,15 @@ networks:
   backend:
     name: backend
     external: true
-  rsync_network:
-    name: rsync_network
-    external: true
   proxy:
     name: proxy
     external: true
+
+  rsync_network:
+    name: rsync_network
+    driver: overlay
+    attachable: true
+
   mail:
     name: mail
     driver: overlay

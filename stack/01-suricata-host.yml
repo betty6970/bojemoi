@@ -18,3 +18,19 @@ services:
       - /opt/bojemoi/volumes/suricata:/etc/suricata
       - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
     restart: unless-stopped
+
+  suricata-attack-enricher:
+    image: localhost:5000/suricata-attack-enricher:latest
+    container_name: suricata-attack-enricher
+    network_mode: host
+    volumes:
+      - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata:ro
+    environment:
+      - DB_HOST=192.168.1.76
+      - DB_PORT=5432
+      - DB_NAME=bojemoi_threat_intel
+      - DB_USER=bojemoi
+      - DB_PASSWORD_FILE=/run/secrets/db_password
+    restart: unless-stopped
+    depends_on:
+      - suricata
