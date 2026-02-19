@@ -196,9 +196,30 @@ services:
     environment:
       - ARME_TYPE=uzi
       - TARGET=container1
+      - LHOST=bojemoi.me
+      - LPORT=4444
+    ports:
+      - target: 4444
+        published: 4444
+        protocol: tcp
+        mode: host
+    secrets:
+      - telegram_bot_token
+      - telegram_alert_chat_id
     deploy:
-      <<: *deploy-template
-      replicas: 3
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+          - node.hostname == meta-68
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
       resources:
         limits:
           cpus: '1.0'
@@ -540,3 +561,9 @@ services:
         constraints:
           - node.role == worker
 
+
+secrets:
+  telegram_bot_token:
+    external: true
+  telegram_alert_chat_id:
+    external: true

