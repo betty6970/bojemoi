@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY orchestrator/app/ /app/app/
 
-RUN python -m compileall /app/app && \
+RUN python -m compileall -b /app/app && \
     find /app/app -name "*.py" -delete
 
 RUN mkdir -p /app/app/logs /app/app/data

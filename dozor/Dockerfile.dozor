@@ -8,7 +8,7 @@ ENV PATH=/root/.local/bin:$PATH
 WORKDIR /app
 COPY dozor/ /app/dozor/
 
-RUN python -m compileall /app/dozor && \
+RUN python -m compileall -b /app/dozor && \
     find /app/dozor -name "*.py" -delete
 
 CMD ["python", "-m", "dozor"]

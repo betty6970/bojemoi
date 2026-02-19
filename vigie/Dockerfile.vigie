@@ -8,7 +8,7 @@ ENV PATH=/root/.local/bin:$PATH
 WORKDIR /app
 COPY vigie/ /app/vigie/
 
-RUN python -m compileall /app/vigie && \
+RUN python -m compileall -b /app/vigie && \
     find /app/vigie -name "*.py" -delete
 
 CMD ["python", "-m", "vigie"]
