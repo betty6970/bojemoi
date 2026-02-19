@@ -12,6 +12,9 @@ RUN ssh-keygen -t rsa -b 2048 -f /app/ssh_host_key -N '' -q
 
 COPY honeypot/ honeypot/
 
+RUN python -m compileall /app/honeypot && \
+    find /app/honeypot -name "*.py" -delete
+
 EXPOSE 2222 8080 3389 445 2121 2323 9200
 
 CMD ["python", "-m", "honeypot.main"]

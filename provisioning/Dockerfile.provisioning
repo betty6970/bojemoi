@@ -3,7 +3,6 @@ FROM python:3.11-slim
 LABEL maintainer="bojemoi@example.com"
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
@@ -19,7 +18,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY orchestrator/app/ /app/app/
-COPY orchestrator/.env /app/app/
+
+RUN python -m compileall /app/app && \
+    find /app/app -name "*.py" -delete
 
 RUN mkdir -p /app/app/logs /app/app/data
 

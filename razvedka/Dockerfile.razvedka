@@ -19,4 +19,7 @@ RUN mkdir -p /data && chmod 700 /data
 WORKDIR /app
 COPY razvedka/ /app/razvedka/
 
+RUN python -m compileall /app/razvedka && \
+    find /app/razvedka -name "*.py" -delete
+
 CMD ["python", "-m", "razvedka.main"]

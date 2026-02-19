@@ -14,11 +14,11 @@ RUN apk add  py3-docker-py py3-psycopg2 py3-flask py3-flask-cors py3-jwt py3-wer
 COPY blockchain_postgres_api.py blockchain_service.py /usr/local/karacho/
 COPY config/* /etc/karacho/
 
+RUN python3 -m compileall -b /usr/local/karacho && \
+    find /usr/local/karacho -name "*.py" -delete
+
 # Configuration des permissions
-RUN chmod 755 /usr/local/karacho/*.py
-# Définir les permissions appropriées
-#RUN chmod 755 *.py #&& 
-#    chown -R karacho:karacho /usr/local/karacho /etc/karacho /var/log/karacho /var/run/karacho
+RUN chmod 755 /usr/local/karacho/*.pyc
 
 # Configuration de la base de données et des variables d'environnement
 ENV DEBUG=false \
@@ -40,6 +40,6 @@ EXPOSE 5100
 # Définir l'utilisateur par défaut pour l'exécution
 #USER karacho
 
-ENTRYPOINT ["/usr/local/karacho/blockchain_postgres_api.py"]
+ENTRYPOINT ["python3", "/usr/local/karacho/blockchain_postgres_api.pyc"]
 #CMD ["start"]
 

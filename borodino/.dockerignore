@@ -1,0 +1,7 @@
+list_vpn/
+*.ovpn
+*.env
+.env*
+**/__pycache__
+**/*.pyc
+.git
