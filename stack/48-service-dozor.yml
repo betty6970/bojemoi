@@ -15,6 +15,11 @@ services:
       - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
     networks:
       - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: replicated
       replicas: 1
@@ -38,3 +43,36 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  eve-cleaner:
+    image: localhost:5000/alpine:latest
+    volumes:
+      - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata
+    environment:
+      KEEP_HOURS: "24"
+    command: >
+      sh -c "while true; do
+        find /var/log/suricata -name 'eve.*.json' -mmin +$$((KEEP_HOURS * 60)) -delete 2>/dev/null;
+        echo \"[eve-cleaner] cleaned eve logs older than $${KEEP_HOURS}h\";
+        sleep 3600;
+      done"
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "1"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: any
+      resources:
+        limits:
+          cpus: '0.05'
+          memory: 32M
+        reservations:
+          cpus: '0.01'
+          memory: 8M

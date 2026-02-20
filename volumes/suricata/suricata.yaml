@@ -59,7 +59,8 @@ outputs:
   # Eve JSON log
   - eve-log:
       enabled: yes
-      filetype: regular
+      filetype: rotating
+      rotate-interval: 1h
       filename: eve.json
       community-id: true
       types:
