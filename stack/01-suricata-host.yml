@@ -32,10 +32,10 @@ services:
       KEEP_HOURS: "24"
     command: >
       sh -c "while true; do
-        find /var/log/suricata -name 'eve.*.json' -mmin +1440 -delete 2>/dev/null;
-        find /var/log/suricata -name 'fast.log' -size +200M -exec truncate -s 0 {} \; 2>/dev/null;
-        find /var/log/suricata -name 'stats.log' -size +200M -exec truncate -s 0 {} \; 2>/dev/null;
-        echo \"[eve-cleaner] nettoyage logs > 24h effectue\";
+        find /var/log/suricata -name 'eve.json' -size +5G -exec truncate -s 0 {} \; 2>/dev/null;
+        find /var/log/suricata -name 'fast.log' -size +500M -exec truncate -s 0 {} \; 2>/dev/null;
+        find /var/log/suricata -name 'stats.log' -size +500M -exec truncate -s 0 {} \; 2>/dev/null;
+        echo \"[eve-cleaner] nettoyage logs effectue\";
         sleep 3600;
       done"
     restart: unless-stopped
