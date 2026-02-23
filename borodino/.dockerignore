@@ -1,5 +1,3 @@
-list_vpn/
-*.ovpn
 *.env
 .env*
 **/__pycache__

@@ -97,7 +97,7 @@ configs:
    # Rules files are 41MB+ which exceeds Docker's 4MB gRPC config limit
    tempo_config:
      file: /opt/bojemoi/volumes/tempo/config/tempo.yaml
-   provisioning_env:
+   provisioning_env_v2:
      file: /opt/bojemoi/volumes/provisioning/.env
    rsync_rsyncd:
      file: /opt/bojemoi/volumes/rsync/configs/rsyncd.conf
@@ -107,7 +107,7 @@ configs:
 # Template de base avec anchor                                                   
 x-mode-template: &mode-template                                             
   image: localhost:5000/koursk:latest
-  networks:                          
+  networks:
     -  backend                       
 
 # Template de d..ploiement s..par..
@@ -156,6 +156,11 @@ services:
       POSTGRES_DB: msf 
     volumes:
       - postgres_data:/var/lib/postgresql/
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -193,6 +198,11 @@ services:
     networks:
       - backend
       - proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -244,6 +254,11 @@ services:
     # ports removed - Prometheus scrapes via overlay network
     command:
       - '--suricata.socket-path=/var/run/suricata/suricata-command.socket'
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: global  # Clé importante : déploie une instance sur chaque node
       restart_policy:
@@ -298,6 +313,11 @@ services:
       - grafana_data:/var/lib/grafana
       
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -360,6 +380,11 @@ services:
       - backend
     dns_search:
       - bojemoi.lab
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       restart_policy:
         condition: on-failure
@@ -434,6 +459,11 @@ services:
       - prometheus_data:/prometheus
       - /opt/bojemoi/volumes/prometheus/rules:/etc/prometheus/rules:ro
     # Note: Socket Docker retiré - utilise docker-socket-proxy via prometheus.yml si nécessaire
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -490,6 +520,11 @@ services:
         target: /etc/loki/local-config.yml
     volumes:
       - loki_data:/loki
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: replicated
       replicas: 1
@@ -534,6 +569,11 @@ services:
       - backend
     dns_search:
       - bojemoi.lab
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -576,6 +616,11 @@ services:
       - mail
     dns_search:
       - bojemoi.lab
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -633,6 +678,11 @@ services:
     networks:
       - monitoring
       - proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: global  # Clé importante : déploie une instance sur chaque node
       resources:
@@ -708,6 +758,11 @@ services:
       - postfix_log:/var/log
     # NOTE: Removed Docker config for main.cf - postconf modifies this file
     # and Docker configs are read-only. Environment variables handle configuration.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -736,7 +791,7 @@ services:
 # POSTFIX EXPORTER (Métriques Prometheus)
 # =============================================================================
   postfix-exporter:
-    image: localhost:5000/blackflysolutions/postfix-exporter:latest
+    image: localhost:5000/postfix-exporter:latest
     hostname: postfix-exporter.bojemoi.lab
     networks:
       - monitoring
@@ -752,6 +807,11 @@ services:
       - postfix_data:/var/spool/postfix:ro
       - postfix_mail:/var/mail:ro
       - postfix_log:/var/log
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -797,6 +857,11 @@ services:
     networks:
       - monitoring
       - proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: global
       restart_policy:
@@ -843,6 +908,11 @@ services:
     image: localhost:5000/koursk-2:latest
     hostname: rsync-master
     # ports removed - internal backup service
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       <<: *deploy-template  # H..rite du template de d..
       replicas: 1 
@@ -891,6 +961,11 @@ services:
   rsync-slave:
     <<: *mode-template  # H..rite du template de base
     hostname: rsync-slave-
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       <<: *deploy-template  # H..rite du template de d..
       labels:
@@ -944,6 +1019,11 @@ services:
     networks:
       - monitoring
       - backend
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -978,10 +1058,10 @@ services:
     hostname: orchestrator.bojemoi.lab
     command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --app-dir /app
     # ports removed - access via Traefik (provisioning.bojemoi.lab)
-#    configs:
-#      - source: provisioning_env
-#        target: /app/.env
-#        mode: 0440
+    configs:
+      - source: provisioning_env_v2
+        target: /app/.env
+        mode: 0440
     volumes:
       # Socket Docker direct requis - l'orchestrator a besoin de POST/DELETE
       # pour créer/supprimer des containers (non supporté par le proxy read-only)
@@ -999,6 +1079,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -1068,7 +1153,7 @@ services:
   #ypPbe-amlCvsdS4zf0vDsg
 # =========================================================================
   protonmail-bridge:
-    image: localhost:5000/shenxn/protonmail-bridge:latest
+    image: localhost:5000/protonmail-bridge:latest
     volumes:
       - protonmail_data:/root
     ports:
@@ -1078,6 +1163,11 @@ services:
       - TZ=Europe/Paris
     networks:
       - mail
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       restart_policy:
         condition: on-failure

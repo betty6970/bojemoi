@@ -120,6 +120,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -157,6 +162,11 @@ services:
       - backend
     dns_search:
       - bojemoi.lab
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       restart_policy:
@@ -175,9 +185,14 @@ services:
     environment:
       - ARME_TYPE=ak47
       - TARGET=container1
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 15
+      replicas: 5
     command: /usr/bin/thearm_ak47
 
   bm12-service:
@@ -186,9 +201,14 @@ services:
       - ARME_TYPE=bm12
       - TARGET=container1
       - PYTHONUNBUFFERED=1
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 15
+      replicas: 5
     command: /usr/bin/thearm_bm12
 
   uzi-service:
@@ -198,6 +218,7 @@ services:
       - TARGET=container1
       - LHOST=bojemoi.me
       - LPORT=4444
+      - DEBUG_MODE=0  # mettre à 1 pour cibler host_debug (VM Rapid7 de test)
     ports:
       - target: 4444
         published: 4444
@@ -206,6 +227,11 @@ services:
     secrets:
       - telegram_bot_token
       - telegram_alert_chat_id
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -248,6 +274,11 @@ services:
     networks:
       - backend
       - proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       placement:
         constraints:
@@ -297,6 +328,11 @@ services:
       MSF_DB_NAME: msf
       MSF_DB_USER: postgres
       MSF_DB_PASSWORD: bojemoi
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: global
       placement:
@@ -325,6 +361,11 @@ services:
     command:
       - -c
       - nuclei -update-templates && tail -f /dev/null
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: replicated
       replicas: 1
@@ -368,6 +409,11 @@ services:
         pip install fastapi uvicorn redis httpx --break-system-packages
         nuclei -update-templates
         python -m uvicorn main:app --host 0.0.0.0 --port 8001
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: replicated
       replicas: 1
@@ -415,6 +461,11 @@ services:
              git clone https://github.com/anouarbensaad/vulnx.git /opt/vulnx 2>/dev/null || true &&
              pip install -r /opt/vulnx/requirements.txt --break-system-packages || true &&
              python main.py --daemon"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       mode: replicated
       replicas: 1
@@ -444,6 +495,11 @@ services:
       - backend
     volumes:
       - redis_data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       placement:
         constraints:
@@ -472,6 +528,11 @@ services:
       - backend
     dns_search:
       - bojemoi.lab
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       placement:
         constraints:
@@ -504,6 +565,11 @@ services:
       - faraday-storage:/home/faraday/.faraday/storage
       - /opt/bojemoi/volumes/faraday/config/server.ini:/home/faraday/.faraday/config/server.ini
     entrypoint: "/entrypoint.sh"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       labels:
         - traefik.enable=true
@@ -529,6 +595,11 @@ services:
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     networks:
       - pentest
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       labels:
         - "prometheus.enable=true"
@@ -552,6 +623,11 @@ services:
       - /opt/bojemoi/samsonov/scripts/metrics_exporter.py:/app/metrics_exporter.py
     networks:
       - pentest
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       labels:
         - "prometheus.enable=true"

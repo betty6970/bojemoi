@@ -58,6 +58,11 @@ services:
       - otx_api_key
       - shodan_api_key
       - anthropic_api_key
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       <<: *deploy-template
       labels:

@@ -43,5 +43,10 @@ if ! nc -z 127.0.0.1 ${MSF_PORT} 2>/dev/null; then
     exit 1
 fi
 
+echo "[INFO] Rebuilding module cache (db_rebuild_cache)..."
+cd /opt/metasploit
+./msfconsole -q -x "db_rebuild_cache; exit" 2>&1 | tail -3
+echo "[INFO] Module cache ready."
+
 echo "[INFO] Launching thearm_uzi..."
 exec /usr/bin/thearm_uzi
