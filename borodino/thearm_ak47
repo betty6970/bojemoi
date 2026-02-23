@@ -27,24 +27,50 @@ while true; do
 done
 
 while true; do
-ip=$(echo " select cidr_z from ip2location_db1 TABLESAMPLE SYSTEM(1) where country_code = 'RU' and nmap = '0' limit 1;" |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location -t )
+
+# Sélection alternée IPv4/IPv6 (50/50)
+if [ $(( RANDOM % 2 )) -eq 1 ]; then
+    TABLE="ip2location_db1_v6"
+else
+    TABLE="ip2location_db1"
+fi
+
+ip=$(echo "SELECT cidr_z FROM $TABLE TABLESAMPLE SYSTEM(1) WHERE country_code = 'RU' AND nmap = '0' LIMIT 1;" |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location -t )
 output=$(echo "$ip" | tr -d '[:space:]')
 
-# Skip if CIDR is empty (TABLESAMPLE returned no rows)
+# Fallback sur l'autre table si la sélection est vide
+if [ -z "$output" ]; then
+    if [ "$TABLE" = "ip2location_db1_v6" ]; then
+        TABLE="ip2location_db1"
+    else
+        TABLE="ip2location_db1_v6"
+    fi
+    ip=$(echo "SELECT cidr_z FROM $TABLE TABLESAMPLE SYSTEM(1) WHERE country_code = 'RU' AND nmap = '0' LIMIT 1;" |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location -t )
+    output=$(echo "$ip" | tr -d '[:space:]')
+fi
+
+# Skip if CIDR is empty (TABLESAMPLE returned no rows in both tables)
 if [ -z "$output" ]; then
     echo "[INFO] Aucun CIDR disponible, retry dans 10s..."
     sleep 10
     continue
 fi
 
-echo "current cidr :$output on going"
-tz=$(echo " update ip2location_db1 set nmap = '1', date_nmap = (SELECT CURRENT_TIMESTAMP) where cidr_z  >>= '$output' ;")
+echo "current cidr :$output on going (table: $TABLE)"
+tz=$(echo "UPDATE $TABLE SET nmap = '1', date_nmap = (SELECT CURRENT_TIMESTAMP) WHERE cidr_z >>= '$output';")
 echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location
 
-msfconsole -q -x "db_connect postgres:bojemoi@$sql_ip/$dbname;db_nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f  --mtu 16  --data-length 64 --randomize-hosts -PA -PM -Pn   $output; quit"
+# Détecter IPv6 (contient ":") et ajouter le flag -6
+if echo "$output" | grep -q ":"; then
+    IPV6_FLAG="-6"
+else
+    IPV6_FLAG=""
+fi
+
+msfconsole -q -x "db_connect postgres:bojemoi@$sql_ip/$dbname;db_nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f  --mtu 16  --data-length 64 --randomize-hosts -PA -PM -Pn $IPV6_FLAG  $output; quit"
 
 echo "cidr :$output done"
-tz=$(echo " update ip2location_db1 set nmap = '2', date_nmap = (SELECT CURRENT_TIMESTAMP) where cidr_z  >>= '$output' ;")
+tz=$(echo "UPDATE $TABLE SET nmap = '2', date_nmap = (SELECT CURRENT_TIMESTAMP) WHERE cidr_z >>= '$output';")
 echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location
 
 done

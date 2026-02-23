@@ -4,6 +4,7 @@ thearm_bm12 v2 - Service Fingerprinting Deep Scanner
 Scans hosts from msf DB with targeted NSE scripts per service category.
 Classifies server type based on discovered services and stores results.
 """
+import ipaddress
 import os
 import json
 import socket
@@ -202,13 +203,16 @@ def get_random_host():
         conn = get_db_connection()
         with conn.cursor() as cur:
             # TABLESAMPLE progressif : 0.001% d'abord, puis 0.01%
+            # Exclure les adresses link-local IPv6 (fe80::/10)
             cur.execute(
-                "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.001) LIMIT 1;"
+                "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.001) "
+                "WHERE host(address::inet) NOT LIKE 'fe80:%' LIMIT 1;"
             )
             row = cur.fetchone()
             if not row:
                 cur.execute(
-                    "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.01) LIMIT 1;"
+                    "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.01) "
+                    "WHERE host(address::inet) NOT LIKE 'fe80:%' LIMIT 1;"
                 )
                 row = cur.fetchone()
             return row or (None, None)
@@ -297,6 +301,13 @@ def build_nmap_command(host, services_list, pg_ip):
     Construit UNE SEULE commande msfconsole qui scanne tous les ports d'un host.
     Au lieu de lancer N processus msfconsole (un par service).
     """
+    # Détecter IPv6 et ajuster le flag nmap
+    try:
+        is_v6 = ipaddress.ip_address(host.split("/")[0]).version == 6
+    except ValueError:
+        is_v6 = False
+    ipv6_part = "-6 " if is_v6 else ""
+
     # Collecter tous les ports et scripts
     all_ports = []
     all_scripts = set()
@@ -312,7 +323,7 @@ def build_nmap_command(host, services_list, pg_ip):
 
     # Scan profond unique : version + OS + scripts ciblés
     nmap_cmd = (
-        f"db_nmap -n -p {ports_str} "
+        f"db_nmap -n {ipv6_part}-p {ports_str} "
         f"--script={scripts_str} "
         f"-sV -O --reason --traceroute "
         f"--spoof-mac 0 -f --mtu 16 --data-length 64 "

