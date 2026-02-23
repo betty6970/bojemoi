@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # Karacho Blockchain Database
     KARACHO_DB_NAME: str = "karacho"
 
+    # Metasploit Database (host_debug pour debug uzi)
+    MSF_DB_NAME: str = "msf"
+
     @property
     def DATABASE_URL(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -61,6 +64,10 @@ class Settings(BaseSettings):
     @property
     def KARACHO_DB_URL(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.KARACHO_DB_NAME}"
+
+    @property
+    def MSF_DB_URL(self) -> str:
+        return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.MSF_DB_NAME}"
 
     # IP Validation
     IP_VALIDATION_ENABLED: bool = True

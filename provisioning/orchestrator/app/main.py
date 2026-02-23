@@ -1,4 +1,5 @@
 """Main FastAPI application"""
+import asyncio
 import time
 from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,9 @@ from app.models.schemas import (
     VMDeployRequest, ContainerDeployRequest,
     DeploymentResponse, HealthResponse, DeploymentListResponse,
     BlockchainBlock, BlockchainVerifyResponse, BlockListResponse,
-    BlockchainStatsResponse
+    BlockchainStatsResponse,
+    Rapid7DeployRequest, Rapid7RegisterRequest,
+    Rapid7DeployResponse, Rapid7StatusResponse,
 )
 from app.services.gitea_client import GiteaClient
 from app.services.xenserver_client_real import XenServerClient
@@ -22,6 +25,7 @@ from app.services.cloudinit_gen import CloudInitGenerator
 from app.services.database import Database
 from app.services.ip2location_client import IP2LocationClient
 from app.services.blockchain import BlockchainService
+from app.services.rapid7_manager import Rapid7Manager
 from app.middleware.ip_validation import IPValidationMiddleware, get_request_ip_info
 from app.middleware.metrics import MetricsMiddleware
 from app.metrics import (
@@ -65,13 +69,14 @@ cloudinit_gen: Optional[CloudInitGenerator] = None
 db: Optional[Database] = None
 ip2location_client: Optional[IP2LocationClient] = None
 blockchain_service: Optional[BlockchainService] = None
+rapid7_manager: Optional[Rapid7Manager] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan (startup and shutdown)"""
     global gitea_client, xenserver_client, docker_client, cloudinit_gen, db
-    global ip2location_client, blockchain_service
+    global ip2location_client, blockchain_service, rapid7_manager
 
     # Startup
     logger.info("Initializing Bojemoi Orchestrator...")
@@ -120,6 +125,11 @@ async def lifespan(app: FastAPI):
         await blockchain_service.init()
         logger.info("Blockchain service initialized")
 
+        # Initialize Rapid7 manager (host_debug table in msf DB)
+        rapid7_manager = Rapid7Manager(settings.MSF_DB_URL)
+        await rapid7_manager.init()
+        logger.info("Rapid7Manager initialized (host_debug ready)")
+
         # Set Prometheus app info
         set_app_info(
             version=settings.API_VERSION,
@@ -127,14 +137,9 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Prometheus metrics initialized")
 
-        # Add IP validation middleware
-        app.add_middleware(
-            IPValidationMiddleware,
-            ip2location_client=ip2location_client,
-            allowed_countries=settings.ALLOWED_COUNTRIES,
-            enabled=settings.IP_VALIDATION_ENABLED
-        )
-        logger.info(f"IP validation middleware added (enabled={settings.IP_VALIDATION_ENABLED})")
+        # Make ip2location_client available to IPValidationMiddleware via app.state
+        app.state.ip2location_client = ip2location_client
+        logger.info(f"IP validation middleware ready (enabled={settings.IP_VALIDATION_ENABLED})")
 
         logger.info("All services initialized successfully")
 
@@ -162,6 +167,9 @@ async def lifespan(app: FastAPI):
     if blockchain_service:
         await blockchain_service.close()
 
+    if rapid7_manager:
+        await rapid7_manager.close()
+
     logger.info("Shutdown complete")
 
 
@@ -184,6 +192,14 @@ app.add_middleware(
 
 # Add metrics middleware
 app.add_middleware(MetricsMiddleware)
+
+# Add IP validation middleware at module level (client is set lazily via app.state)
+app.add_middleware(
+    IPValidationMiddleware,
+    ip2location_client=None,
+    allowed_countries=settings.ALLOWED_COUNTRIES,
+    enabled=settings.IP_VALIDATION_ENABLED
+)
 
 
 @app.get("/", tags=["General"])
@@ -505,6 +521,177 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to deploy container: {str(e)}"
         )
+
+
+
+# ---------------------------------------------------------------------------
+# Rapid7 Debug VM
+# ---------------------------------------------------------------------------
+
+async def _poll_vm_ip(vm_uuid: str, timeout: int) -> Optional[str]:
+    """Interroge XenServer jusqu'à obtenir une IP guest (via XenTools).
+
+    Retourne l'IP ou None si le timeout est dépassé.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            info = await xenserver_client.get_vm_info(vm_uuid)
+            networks = info.get("guest_metrics", {}).get("networks", {})
+            # XenAPI retourne {"0/ip": "192.168.x.x", ...}
+            ip = networks.get("0/ip") or networks.get("1/ip")
+            if ip:
+                return ip
+        except Exception:
+            pass
+        await asyncio.sleep(5)
+    return None
+
+
+@app.post("/api/v1/vm/rapid7", response_model=Rapid7DeployResponse, tags=["Rapid7 Debug"])
+async def deploy_rapid7_vm(request: Rapid7DeployRequest, req: Request):
+    """Déploie la VM Rapid7 (Metasploitable) sur XenServer.
+
+    - Clone le template XenServer indiqué (sans cloud-init)
+    - Attend l'IP guest via XenTools (poll jusqu'à ip_poll_timeout secondes)
+    - Si IP obtenue : enregistre dans host_debug (msf DB) et remplace toute entrée précédente
+    - Si IP non obtenue : retourne le vm_uuid pour enregistrement manuel via /register
+    """
+    ip_info = get_request_ip_info(req)
+    start_time = time.time()
+
+    try:
+        logger.info(f"Déploiement VM Rapid7 '{request.vm_name}' depuis template '{request.xen_template}'")
+
+        vm_uuid = await xenserver_client.create_vm(
+            name=request.vm_name,
+            template=request.xen_template,
+            cpu=request.cpu,
+            memory=request.memory_mb,
+            disk=request.disk_gb,
+            network=request.network,
+            cloudinit_data=None,
+        )
+        logger.info(f"VM Rapid7 créée : {vm_uuid}")
+
+        # Attendre l'IP
+        ip = await _poll_vm_ip(vm_uuid, request.ip_poll_timeout)
+
+        registered = False
+        if ip:
+            await rapid7_manager.replace_host(
+                address=ip,
+                vm_name=request.vm_name,
+                vm_uuid=vm_uuid,
+            )
+            registered = True
+            logger.info(f"host_debug mis à jour : {ip} ({request.vm_name})")
+        else:
+            logger.warning(
+                f"IP non détectée après {request.ip_poll_timeout}s "
+                f"— appelez POST /api/v1/vm/rapid7/register avec vm_uuid={vm_uuid}"
+            )
+
+        # Audit blockchain
+        await blockchain_service.create_block(
+            deployment_type="vm",
+            name=request.vm_name,
+            config={**request.dict(), "xen_uuid": vm_uuid, "ip": ip},
+            resource_ref=vm_uuid,
+            status="success",
+            source_ip=ip_info.get("source_ip"),
+            source_country=ip_info.get("source_country"),
+        )
+        await db.log_deployment(
+            deployment_type="vm",
+            name=request.vm_name,
+            config={**request.dict(), "xen_uuid": vm_uuid, "ip": ip},
+            resource_ref=vm_uuid,
+            status="success",
+        )
+
+        duration = time.time() - start_time
+        record_deployment("vm", "success", "dev", duration)
+
+        msg = (
+            f"VM {request.vm_name} déployée ({vm_uuid}), IP={ip}, host_debug enregistré."
+            if registered
+            else f"VM {request.vm_name} déployée ({vm_uuid}), IP non encore disponible — enregistrement manuel requis."
+        )
+        return Rapid7DeployResponse(
+            success=True,
+            vm_uuid=vm_uuid,
+            ip_address=ip,
+            host_debug_registered=registered,
+            message=msg,
+        )
+
+    except Exception as e:
+        duration = time.time() - start_time
+        record_deployment("vm", "failed", "dev", duration)
+        record_deployment_error("vm", type(e).__name__)
+        logger.error(f"Échec déploiement Rapid7 VM : {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Échec déploiement VM Rapid7 : {e}",
+        )
+
+
+@app.post("/api/v1/vm/rapid7/register", response_model=Rapid7DeployResponse, tags=["Rapid7 Debug"])
+async def register_rapid7_ip(request: Rapid7RegisterRequest):
+    """Enregistre manuellement une IP dans host_debug.
+
+    À utiliser si l'IP n'a pas été détectée automatiquement lors du déploiement,
+    ou pour pointer uzi-debug vers une VM existante.
+    """
+    try:
+        record = await rapid7_manager.replace_host(
+            address=request.ip_address,
+            vm_name=request.vm_name,
+        )
+        logger.info(f"host_debug mis à jour manuellement : {request.ip_address}")
+        return Rapid7DeployResponse(
+            success=True,
+            ip_address=record["address"],
+            host_debug_registered=True,
+            message=f"IP {request.ip_address} enregistrée dans host_debug.",
+        )
+    except Exception as e:
+        logger.error(f"Erreur register_rapid7_ip : {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@app.get("/api/v1/vm/rapid7/status", response_model=Rapid7StatusResponse, tags=["Rapid7 Debug"])
+async def rapid7_status():
+    """Retourne l'état courant de la VM Rapid7 de debug.
+
+    - Contenu de host_debug (IP cible pour uzi en mode DEBUG_MODE=1)
+    - Info XenServer sur la VM si vm_uuid connu
+    """
+    host = await rapid7_manager.get_host()
+    vm_uuid = host.get("vm_uuid") if host else None
+    vm_power_state = None
+
+    if vm_uuid:
+        try:
+            info = await xenserver_client.get_vm_info(vm_uuid)
+            vm_power_state = info.get("power_state")
+        except Exception:
+            vm_power_state = "unknown"
+
+    if host:
+        # Convertir datetime en str pour la sérialisation
+        host = {k: (str(v) if hasattr(v, "isoformat") else v) for k, v in host.items()}
+
+    return Rapid7StatusResponse(
+        host_debug=host,
+        vm_uuid=vm_uuid,
+        vm_power_state=vm_power_state,
+        message="OK" if host else "Aucun hôte debug enregistré (host_debug vide).",
+    )
 
 
 @app.get("/api/v1/deployments", response_model=DeploymentListResponse, tags=["Deployments"])

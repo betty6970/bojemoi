@@ -123,6 +123,11 @@ class IPValidationMiddleware(BaseHTTPMiddleware):
         if not self.enabled:
             return await call_next(request)
 
+        # Use client from app.state if not set at construction time (lazy init)
+        client = self.ip2location_client or getattr(request.app.state, "ip2location_client", None)
+        if client is None:
+            return await call_next(request)
+
         # Skip excluded routes
         if self._is_excluded_route(request.url.path):
             return await call_next(request)
@@ -134,13 +139,13 @@ class IPValidationMiddleware(BaseHTTPMiddleware):
         request.state.source_ip = client_ip
 
         # Check if private IP (always allowed)
-        if self.ip2location_client.is_private_ip(client_ip):
+        if client.is_private_ip(client_ip):
             request.state.source_country = "PRIVATE"
             logger.debug(f"Private IP {client_ip} - allowed")
             return await call_next(request)
 
         # Lookup country
-        country_code = await self.ip2location_client.get_country_by_ip(client_ip)
+        country_code = await client.get_country_by_ip(client_ip)
 
         # Store country in request state
         request.state.source_country = country_code

@@ -335,3 +335,79 @@ class BlockchainStatsResponse(BaseModel):
     last_block_time: Optional[str] = None
     chain_continuous: bool
     error: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Rapid7 Debug VM
+# ---------------------------------------------------------------------------
+
+class Rapid7DeployRequest(BaseModel):
+    """Déploiement d'une VM Rapid7 (Metasploitable) sur XenServer.
+
+    La VM est clonée depuis un template existant sans cloud-init.
+    Après démarrage, l'IP est auto-détectée et enregistrée dans host_debug.
+    """
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "vm_name": "rapid7-test",
+                "xen_template": "Metasploitable3",
+                "network": "lab-internal",
+                "cpu": 2,
+                "memory_mb": 2048,
+                "disk_gb": 40,
+            }
+        }
+    )
+
+    vm_name: str = Field(
+        default="rapid7-test",
+        pattern=NAME_PATTERN,
+        description="Nom de la VM sur XenServer"
+    )
+    xen_template: str = Field(
+        default="Metasploitable3",
+        min_length=1,
+        max_length=128,
+        description="Nom exact du template XenServer Rapid7"
+    )
+    network: str = Field(
+        default="lab-internal",
+        pattern=NETWORK_PATTERN,
+        description="Réseau XenServer isolé pour la VM de test"
+    )
+    cpu: int = Field(default=2, ge=1, le=8, description="Nombre de vCPUs")
+    memory_mb: int = Field(default=2048, ge=512, le=8192, description="RAM en MB")
+    disk_gb: int = Field(default=40, ge=10, le=500, description="Disque en GB")
+    ip_poll_timeout: int = Field(
+        default=120,
+        ge=10,
+        le=300,
+        description="Secondes max pour attendre l'IP guest (via XenTools)"
+    )
+
+
+class Rapid7RegisterRequest(BaseModel):
+    """Enregistrement manuel d'une IP dans host_debug."""
+    ip_address: str = Field(
+        ...,
+        description="IP de la VM Rapid7 à enregistrer dans host_debug"
+    )
+    vm_name: str = Field(default="rapid7-test", description="Nom de la VM")
+
+
+class Rapid7DeployResponse(BaseModel):
+    """Réponse au déploiement d'une VM Rapid7."""
+    success: bool
+    vm_uuid: Optional[str] = None
+    ip_address: Optional[str] = None
+    host_debug_registered: bool = False
+    message: str
+
+
+class Rapid7StatusResponse(BaseModel):
+    """Statut courant de la VM Rapid7 de debug."""
+    host_debug: Optional[Dict[str, Any]] = None
+    vm_uuid: Optional[str] = None
+    vm_power_state: Optional[str] = None
+    message: str
