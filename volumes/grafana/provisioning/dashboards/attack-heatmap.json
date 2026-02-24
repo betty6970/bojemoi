@@ -1,0 +1,277 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "${DS_POSTGRESQL_THREATINTEL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "color-background",
+              "mode": "gradient"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "transparent", "value": null},
+              {"color": "blue", "value": 1},
+              {"color": "yellow", "value": 5},
+              {"color": "orange", "value": 20},
+              {"color": "red", "value": 50}
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "technique_id"},
+            "properties": [
+              {"id": "custom.width", "value": 80},
+              {"id": "links", "value": [{"title": "ATT&CK", "url": "https://attack.mitre.org/techniques/${__value.raw}/"}]}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "technique_name"},
+            "properties": [{"id": "custom.width", "value": 250}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "tactic"},
+            "properties": [
+              {"id": "custom.width", "value": 180},
+              {"id": "custom.cellOptions", "value": {"type": "color-text"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "total_hits"}],
+        "cellHeight": "sm",
+        "footer": {"show": true, "reducer": ["sum"], "countRows": false}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${DS_POSTGRESQL_THREATINTEL}"},
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT technique_id, technique_name, tactic, SUM(hit_count)::int AS total_hits FROM (\n  SELECT\n    t->>'technique_id' AS technique_id,\n    t->>'technique_name' AS technique_name,\n    t->>'tactic' AS tactic,\n    COUNT(*) AS hit_count\n  FROM ip_investigations,\n       jsonb_array_elements(attack_techniques) AS t\n  WHERE created_at >= NOW() - INTERVAL '$__interval'\n    AND attack_techniques IS NOT NULL\n  GROUP BY 1, 2, 3\n  UNION ALL\n  SELECT\n    attack_technique_id AS technique_id,\n    attack_technique_name AS technique_name,\n    attack_tactic AS tactic,\n    COUNT(*) AS hit_count\n  FROM suricata_attack_alerts\n  WHERE timestamp >= NOW() - INTERVAL '$__interval'\n  GROUP BY 1, 2, 3\n) combined\nGROUP BY 1, 2, 3\nORDER BY total_hits DESC\nLIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "MITRE ATT&CK Technique Heatmap",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "${DS_POSTGRESQL_THREATINTEL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "Detections",
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "stacking": {"mode": "normal"}
+          }
+        }
+      },
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 12},
+      "id": 2,
+      "options": {
+        "legend": {"calcs": ["sum"], "displayMode": "table", "placement": "right"},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${DS_POSTGRESQL_THREATINTEL}"},
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  date_trunc('hour', timestamp) AS time,\n  attack_tactic AS metric,\n  COUNT(*) AS value\nFROM suricata_attack_alerts\nWHERE $__timeFilter(timestamp)\nGROUP BY 1, 2\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Technique Timeline (Suricata)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "${DS_POSTGRESQL_THREATINTEL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"hideFrom": {"legend": false, "tooltip": false, "viz": false}}
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 12},
+      "id": 3,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "values": ["value", "percent"]},
+        "pieType": "donut",
+        "reduceOptions": {"calcs": ["sum"], "fields": "", "values": true},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${DS_POSTGRESQL_THREATINTEL}"},
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT 'ML Investigation' AS source, COUNT(*) AS count\nFROM ip_investigations\nWHERE attack_techniques IS NOT NULL\n  AND created_at >= NOW() - INTERVAL '30 days'\nUNION ALL\nSELECT 'Suricata' AS source, COUNT(*) AS count\nFROM suricata_attack_alerts\nWHERE timestamp >= NOW() - INTERVAL '30 days'",
+          "refId": "A"
+        }
+      ],
+      "title": "Source Breakdown (30d)",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "${DS_POSTGRESQL_THREATINTEL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 10},
+              {"color": "red", "value": 50}
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "technique_id"},
+            "properties": [
+              {"id": "custom.width", "value": 80},
+              {"id": "links", "value": [{"title": "ATT&CK", "url": "https://attack.mitre.org/techniques/${__value.raw}/"}]}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "id": 4,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "hit_count"}],
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${DS_POSTGRESQL_THREATINTEL}"},
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  attack_technique_id AS technique_id,\n  attack_technique_name AS technique_name,\n  attack_tactic AS tactic,\n  COUNT(*) AS hit_count\nFROM suricata_attack_alerts\nWHERE $__timeFilter(timestamp)\nGROUP BY 1, 2, 3\nORDER BY hit_count DESC\nLIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 10 Techniques",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "${DS_POSTGRESQL_THREATINTEL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 2},
+              {"color": "red", "value": 1}
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "severity"},
+            "properties": [
+              {"id": "custom.cellOptions", "value": {"type": "color-background"}},
+              {"id": "custom.width", "value": 60}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "id": 5,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "timestamp"}],
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${DS_POSTGRESQL_THREATINTEL}"},
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  timestamp,\n  src_ip,\n  dest_ip,\n  signature,\n  category,\n  severity,\n  attack_technique_id AS technique,\n  attack_tactic AS tactic\nFROM suricata_attack_alerts\nWHERE $__timeFilter(timestamp)\nORDER BY timestamp DESC\nLIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent Detections",
+      "type": "table"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["mitre-attack", "security", "bojemoi-lab"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "PostgreSQL-ThreatIntel", "value": "PostgreSQL-ThreatIntel"},
+        "hide": 2,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_POSTGRESQL_THREATINTEL",
+        "options": [],
+        "query": "postgres",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "MITRE ATT&CK Coverage",
+  "uid": "mitre-attack-coverage",
+  "version": 1
+}
