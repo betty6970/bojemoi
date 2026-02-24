@@ -1,6 +1,6 @@
 ---
 title: "Construire une Plateforme de Threat Intelligence avec ML dans son Homelab"
-date: 2026-02-24
+date: 2026-02-24T23:59:00+00:00
 draft: false
 tags: ["threat-intelligence", "cybersecurity", "machine-learning", "osint", "telegram", "homelab", "docker-swarm", "nlp", "ner", "mitre-attack"]
 summary: "Comment j'ai construit, en partant de zéro, une plateforme de threat intelligence de niveau production qui prédit les attaques DDoS en surveillant les canaux Telegram hacktivistes."
