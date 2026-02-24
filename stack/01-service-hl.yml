@@ -1161,6 +1161,9 @@ services:
       - "1143:143"   # IMAP
     environment:
       - TZ=Europe/Paris
+    secrets:
+      - proton_username
+      - proton_password
     networks:
       - mail
     logging:
