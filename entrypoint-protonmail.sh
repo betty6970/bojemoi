@@ -22,6 +22,7 @@ if [ -f "$SECRETS_DIR/proton_username" ] && [ -f "$SECRETS_DIR/proton_password" 
 
     expect << EXPECT_EOF
 set timeout 300
+log_user 1
 spawn protonmail-bridge --cli
 
 # Wait for bridge to fully start
@@ -40,6 +41,10 @@ expect {
         expect -re {[Pp]assword}
         send "${PASSWORD}\r"
         expect {
+            -re {[Tt]wo.factor} {
+                send "\r"
+                exp_continue
+            }
             -re {(logged in|signed in|>>>)} {}
             timeout { puts "\[bridge\] Login timeout"; exit 1 }
         }
@@ -47,6 +52,13 @@ expect {
     -re {(already|logged in|signed in)} {}
     timeout { puts "\[bridge\] Login response timeout"; exit 1 }
     eof { exit 1 }
+}
+
+# Query account info to expose bridge SMTP password in Docker logs
+send "info\r"
+expect {
+    -re {>>>} {}
+    timeout {}
 }
 
 puts "\[bridge\] Logged in, running."
