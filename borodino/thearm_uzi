@@ -109,7 +109,7 @@ def get_random_host(type):
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.1) "
-                    "WHERE os_name = %s AND host(address::inet) NOT LIKE 'fe80:%' LIMIT 1;",
+                    "WHERE os_name = %s AND host(address::inet) NOT LIKE 'fe80:%%' LIMIT 1;",
                     (type,)
                 )
                 return cur.fetchone() or (None, None)

@@ -206,13 +206,13 @@ def get_random_host():
             # Exclure les adresses link-local IPv6 (fe80::/10)
             cur.execute(
                 "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.001) "
-                "WHERE host(address::inet) NOT LIKE 'fe80:%' LIMIT 1;"
+                "WHERE host(address::inet) NOT LIKE 'fe80:%%' LIMIT 1;"
             )
             row = cur.fetchone()
             if not row:
                 cur.execute(
                     "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.01) "
-                    "WHERE host(address::inet) NOT LIKE 'fe80:%' LIMIT 1;"
+                    "WHERE host(address::inet) NOT LIKE 'fe80:%%' LIMIT 1;"
                 )
                 row = cur.fetchone()
             return row or (None, None)
