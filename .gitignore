@@ -44,3 +44,4 @@ kyiv/
 
 # Suricata rules (managed externally)
 volumes/suricata/rules/
+blog-repo/
