@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: bojemoi-mitre-attack
+Version: 1.0.0
+Summary: MITRE ATT&CK mapping library for Bojemoi Lab
+Requires-Python: >=3.11
+Dynamic: requires-python
+Dynamic: summary
