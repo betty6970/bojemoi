@@ -17,7 +17,7 @@ theme = 'PaperMod'
 
   [params.homeInfoParams]
     Title = "Bojemoi Lab"
-    Content = "Comment j'ai construit, en partant de zéro, une plateforme de threat intelligence de niveau production qui prédit les attaques DDoS en surveillant les canaux Telegram hacktivistes."
+    Content = "Comment j'ai construit, en partant de zéro, une plateforme de threat intelligence de niveau production qui prédit les attaques DDoS en surveillant les canaux Telegram hacktivistes. → [Lire l'article](/posts/threat-intel-homelab-post-fr/)"
 
   [[params.socialIcons]]
     name = 'gitea'
