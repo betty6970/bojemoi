@@ -17,7 +17,7 @@ theme = 'PaperMod'
 
   [params.homeInfoParams]
     Title = "Bojemoi Lab"
-    Content = "Blog technique - Infrastructure, DevOps, S\u00e9curit\u00e9"
+    Content = "Comment j'ai construit, en partant de zéro, une plateforme de threat intelligence de niveau production qui prédit les attaques DDoS en surveillant les canaux Telegram hacktivistes."
 
   [[params.socialIcons]]
     name = 'gitea'
