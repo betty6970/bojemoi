@@ -201,6 +201,9 @@ services:
       - ARME_TYPE=bm12
       - TARGET=container1
       - PYTHONUNBUFFERED=1
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+      - SHODAN_API_KEY=${SHODAN_API_KEY:-}
     logging:
       driver: json-file
       options:
