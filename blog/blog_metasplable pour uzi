@@ -1,0 +1,8 @@
+Pour récapituler ce qui a été fait :
+
+  1. Template Metasploitable2 créé sur XenServer depuis le VDI metasploitable2 (8GB)
+  2. VM metasploitable2-target déployée via /api/v1/vm/rapid7 (UUID 0f549230-...)
+  3. VIF réseau ajouté sur xenbr0, cold boot pour activation
+  4. host_debug enregistré avec 192.168.1.2 → prêt pour uzi en DEBUG_MODE=1
+
+
