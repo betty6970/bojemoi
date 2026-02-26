@@ -3,10 +3,10 @@ global:
   # Temps avant de d..clarer une alerte comme r..solue si elle
   resolve_timeout: 5m
   # Configuration SMTP (Email)
-  smtp_from: 'betty.bombers@bojemoi.lab'
+  smtp_from: 'betty.bombers@proton.me'
   smtp_smarthost: 'protonmail-bridge:25'
   smtp_auth_username: 'betty.bombers@proton.me'
-  smtp_auth_password: 'ypPbe-amlCvsdS4zf0vDsg'
+  smtp_auth_password: '8_qz7oZmQVBGhkvo-U64tA'
   smtp_require_tls: true
 
 route:
@@ -52,6 +52,6 @@ receivers:
           </body>
           </html>
         tls_config:
-          ca_file: /etc/alertmanager/certs/protonmail-bridge.crt
-          server_name: '127.0.0.1'  # Tell TLS to expect this name instead
+          # Réseau Docker interne uniquement — cert auto-signé du bridge
+          insecure_skip_verify: true
 
