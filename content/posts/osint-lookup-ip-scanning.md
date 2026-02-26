@@ -59,7 +59,7 @@ Réponse : **"oui, implémenter dans bm12"** → 20 minutes plus tard, c'était 
 - Retourne `is_malicious` si score ≥ 70
 
 **Intégration dans `thearm_bm12`** :
-```
+```text
 # Avant (v2 sans OSINT) :
 1. Sélection host → 2. NSE scripts → 3. Classification → 4. UPDATE DB
 
@@ -89,7 +89,7 @@ Dans `hosts.scan_details` (JSON existant), une nouvelle clé `osint` :
 ```
 
 Pour les IPs malveillantes, `hosts.info` est aussi mis à jour :
-```
+```text
 THREAT:CRITICAL score=85 abuse=12 malware=3
 ```
 
@@ -99,7 +99,7 @@ THREAT:CRITICAL score=85 abuse=12 malware=3
 
 Logs quelques minutes après le déploiement :
 
-```
+```text
 [OSINT] Lookup 109.108.53.242...
 [OSINT] 109.108.53.242 → score=0 (clean) OK
 [DONE] 109.108.53.242 — type=web, services=7
