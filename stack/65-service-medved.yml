@@ -7,6 +7,12 @@ networks:
   backend:
     external: true
 
+secrets:
+  medved_pg_password:
+    external: true
+  medved_faraday_password:
+    external: true
+
 services:
   medved-honeypot:
     image: localhost:5000/medved:latest
@@ -15,14 +21,15 @@ services:
       PG_HOST: postgres
       PG_PORT: 5432
       PG_USER: postgres
-      PG_PASSWORD: bojemoi
       PG_DATABASE: msf
       FARADAY_URL: http://faraday:5985
       FARADAY_USER: faraday
-      FARADAY_PASSWORD: changeme
       FARADAY_WORKSPACE: honeypot
       FARADAY_REPORT_INTERVAL: "60"
       IGNORE_NETWORKS: "10.0.0.0/8,172.16.0.0/12"
+    secrets:
+      - medved_pg_password
+      - medved_faraday_password
     networks:
       - backend
     ports:

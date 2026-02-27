@@ -1,5 +1,14 @@
 import ipaddress
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+
+def _read_secret(name: str) -> str | None:
+    try:
+        with open(f"/run/secrets/{name}") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return None
 
 
 class Settings(BaseSettings):
@@ -31,6 +40,14 @@ class Settings(BaseSettings):
     ignore_networks: str = "10.0.0.0/8,172.16.0.0/12"
 
     model_config = {"env_prefix": ""}
+
+    @model_validator(mode="after")
+    def _load_secrets(self):
+        if (v := _read_secret("medved_pg_password")) is not None:
+            self.pg_password = v
+        if (v := _read_secret("medved_faraday_password")) is not None:
+            self.faraday_password = v
+        return self
 
     def is_ignored(self, ip: str) -> bool:
         try:
