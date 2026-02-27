@@ -1,0 +1,70 @@
+# Bojemoi MCP Server
+# Expose les outils du lab via le protocole MCP (HTTP/SSE).
+# Claude Code se connecte sur http://localhost:8001/sse
+#
+# Deploy: docker stack deploy -c stack/49-service-mcp.yml mcp --prune --resolve-image always
+
+networks:
+  backend:
+    external: true
+  pentest:
+    external: true
+
+secrets:
+  mcp_pg_password:
+    external: true
+  mcp_faraday_password:
+    external: true
+
+services:
+  mcp-server:
+    image: localhost:5000/bojemoi-mcp:latest
+    hostname: mcp-server
+
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: postgres
+      PG_DATABASE: msf
+      FARADAY_URL: "http://faraday:5985"
+      FARADAY_USERNAME: faraday
+      MCP_PORT: "8001"
+      PYTHONUNBUFFERED: "1"
+    secrets:
+      - mcp_pg_password
+      - mcp_faraday_password
+
+    ports:
+      - "8001:8001"
+
+    networks:
+      - backend
+      - pentest
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
