@@ -153,19 +153,31 @@ async def report_to_faraday():
                     "parent_type": "Host",
                 }
 
+                should_mark_reported = False
                 try:
                     resp = await client.post(f"/_api/v3/ws/{ws}/vulns", json=vuln_data)
                     resp.raise_for_status()
                     vuln_id = resp.json().get("id", 0)
                     faraday_reports_total.labels(status="success").inc()
                     logger.info("Reported %s %s from %s (vuln_id=%d)", protocol, event_type, ip, vuln_id)
+                    should_mark_reported = True
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 409:
+                        # Vuln already exists in Faraday — mark as reported anyway
+                        faraday_reports_total.labels(status="success").inc()
+                        vuln_id = 0
+                        should_mark_reported = True
+                    else:
+                        logger.warning("Failed to create vuln for %s/%s/%s", ip, protocol, event_type)
+                        faraday_reports_total.labels(status="error").inc()
+                        vuln_id = 0
                 except Exception:
                     logger.warning("Failed to create vuln for %s/%s/%s", ip, protocol, event_type)
                     faraday_reports_total.labels(status="error").inc()
                     vuln_id = 0
 
                 # Mark events as reported
-                if vuln_id:
+                if should_mark_reported:
                     try:
                         async with db.pool.acquire() as conn:
                             await conn.execute(MARK_REPORTED, vuln_id, ip, protocol, event_type)
