@@ -798,11 +798,9 @@ services:
       - backend
     dns_search:
       - bojemoi.lab
-    environment:
-      - POSTFIX_LOGFILE_PATH=/var/log/mail.log
     command:
       - --postfix.showq_path=/var/spool/postfix/public/showq
-#      - --postfix.logfile_path=      #/var/log/mail.log
+      - --postfix.logfile_path=/var/log/mail.log
     volumes:
       - postfix_data:/var/spool/postfix:ro
       - postfix_mail:/var/mail:ro
