@@ -202,7 +202,7 @@ services:
       - ARME_TYPE=bm12
       - TARGET=container1
       - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=1  # mettre à 0 pour reprendre le mode normal (5 replicas, cibles aléatoires)
+      - DEBUG_MODE=0
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - SHODAN_API_KEY=${SHODAN_API_KEY:-}
@@ -213,7 +213,7 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 1  # 1 en debug mode, remettre à 5 en mode normal
+      replicas: 5
     command: /usr/bin/thearm_bm12
 
   uzi-service:
