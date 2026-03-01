@@ -407,6 +407,10 @@ def main():
               while console.is_busy():
                    print("+",end="")
                    time.sleep(1)
+              sessions = client.sessions.list
+              if sessions:
+                  print(f"[SESSION] {len(sessions)} session(s) actives: {list(sessions.keys())}")
+                  send_telegram_alert(sessions, host)
 
      check_con.destroy()
      print(f"[INFO] Scan de {host} terminé.")
