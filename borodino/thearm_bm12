@@ -24,6 +24,7 @@ PG_PASSWORD = os.getenv("PG_PASSWORD", "bojemoi")
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 PG_HOST = "postgres"
 SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", "600"))  # 10 min max par host
+DEBUG_MODE = int(os.getenv("DEBUG_MODE", "0"))
 
 # ─── NSE Scripts par catégorie de service ────────────────────────────────────
 # Scripts ciblés au lieu du wildcard dangereux {service}*
@@ -201,6 +202,89 @@ def is_postgres_ready(ip):
     except Exception as e:
         print(f"[ERREUR] Vérification PostgreSQL échouée : {e}")
         return False
+
+
+def get_all_debug_hosts():
+    """Lit tous les hôtes de test depuis host_debug, ordonnés par id."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, address FROM host_debug ORDER BY id;")
+            return cur.fetchall()
+    except psycopg2.Error as e:
+        print(f"[ERREUR] Récupération hôtes debug : {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_host_id_by_address(address):
+    """Récupère le host_id dans msf.hosts par adresse IP."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM hosts WHERE host(address::inet) = %s;", (str(address),))
+            row = cur.fetchone()
+            return row[0] if row else None
+    except psycopg2.Error as e:
+        print(f"[ERREUR] Lookup host_id : {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+
+def discover_all_services(host, pg_ip):
+    """
+    Mode debug : scan nmap complet pour découvrir tous les endpoints.
+    Lance db_nmap top-1000 + version detection sur la cible.
+    Peuple msf.hosts et msf.services, retourne (host_id, services).
+    """
+    try:
+        is_v6 = ipaddress.ip_address(host.split("/")[0]).version == 6
+    except ValueError:
+        is_v6 = False
+    ipv6_part = "-6 " if is_v6 else ""
+
+    nmap_cmd = (
+        f"db_nmap -n {ipv6_part}--top-ports 1000 "
+        f"-sV --version-intensity 5 -O --reason -Pn "
+        f"{host}"
+    )
+    msf_cmd = (
+        f'msfconsole -q -x "'
+        f"db_connect {PG_USER}:{PG_PASSWORD}@{pg_ip}/{PG_DBNAME}; "
+        f"{nmap_cmd}; "
+        f'quit"'
+    )
+
+    print(f"[DEBUG] Découverte complète de tous les services sur {host}...")
+    try:
+        result = subprocess.run(
+            ["/bin/sh", "-c", msf_cmd],
+            timeout=SCAN_TIMEOUT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        print(f"[DEBUG] Scan découverte terminé (retour: {result.returncode})")
+    except subprocess.TimeoutExpired:
+        print(f"[TIMEOUT] Découverte de {host} interrompue après {SCAN_TIMEOUT}s")
+    except Exception as e:
+        print(f"[ERREUR] Découverte {host} : {e}")
+
+    # db_nmap crée l'entrée dans msf.hosts — récupérer le host_id
+    host_id = get_host_id_by_address(host)
+    if not host_id:
+        print(f"[DEBUG] {host} introuvable dans msf.hosts après scan — cible peut-être hors ligne.")
+        return None, []
+
+    services = get_host_services(host_id)
+    print(f"[DEBUG] {len(services)} service(s) découvert(s) sur {host}: {[(p, s) for p, s in services]}")
+    return host_id, services
 
 
 def get_random_host():
@@ -440,16 +524,39 @@ def main():
         print(f"[ATTENTE] PostgreSQL pas prêt à {pg_ip}... retry dans 10s")
         time.sleep(10)
 
+    # Charger les hôtes debug avant la boucle (mode debug uniquement)
+    if DEBUG_MODE:
+        debug_hosts = get_all_debug_hosts()
+        if not debug_hosts:
+            print("[DEBUG] Aucun hôte dans host_debug — insérer l'IP cible dans la table.")
+            return
+        print(f"[DEBUG] {len(debug_hosts)} hôte(s) à traiter séquentiellement.")
+        debug_index = 0
+
     # Boucle de scan
     while True:
-        host_id, host = get_random_host()
-        if not host:
-            print("[INFO] Aucun hôte disponible, retry dans 5s...")
-            time.sleep(5)
-            continue
+        if DEBUG_MODE:
+            if debug_index >= len(debug_hosts):
+                print("[DEBUG] Tous les hôtes debug traités — fin.")
+                break
+            _, host = debug_hosts[debug_index]
+            debug_index += 1
+            host_str = str(host)
+            print(f"[DEBUG] Mode debug — cible {debug_index}/{len(debug_hosts)} : {host_str}")
+            print(f"\n[INFO] ═══ Découverte + Scan de {host_str} (debug) ═══")
+            host_id, _ = discover_all_services(host_str, pg_ip)
+            if not host_id:
+                print(f"[DEBUG] {host_str} injoignable — skip.")
+                continue
+        else:
+            host_id, host = get_random_host()
+            if not host:
+                print("[INFO] Aucun hôte disponible, retry dans 5s...")
+                time.sleep(5)
+                continue
+            host_str = str(host)
+            print(f"\n[INFO] ═══ Scan de {host_str} (id={host_id}) ═══")
 
-        host_str = str(host)
-        print(f"\n[INFO] ═══ Scan de {host_str} (id={host_id}) ═══")
         run_scan(host_str, host_id, pg_ip)
 
 
