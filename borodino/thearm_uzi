@@ -329,7 +329,7 @@ def main():
      print(f"[INFO] Scan de {host} en cours... ports ouverts: {sorted(open_ports)}")
 
      check_con = client.consoles.console()
-     for index in range(1, len(search_results)):
+     for index in range(0, len(search_results)):
         if (search_results[index]['type'] != 'exploit'):
             print('+', end="")
             continue
