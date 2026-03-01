@@ -94,6 +94,7 @@ if [ "$NODE_ROLE" = "true" ]; then
     deploy_stack "$DIR/stack/46-service-razvedka.yml" "razvedka" 10
     deploy_stack "$DIR/stack/47-service-vigie.yml" "vigie" 10
     deploy_stack "$DIR/stack/48-service-dozor.yml" "dozor" 10
+    deploy_stack "$DIR/stack/49-service-mcp.yml" "mcp" 10
     deploy_stack "${DIR}/stack/60-service-telegram.yml" "telegram" 5
     deploy_stack "${DIR}/stack/65-service-medved.yml" "honeypot" 5
 

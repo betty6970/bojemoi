@@ -45,6 +45,7 @@ networks:
   proxy:
     external: true
   pentest:
+    name: pentest
     driver: overlay
     attachable: true
 #--------------------------------------------------------------------------------
@@ -201,6 +202,7 @@ services:
       - ARME_TYPE=bm12
       - TARGET=container1
       - PYTHONUNBUFFERED=1
+      - DEBUG_MODE=1  # mettre à 0 pour reprendre le mode normal (5 replicas, cibles aléatoires)
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - SHODAN_API_KEY=${SHODAN_API_KEY:-}
@@ -211,7 +213,7 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 5
+      replicas: 1  # 1 en debug mode, remettre à 5 en mode normal
     command: /usr/bin/thearm_bm12
 
   uzi-service:
@@ -219,14 +221,10 @@ services:
     environment:
       - ARME_TYPE=uzi
       - TARGET=container1
-      - LHOST=bojemoi.me
+      - LHOST=lhost.bojemoi.lab
       - LPORT=4444
-      - DEBUG_MODE=0  # mettre à 1 pour cibler host_debug (VM Rapid7 de test)
-    ports:
-      - target: 4444
-        published: 4444
-        protocol: tcp
-        mode: host
+      - DEBUG_MODE=1  # mettre à 1 pour cibler host_debug (VM Rapid7 de test)
+      - MODE_RUN=1
     secrets:
       - telegram_bot_token
       - telegram_alert_chat_id
@@ -240,7 +238,6 @@ services:
       placement:
         constraints:
           - node.role == worker
-          - node.hostname == meta-68
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -256,6 +253,11 @@ services:
         reservations:
           cpus: '0.2'
           memory: 512M
+      labels:
+        - traefik.enable=true
+        - traefik.tcp.routers.meterpreter.rule=HostSNI(`*`)
+        - traefik.tcp.routers.meterpreter.entrypoints=meterpreter
+        - traefik.tcp.services.meterpreter.loadbalancer.server.port=4444
     command: /usr/bin/start_uzi.sh
 
   karacho-blockchain:
