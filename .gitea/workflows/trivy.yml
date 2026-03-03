@@ -1,0 +1,34 @@
+name: Trivy Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  trivy:
+    runs-on: ubuntu-latest
+    container:
+      image: aquasec/trivy:latest
+
+    steps:
+      - name: Clone repo
+        run: |
+          git clone --depth 1 --branch "${GITHUB_REF_NAME:-main}" \
+            "http://gitea:3000/${GITHUB_REPOSITORY}.git" /workspace
+
+      - name: Scan — misconfigurations (Dockerfiles + stack YAMLs)
+        run: |
+          trivy config \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            /workspace
+        continue-on-error: true
+
+      - name: Scan — secrets exposés
+        run: |
+          trivy fs \
+            --scanners secret \
+            --exit-code 0 \
+            /workspace
+        continue-on-error: true
