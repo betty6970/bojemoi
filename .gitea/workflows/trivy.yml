@@ -15,7 +15,7 @@ jobs:
       - name: Clone repo
         run: |
           git clone --depth 1 --branch "${GITHUB_REF_NAME:-main}" \
-            "http://gitea:3000/${GITHUB_REPOSITORY}.git" /repo
+            "http://oauth2:${{ secrets.GITEA_TOKEN }}@gitea:3000/${GITHUB_REPOSITORY}.git" /repo
 
       - name: Scan — misconfigurations (Dockerfiles + stack YAMLs)
         run: |
