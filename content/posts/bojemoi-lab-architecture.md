@@ -1,127 +1,187 @@
 ---
-title: "Bojemoi Lab — Architecture de la plateforme"
-date: 2026-02-19
+title: "Bojemoi Lab — Architecture Globale"
+date: 2026-03-12T20:00:00+01:00
 draft: false
-tags: ["infrastructure", "docker-swarm", "metasploit", "security", "architecture"]
-summary: "Vue d'ensemble complète de la plateforme Bojemoi Lab : orchestration Docker Swarm, workers de scan Metasploit, CTI, honeypot et pipeline de threat intelligence."
+tags: ["infrastructure", "docker-swarm", "cybersecurity", "homelab", "devops", "selfhosted", "threat-intelligence", "osint", "machine-learning", "build-in-public", "french-tech", "blue-team", "soc"]
+summary: "Schéma complet de Bojemoi Lab : 4 nœuds Swarm, 12 stacks, 43 services — scan internet, threat intel multi-sources, honeypot, IDS/IPS, et intégration MCP/Claude."
+description: "Architecture détaillée de Bojemoi Lab : pipeline de scan (ak47/bm12/uzi), threat intelligence (razvedka/vigie/dozor/ml-threat), défense (Suricata/CrowdSec/honeypot), observabilité (Prometheus/Grafana/Loki/Tempo), et MCP server pour Claude Code."
+author: "Bojemoi"
+ShowToc: true
+ShowReadingTime: true
 ---
 
-Bojemoi Lab est une plateforme hybride d'Infrastructure-as-Code déployée sur Docker Swarm (4 nœuds). Elle combine sécurité offensive, CTI, monitoring et orchestration de déploiement.
+Voici l'architecture actuelle de Bojemoi Lab, telle qu'elle tourne en ce moment — pas un croquis de projet, mais le reflet de ce qui est déployé.
 
-**Environnement :**
-- Manager : meta-76 (Alpine/BusyBox, i9-10900X, 16 GB RAM)
-- Workers : meta-68, meta-69, meta-70 (contrainte `node.role == worker`)
-- Registry local : `localhost:5000`
-- Gitea : `gitea.bojemoi.me`
-
----
-
-## 1. Orchestrateur de déploiement
-
-FastAPI avec middleware de validation IP géographique, chaîne blockchain SHA-256 pour l'audit immuable des déploiements, et intégration XenServer pour les VMs.
-
-**Endpoints principaux :**
-- `POST /api/v1/vm/deploy` — Déployer une VM sur XenServer
-- `POST /api/v1/container/deploy` — Déployer un service Docker Swarm
-- `GET /api/v1/blockchain/verify` — Vérifier l'intégrité de la chaîne d'audit
-
-**Workflow VM :**
-1. Validation IP source (whitelist Europe Occidentale, bypass RFC1918)
-2. Récupération du template cloud-init depuis Gitea
-3. Rendu Jinja2 avec les variables
-4. Création VM via XenAPI
-5. Enregistrement blockchain (karacho) + PostgreSQL
+4 nœuds Swarm, 12 stacks, ~43 services. 6,15 millions d'hôtes scannés, 33,7 millions de services en base.
 
 ---
 
-## 2. Borodino — Workers de scan Metasploit
+## Vue d'ensemble
 
-Image `ruby:3.3-alpine` avec Metasploit Framework complet, nmap, pymetasploit3 et ProtonVPN.
-
-### ak47 (15 répliques)
-
-Script ash qui sélectionne des CIDRs depuis `ip2location_db1` via `TABLESAMPLE SYSTEM(1)` et lance `db_nmap -sS -A -O` via msfconsole. Les résultats alimentent la base `msf` (6,15M hosts, 33,7M services).
-
-### bm12 v2 (15 répliques)
-
-Fingerprinting profond des hosts existants :
-- Sélection aléatoire via `TABLESAMPLE SYSTEM(0.001)`
-- Mapping des services ouverts vers 25 catégories NSE ciblées (http, ssh, smtp, smb, dns, mysql, rdp…)
-- Un seul msfconsole par host (timeout 600s)
-- Classification : web / mail / dns / database / file_server / vpn_proxy / voip / iot_embedded / remote_access
-- Résultat stocké dans `hosts.comments`, `hosts.scan_details` (JSON), `hosts.scan_status='bm12_v2'`
-
-### uzi (1 réplique)
-
-Exploitation via MsfRpcClient (pymetasploit3) sur port 55553. Itère les modules exploit Linux post-2021, tente chaque exploit avec chaque payload, alerte Telegram en cas de session ouverte.
-
----
-
-## 3. Samsonov — Orchestrateur Pentest
-
-Architecture plugin chargée dynamiquement depuis Redis (`pentest:commands`).
-
-**Pipeline de scan :** Masscan → ZAP spider/active → Burp passive → Nuclei → VulnX → Metasploit
-
-**Types de scan :** `full`, `web`, `network`, `vuln`, `cms`
-
-Les résultats sont agrégés et importés dans Faraday.
-
----
-
-## 4. Bibliothèque MITRE ATT&CK
-
-Package Python partagé `bojemoi-mitre-attack` embarqué dans plusieurs images. Mappe 35+ catégories Suricata vers des techniques ATT&CK avec niveau de confiance (high/medium/low), couvrant : initial-access, reconnaissance, C2, credential-access, privilege-escalation, exfiltration, lateral-movement.
-
----
-
-## 5. Suricata Attack Enricher
-
-Service Python async qui suit `eve.json` de Suricata en temps réel, mappe chaque alerte vers ATT&CK, et insère en batch dans PostgreSQL (`bojemoi_threat_intel.suricata_attack_alerts`). Batch 50 entrées / flush 5s.
-
----
-
-## 6. Services CTI
-
-| Service | Rôle |
-|---|---|
-| **razvedka** | Surveille canaux Telegram hacktvistes (KillNet, CyberArmyOfRussia…), score l'intention DDoS ciblant la France |
-| **vigie** | Scrape flux RSS ANSSI/CERT-FR, alerte sur nouvelles vulnérabilités selon une watchlist produits |
-| **dozor** | Génère les règles blocklist Suricata depuis threat intel, reload via socket Unix |
-| **ml-threat-intel** | Classificateur ML d'IoC (VT/AbuseIPDB/OTX/Shodan/Anthropic APIs) |
-
----
-
-## 7. Honeypot Medved
-
-Multi-protocole : SSH :22, HTTP :8888, RDP :3389, SMB :445, FTP :2121, Telnet :2323, Elasticsearch :9200. Toutes les interactions sont loguées dans la base `msf` et envoyées à Faraday.
-
----
-
-## Stacks Docker Swarm
-
-| Stack | Services principaux |
-|---|---|
-| **base** (manager) | postgres, grafana, prometheus, loki, tempo, alertmanager, orchestrator |
-| **borodino** (workers) | ak47×15, bm12×15, uzi×1, karacho, masscan, nuclei, faraday, zaproxy, redis |
-| **ml-threat-intel** (workers) | API classificateur IoC |
-| **razvedka** (workers) | Monitor Telegram hacktvistes |
-| **vigie** (workers) | Monitor ANSSI/CERT-FR |
-| **dozor** (workers) | Générateur règles Suricata |
-| **telegram** (workers) | Bot Telegram (interface Redis + docker-socket-proxy) |
-| **medved** (workers) | Honeypot multi-protocoles |
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                        INTERNET / EXTERNAL                           │
+│  ANSSI/CERT-FR • Telegram Channels • VirusTotal • AbuseIPDB • OTX   │
+│  Shodan • X/Twitter • MITRE ATT&CK feeds • XenServer (on-prem)      │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             │
+┌────────────────────────────▼─────────────────────────────────────────┐
+│                   LIGHTSAIL (bojemoi.me)                              │
+│  Nginx (80/443) • Gitea (gitea.bojemoi.me) • Hugo blog               │
+│  Apache (8080) • cloud-init/configs • Gitea Actions CI               │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             │ SSH/GitOps
+┌────────────────────────────▼─────────────────────────────────────────┐
+│                   DOCKER SWARM CLUSTER                                │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────┐     │
+│  │  meta-76 (MANAGER) — Intel i9, 16 GB RAM                   │     │
+│  │                                                              │     │
+│  │  ┌─── BASE STACK ──────────────────────────────────────┐   │     │
+│  │  │  PostgreSQL (msf, threat_intel, razvedka, vigie,    │   │     │
+│  │  │             telegram_bot, deployments, ip2location) │   │     │
+│  │  │  Prometheus • Grafana • Loki • Tempo • Alloy        │   │     │
+│  │  │  Alertmanager • PgAdmin • cAdvisor • node-exporter  │   │     │
+│  │  │  Postfix • Proton Mail Bridge • Koursk (rsync)      │   │     │
+│  │  │  Provisioning API (FastAPI, port 8000→28080)        │   │     │
+│  │  └─────────────────────────────────────────────────────┘   │     │
+│  │                                                              │     │
+│  │  ┌─── BOOT STACK ──┐  ┌─── MCP STACK ───────────────┐    │     │
+│  │  │  Traefik (proxy) │  │  mcp-server (port 8001)     │    │     │
+│  │  │  CrowdSec (WAF) │  │  Claude Code integration     │    │     │
+│  │  └─────────────────┘  └─────────────────────────────┘    │     │
+│  └─────────────────────────────────────────────────────────────┘     │
+│                                                                       │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │  WORKERS: meta-68, meta-69, meta-70                            │  │
+│  │                                                                  │  │
+│  │  ┌─── BORODINO STACK ──────────────────────────────────────┐  │  │
+│  │  │  ak47  (x15) → Nmap CIDR scan → msf.hosts/services     │  │  │
+│  │  │  bm12  (x15) → Deep fingerprint + NSE → classify hosts  │  │  │
+│  │  │  uzi   (x3)  → Metasploit exploits (MODE_RUN=0)        │  │  │
+│  │  └─────────────────────────────────────────────────────────┘  │  │
+│  │                                                                  │  │
+│  │  ┌─── PENTEST STACK ──────────┐  ┌─── TELEGRAM ────────────┐ │  │
+│  │  │  Faraday (port 5985)       │  │  telegram-bot            │ │  │
+│  │  │  OWASP ZAP                 │  │  Redis pub/sub           │ │  │
+│  │  │  Nuclei (25 templates)     │  │  Bot: @Betty_Bombers_bot │ │  │
+│  │  │  Samsonov (import)         │  │  Group: Bojemoi PTaaS    │ │  │
+│  │  │  Tsushima (aggregator)     │  └─────────────────────────┘ │  │
+│  │  └────────────────────────────┘                               │  │
+│  │                                                                  │  │
+│  │  ┌─── THREAT INTEL ─────────────────────────────────────────┐ │  │
+│  │  │  razvedka  → DDoS prediction (Telegram channels HU/RU)   │ │  │
+│  │  │  vigie     → CERT-FR bulletin monitor (ANSSI RSS)        │ │  │
+│  │  │  dozor     → Suricata rule generator (IoC feeds)         │ │  │
+│  │  │  ml-threat → ML scoring + MITRE ATT&CK mapping          │ │  │
+│  │  └─────────────────────────────────────────────────────────┘ │  │
+│  │                                                                  │  │
+│  │  ┌─── DEFENSE ──────────┐  ┌─── HONEYPOT ─────────────────┐ │  │
+│  │  │  Suricata (host mode) │  │  medved (host mode)          │ │  │
+│  │  │  EVE enricher         │  │  SSH/HTTP/RDP/SMB/FTP/Telnet │ │  │
+│  │  │  CrowdSec (WAF)       │  │  → PostgreSQL + Faraday      │ │  │
+│  │  └──────────────────────┘  └─────────────────────────────┘ │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Base de données
+## Flux de Données — Pipeline de Scan
 
-Instance PostgreSQL partagée sur meta-76 :
+```
+ip2location DB
+      │
+      ▼
+  ak47 (x15)          ← scans CIDRs via db_nmap
+      │ msf.hosts
+      ▼
+  bm12 (x15)          ← deep NSE fingerprinting (25 catégories)
+      │ hosts.scan_details (JSON) + comments + scan_status='bm12_v2'
+      ▼
+  uzi (x3)            ← Metasploit exploits (désactivé)
+      │
+      ▼
+  Faraday             ← workspace pentest
+      │
+      ▼
+  Samsonov/Tsushima   ← import + agrégation
+      │
+      ▼
+  Telegram Bot        ← notification + commandes manuelles
+```
 
-| Base | Usage |
-|---|---|
-| `msf` | Metasploit — 6,15M hosts, 33,7M services, 9 GB |
-| `ip2location` | CIDRs géolocalisation |
-| `faraday` | Findings sécurité |
-| `deployments` | État orchestrateur |
-| `bojemoi_threat_intel` | Alertes Suricata enrichies ATT&CK |
-| `karacho` | Blockchain audit déploiements |
+---
+
+## Stack Files → Services
+
+| Stack | Services clés | Placement |
+|-------|--------------|-----------|
+| `01-service-hl.yml` | postgres, prometheus, grafana, loki, alertmanager, postfix, provisioning | manager |
+| `boot stack` | traefik, crowdsec | manager |
+| `40-service-borodino.yml` | ak47, bm12, uzi, faraday, zaproxy, nuclei | workers |
+| `45-service-ml-threat-intel.yml` | ml-threat-intel-api | workers |
+| `46-service-razvedka.yml` | razvedka | workers |
+| `47-service-vigie.yml` | vigie | workers |
+| `48-service-dozor.yml` | dozor, eve-cleaner | workers |
+| `49-service-mcp.yml` | mcp-server | manager |
+| `50-service-trivy.yml` | trivy scanner | CI/CD only |
+| `60-service-telegram.yml` | telegram-bot, redis | workers |
+| `65-service-medved.yml` | medved honeypot | manager (host ports) |
+| `01-suricata-host.yml` | suricata, enricher | host compose (hors swarm) |
+
+---
+
+## Observabilité
+
+```
+Services → metrics → Prometheus → Grafana dashboards
+Services → logs    → Loki       → Grafana explore
+Services → traces  → Tempo      → Grafana explore
+Alloy (collector unifié) → pipeline tout-en-un
+Alertmanager → Postfix/ProtonBridge → Email chiffré
+```
+
+---
+
+## Bases de Données (PostgreSQL)
+
+| Database | Usage | Taille estimée |
+|----------|-------|---------------|
+| `msf` | Metasploit — hosts (6,15M), services (33,7M), vulns | 9 GB |
+| `bojemoi_threat_intel` | ML scoring, OSINT cache, IoC | ~2 GB |
+| `ip2location` | CIDRs géolocalisés pour scanning | ~500 MB |
+| `razvedka` | Mentions hacktivist, alertes DDoS | ~100 MB |
+| `vigie` | Bulletins CERT-FR, watchlist matches | ~50 MB |
+| `telegram_bot` | Historique chats, commandes | ~500 MB |
+| `honeypot_events` | Captures medved (SSH, HTTP, RDP...) | ~1 GB |
+| `deployments` | Audit orchestrateur + blockchain | ~100 MB |
+
+---
+
+## Réseaux Overlay (Swarm)
+
+| Réseau | Services |
+|--------|---------|
+| `backend` | postgres, redis, tous les services data |
+| `monitoring` | prometheus, grafana, loki, tempo, alloy |
+| `proxy` | traefik, crowdsec |
+| `pentest` | faraday, zaproxy, nuclei, samsonov, mcp-server |
+| `rsync_network` | koursk master/slave |
+| `mail` | postfix, protonmail-bridge, alertmanager |
+| `telegram_net` | telegram-bot |
+
+---
+
+## Résumé
+
+- **4 nœuds Swarm** — 1 manager (meta-76) + 3 workers (meta-68/69/70)
+- **12 stacks** — ~43 services distincts
+- **9 GB de données** — 6,15M hosts scannés, 33,7M services
+- **Pipeline CI/CD** — GitLab + Trivy + Gitea Actions
+- **Interfaces de contrôle** — Telegram bot, MCP server (Claude), API REST
+- **Threat Intel multi-sources** — OSINT, ML, CTI feeds, honeypot, IDS
+
+Tout est open source, versionné sur Gitea, déployé via CI/CD.
+
+→ [gitea.bojemoi.me](https://gitea.bojemoi.me)
