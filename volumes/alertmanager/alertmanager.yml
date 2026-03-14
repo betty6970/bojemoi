@@ -6,7 +6,7 @@ global:
   smtp_from: 'betty.bombers@proton.me'
   smtp_smarthost: 'protonmail-bridge:25'
   smtp_auth_username: 'betty.bombers@proton.me'
-  smtp_auth_password: '8_qz7oZmQVBGhkvo-U64tA'
+  smtp_auth_password_file: /run/secrets/alertmanager_smtp_pass
   smtp_require_tls: true
 
 route:

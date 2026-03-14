@@ -71,6 +71,8 @@ secrets:
      external: true
    proton_password:
      external: true
+   alertmanager_smtp_pass:
+     external: true
 configs:
    # NOTE: traefik_tls_config, dnsmask_config, traefik_config, crowdsec_config,
    #       registry_config moved to /opt/bojemoi_boot/stack/01-boot-service.yml
@@ -608,6 +610,7 @@ services:
       - alertmanager_data:/alertmanager
     secrets:
       - telegram_bot_token
+      - alertmanager_smtp_pass
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
