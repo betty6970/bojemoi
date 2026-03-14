@@ -225,7 +225,7 @@ services:
       - LPORT=4444
       - BIND_PORT=5556
       - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=0
+      - DEBUG_MODE=1
       - MODE_RUN=1
       - TELEGRAM_ALERT_CHAT_ID=-5087117106
     secrets:

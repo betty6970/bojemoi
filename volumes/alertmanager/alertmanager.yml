@@ -16,6 +16,14 @@ route:
   group_interval: 6h
   repeat_interval: 12h
   routes:
+    # Alertes périmètre → Telegram immédiat (pas de délai)
+    - receiver: 'telegram-perimeter'
+      match:
+        component: perimeter
+      group_wait: 10s
+      group_interval: 1m
+      repeat_interval: 30m
+      continue: true
     - receiver: 'default'
       continue: true
 
@@ -27,6 +35,27 @@ inhibit_rules:
     equal: ['alertname', 'cluster', 'service']
 
 receivers:
+  - name: 'telegram-perimeter'
+    telegram_configs:
+      - bot_token: '8174135689:AAHc1dO-NKen8Lvtcskmyl1qWQM2zmArmPk'
+        chat_id: -5087117106
+        parse_mode: 'HTML'
+        message: |
+          {{ if eq .Status "firing" }}🚨{{ else }}✅{{ end }} <b>{{ .CommonLabels.alertname }}</b>
+          {{ range .Alerts }}
+          {{ if eq .Status "firing" }}
+          📍 <b>Capteur:</b> {{ .Labels.esp32_id | default "N/A" }}
+          📡 <b>Type:</b> {{ .Labels.type | default "N/A" }}
+          ⚠️ {{ .Annotations.summary }}
+          📝 {{ .Annotations.description }}
+          🕐 Depuis: {{ .StartsAt | since }}
+          {{ else }}
+          ✅ Résolu — {{ .Annotations.summary }}
+          🕐 Durée: {{ .StartsAt | since }}
+          {{ end }}
+          {{ end }}
+        send_resolved: true
+
   - name: 'default'
     email_configs:
       - to: 'betty.bombers@proton.me'

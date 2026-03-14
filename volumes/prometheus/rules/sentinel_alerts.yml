@@ -1,0 +1,52 @@
+groups:
+  - name: sentinel_perimeter
+    interval: 30s
+    rules:
+
+      # Device inconnu détecté à proximité (RSSI élevé)
+      - alert: SentinelUnknownDeviceClose
+        expr: increase(sentinel_unknown_close_total[2m]) > 0
+        labels:
+          severity: warning
+          component: perimeter
+        annotations:
+          summary: "Device inconnu détecté dans le périmètre ({{ $labels.esp32_id }})"
+          description: |
+            L'ESP32 {{ $labels.esp32_id }} a détecté un device {{ $labels.type }} inconnu
+            à proximité (RSSI > seuil d'alerte).
+            Compteur sur 2min : {{ $value }}
+
+      # Pic d'inconnues — possible scan ou attaque
+      - alert: SentinelUnknownDeviceSpike
+        expr: increase(sentinel_unknown_close_total[5m]) > 5
+        labels:
+          severity: critical
+          component: perimeter
+        annotations:
+          summary: "Pic de devices inconnus ({{ $labels.esp32_id }})"
+          description: |
+            {{ $value }} détections d'inconnus en 5 minutes via {{ $labels.esp32_id }}.
+            Activité anormale — vérifier le périmètre physique.
+
+      # Beaucoup de devices actifs (foule / événement)
+      - alert: SentinelHighActiveDevices
+        expr: sentinel_active_devices{known="false"} > 10
+        for: 5m
+        labels:
+          severity: info
+          component: perimeter
+        annotations:
+          summary: "Grand nombre de devices inconnus actifs ({{ $value }})"
+          description: |
+            {{ $value }} devices inconnus actifs dans les 5 dernières minutes.
+
+      # ESP32 collector down
+      - alert: SentinelCollectorDown
+        expr: up{job="sentinel-collector"} == 0
+        for: 3m
+        labels:
+          severity: warning
+          component: perimeter
+        annotations:
+          summary: "Sentinel collector hors ligne"
+          description: "Le collecteur MQTT/Prometheus ne répond plus depuis 3 minutes."

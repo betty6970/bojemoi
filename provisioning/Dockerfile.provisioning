@@ -1,35 +1,56 @@
+### Stage 1: Builder
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Install build-time deps only (libpq-dev needed to compile psycopg2)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+
+### Stage 2: Final hardened image
 FROM python:3.11-slim
 
 LABEL maintainer="bojemoi@example.com"
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/install/bin:$PATH" \
+    PYTHONPATH="/install/lib/python3.11/site-packages"
 
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-#    build-essential \
-#    libpq-dev \
+# Runtime dep only (libpq5 for psycopg2, no -dev)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy installed packages from builder
+COPY --from=builder /install /install
+
+# Non-root user, no shell
+RUN groupadd -r appuser && useradd -r -g appuser -s /sbin/nologin -d /app appuser
+
+WORKDIR /app
 
 COPY orchestrator/app/ /app/app/
 
+# Compile to .pyc and remove source
 RUN python -m compileall -b /app/app && \
-    find /app/app -name "*.py" -delete
+    find /app/app -name "*.py" -delete && \
+    mkdir -p /app/app/logs /app/app/data && \
+    chown -R appuser:appuser /app
 
-RUN mkdir -p /app/app/logs /app/app/data
+USER appuser
 
+# Healthcheck sans curl (urllib built-in)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
 EXPOSE 8000
 
-WORKDIR /app
-
-#CMD ["python", "-m", "orchestrator.main"]
-
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

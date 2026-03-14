@@ -300,6 +300,7 @@ services:
       GF_DATABASE_USER: postgres
       GF_DATABASE_PASSWORD: bojemoi 
       GF_DATABASE_SSL_MODE: disable
+      SENTINEL_PG_PASS: changeme   # password du user sentinel dans la DB sentinel
     configs:
       - source: grafana-ini_config
         target: /etc/grafana/grafana.ini

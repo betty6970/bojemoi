@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  trivy-scanner:
+    image: localhost:5000/trivy-scanner:latest
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 10s
+    volumes:
+      - trivy_cache:/root/.cache/trivy
+      - trivy_reports:/reports
+    environment:
+      - TRIVY_NO_PROGRESS=true
+
+volumes:
+  trivy_cache:
+  trivy_reports:

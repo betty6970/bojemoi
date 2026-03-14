@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_pd_esp32_id
     ON perimeter_detections(esp32_id);
 
 CREATE INDEX IF NOT EXISTS idx_pd_mac_type_date
-    ON perimeter_detections(mac, detection_type, DATE(first_seen));
+    ON perimeter_detections(mac, detection_type, DATE(first_seen AT TIME ZONE 'UTC'));
 
 COMMENT ON TABLE perimeter_detections IS
     'Détections brutes WiFi/BLE reçues depuis les capteurs ESP32 via MQTT';

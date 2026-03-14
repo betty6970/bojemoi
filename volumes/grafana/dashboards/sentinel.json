@@ -1,0 +1,235 @@
+{
+  "title": "Sentinel — Périmètre IoT",
+  "uid": "sentinel-perimeter",
+  "tags": ["sentinel", "iot", "perimeter", "security"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+
+    { "type": "row", "title": "Statut temps réel", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false },
+
+    {
+      "id": 1, "title": "Devices inconnus actifs (5min)",
+      "type": "stat", "gridPos": { "h": 4, "w": 5, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sentinel_active_devices{known=\"false\"}", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "textMode": "auto", "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": {
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 1 },
+          { "color": "red", "value": 5 }
+        ]},
+        "mappings": [], "unit": "short"
+      }, "overrides": [] }
+    },
+
+    {
+      "id": 2, "title": "Devices connus actifs (5min)",
+      "type": "stat", "gridPos": { "h": 4, "w": 5, "x": 5, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sentinel_active_devices{known=\"true\"}", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": {
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+        "unit": "short"
+      }, "overrides": [] }
+    },
+
+    {
+      "id": 3, "title": "Alertes proches (24h)",
+      "type": "stat", "gridPos": { "h": 4, "w": 5, "x": 10, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "increase(sentinel_unknown_close_total[24h])", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": {
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null },
+          { "color": "orange", "value": 1 },
+          { "color": "red", "value": 10 }
+        ]},
+        "unit": "short"
+      }, "overrides": [] }
+    },
+
+    {
+      "id": 4, "title": "Total détections (24h)",
+      "type": "stat", "gridPos": { "h": 4, "w": 5, "x": 15, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(increase(sentinel_detections_total[24h]))", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "text", "value": null }] }, "unit": "short" }, "overrides": [] }
+    },
+
+    {
+      "id": 5, "title": "Collector",
+      "type": "stat", "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "up{job=\"sentinel-collector\"}", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": {
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "red", "value": null },
+          { "color": "green", "value": 1 }
+        ]},
+        "mappings": [
+          { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+        ]
+      }, "overrides": [] }
+    },
+
+    { "type": "row", "title": "Activité détections", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }, "collapsed": false },
+
+    {
+      "id": 10, "title": "Taux de détections (wifi + BLE)",
+      "type": "timeseries", "gridPos": { "h": 8, "w": 14, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by(known, type) (rate(sentinel_detections_total[2m]))",
+          "legendFormat": "{{type}} known={{known}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*known=false.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": ".*known=true.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] }
+        ]
+      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "id": 11, "title": "Alertes proches par capteur",
+      "type": "timeseries", "gridPos": { "h": 8, "w": 10, "x": 14, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by(esp32_id) (increase(sentinel_unknown_close_total[5m]))",
+          "legendFormat": "{{esp32_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 20, "drawStyle": "bars" } }
+      },
+      "options": { "tooltip": { "mode": "multi" }, "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    { "type": "row", "title": "Zones et triangulation", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }, "collapsed": false },
+
+    {
+      "id": 20, "title": "Devices inconnus par zone (dernière position connue)",
+      "type": "table", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "postgres", "uid": "sentinel-pg" },
+      "targets": [{
+        "rawSql": "SELECT pp.mac, pp.zone, pp.rssi_max, pp.esp32_count, TO_CHAR(pp.last_seen, 'HH24:MI:SS') as vu_a, pd.extra as ssid_probed FROM perimeter_positions pp LEFT JOIN perimeter_detections pd ON pd.mac = pp.mac AND pd.detection_type = 'wifi' WHERE pp.is_known = false ORDER BY pp.last_seen DESC LIMIT 20;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "options": { "showHeader": true },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "rssi_max" }, "properties": [
+            { "id": "displayName", "value": "RSSI" },
+            { "id": "custom.width", "value": 70 },
+            { "id": "thresholds", "value": { "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": -80 },
+              { "color": "yellow", "value": -70 },
+              { "color": "green", "value": -60 }
+            ]}},
+            { "id": "custom.displayMode", "value": "color-background" }
+          ]},
+          { "matcher": { "id": "byName", "options": "zone" }, "properties": [
+            { "id": "custom.width", "value": 120 }
+          ]}
+        ]
+      }
+    },
+
+    {
+      "id": 21, "title": "Répartition par zone (1h)",
+      "type": "piechart", "gridPos": { "h": 8, "w": 6, "x": 12, "y": 15 },
+      "datasource": { "type": "postgres", "uid": "sentinel-pg" },
+      "targets": [{
+        "rawSql": "SELECT zone, COUNT(DISTINCT mac) as devices FROM perimeter_positions WHERE last_seen > NOW() - INTERVAL '1 hour' AND is_known = false GROUP BY zone ORDER BY devices DESC;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "options": { "pieType": "pie", "displayLabels": ["name", "percent"], "legend": { "displayMode": "table", "placement": "right", "values": ["value"] } }
+    },
+
+    {
+      "id": 22, "title": "Devices inconnus vu N fois aujourd'hui",
+      "type": "bargauge", "gridPos": { "h": 8, "w": 6, "x": 18, "y": 15 },
+      "datasource": { "type": "postgres", "uid": "sentinel-pg" },
+      "targets": [{
+        "rawSql": "SELECT mac, SUM(seen_count) as total FROM perimeter_detections WHERE is_known = false AND DATE(first_seen) = CURRENT_DATE GROUP BY mac ORDER BY total DESC LIMIT 10;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "options": { "reduceOptions": { "calcs": ["last"] }, "orientation": "horizontal", "displayMode": "gradient" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [
+        { "color": "green", "value": null },
+        { "color": "yellow", "value": 5 },
+        { "color": "red", "value": 20 }
+      ]}}}
+    },
+
+    { "type": "row", "title": "Historique brut", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }, "collapsed": false },
+
+    {
+      "id": 30, "title": "Dernières détections inconnues",
+      "type": "table", "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "postgres", "uid": "sentinel-pg" },
+      "targets": [{
+        "rawSql": "SELECT TO_CHAR(last_seen, 'YYYY-MM-DD HH24:MI:SS') as \"Vu à\", mac as \"MAC\", CASE WHEN mac_randomized THEN 'Oui' ELSE 'Non' END as \"Aléatoire\", detection_type as \"Type\", rssi as \"RSSI\", extra as \"Extra (SSID/Nom)\", esp32_id as \"Capteur\", seen_count as \"Vues\" FROM perimeter_detections WHERE is_known = false ORDER BY last_seen DESC LIMIT 50;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Vu à", "desc": true }] },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "RSSI" }, "properties": [
+            { "id": "custom.width", "value": 70 },
+            { "id": "thresholds", "value": { "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": -80 },
+              { "color": "yellow", "value": -70 },
+              { "color": "green", "value": -60 }
+            ]}},
+            { "id": "custom.displayMode", "value": "color-background" }
+          ]},
+          { "matcher": { "id": "byName", "options": "Aléatoire" }, "properties": [
+            { "id": "custom.width", "value": 80 },
+            { "id": "mappings", "value": [{ "type": "value", "options": { "Oui": { "color": "orange", "text": "Oui" }, "Non": { "color": "green", "text": "Non" } } }] },
+            { "id": "custom.displayMode", "value": "color-text" }
+          ]}
+        ]
+      }
+    },
+
+    {
+      "id": 31, "title": "Heatmap — détections par heure (7j)",
+      "type": "heatmap", "gridPos": { "h": 8, "w": 24, "x": 0, "y": 34 },
+      "datasource": { "type": "postgres", "uid": "sentinel-pg" },
+      "targets": [{
+        "rawSql": "SELECT DATE_TRUNC('hour', last_seen) as time, COUNT(*) as value FROM perimeter_detections WHERE is_known = false AND last_seen > NOW() - INTERVAL '7 days' GROUP BY 1 ORDER BY 1;",
+        "format": "time_series",
+        "refId": "A"
+      }],
+      "options": { "calculate": false, "cellGap": 1, "color": { "scheme": "Oranges", "steps": 64 } }
+    }
+
+  ],
+  "schemaVersion": 38,
+  "version": 1
+}

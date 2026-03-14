@@ -23,17 +23,24 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("sentinel")
 
 # ─── Config ──────────────────────────────────────────────────────────────────
+def _secret(name: str, env_var: str, default: str = "") -> str:
+    """Read from Docker secret file, fall back to env var, then default."""
+    secret_path = f"/run/secrets/{name}"
+    if os.path.exists(secret_path):
+        return open(secret_path).read().strip()
+    return os.getenv(env_var, default)
+
 MQTT_HOST  = os.getenv("MQTT_HOST", "mosquitto")
 MQTT_PORT  = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER  = os.getenv("MQTT_USER", "sentinel")
-MQTT_PASS  = os.getenv("MQTT_PASS", "changeme")
+MQTT_PASS  = _secret("sentinel_mqtt_pass", "MQTT_PASS", "changeme")
 
 PG_DSN = (
     f"host={os.getenv('POSTGRES_HOST', 'postgres')} "
     f"port={os.getenv('POSTGRES_PORT', '5432')} "
     f"dbname={os.getenv('POSTGRES_DB', 'sentinel')} "
     f"user={os.getenv('POSTGRES_USER', 'sentinel')} "
-    f"password={os.getenv('POSTGRES_PASS', 'changeme')}"
+    f"password={_secret('sentinel_pg_pass', 'POSTGRES_PASS', 'changeme')}"
 )
 
 METRICS_PORT          = int(os.getenv("METRICS_PORT", "9101"))
@@ -318,6 +325,10 @@ def main():
             break
         except Exception as e:
             log.warning(f"DB init attempt {attempt+1}/10: {e}")
+            try:
+                get_db().rollback()
+            except Exception:
+                pass
             time.sleep(5)
 
     # Démarrer le worker de zone aggregation en background

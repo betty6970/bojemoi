@@ -1,0 +1,16 @@
+apiVersion: 1
+datasources:
+  - name: Sentinel DB
+    uid: sentinel-pg
+    type: postgres
+    url: postgres:5432
+    database: sentinel
+    user: sentinel
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: ${SENTINEL_PG_PASS}
+    isDefault: false
+    editable: false

@@ -83,20 +83,111 @@ test:integration:
     - main
     - develop
 
-# Scan de vulnérabilités avec Trivy
-security:trivy:
+# Scan Trivy — misconfigurations dans TOUS les Dockerfiles du repo
+security:trivy:dockerfile:
   stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
   script:
-    - |
-      for image in $(docker-compose -f ${COMPOSE_FILE} config | grep 'image:' | awk '{print $2}'); do
-        echo "🔍 Scan Trivy: $image"
-        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-          aquasec/trivy image --severity HIGH,CRITICAL --exit-code 1 $image
-      done
-    - echo "✅ Scan Trivy terminé"
+    # Bloquer sur HIGH/CRITICAL
+    - trivy config
+        --exit-code 1
+        --severity HIGH,CRITICAL
+        --format sarif
+        --output trivy-dockerfile-report.sarif
+        .
+    # Reporter LOW/MEDIUM sans bloquer
+    - trivy config
+        --exit-code 0
+        --severity LOW,MEDIUM
+        .
+  artifacts:
+    reports:
+      sast: trivy-dockerfile-report.sarif
+    paths:
+      - trivy-dockerfile-report.sarif
+    expire_in: 1 week
   only:
     - main
-  allow_failure: true
+    - develop
+
+# Scan Trivy — toutes les images localhost:5000 référencées dans les stacks
+security:trivy:images:
+  stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  variables:
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_CACHE_DIR: ".trivycache"
+    DOCKER_HOST: "tcp://docker:2375"
+  services:
+    - docker:dind
+  cache:
+    key: trivy-db
+    paths:
+      - .trivycache/
+  script:
+    - |
+      # Extraire toutes les images localhost:5000 uniques depuis les stacks
+      IMAGES=$(grep -h 'image: localhost:5000/' stack/*.yml \
+        | awk '{print $2}' \
+        | sort -u)
+
+      echo "Images a scanner :"
+      echo "$IMAGES"
+
+      FAILED=0
+
+      for IMAGE in $IMAGES; do
+        echo ""
+        echo "=== Scan: $IMAGE ==="
+
+        # Pull l'image depuis le registry local
+        docker pull "$IMAGE" 2>/dev/null || {
+          echo "WARN: impossible de puller $IMAGE, skipped"
+          continue
+        }
+
+        # CRITICAL → bloquant
+        trivy image \
+          --exit-code 1 \
+          --severity CRITICAL \
+          --ignore-unfixed \
+          --format table \
+          "$IMAGE" || FAILED=1
+
+        # HIGH → non bloquant, loggé
+        trivy image \
+          --exit-code 0 \
+          --severity HIGH \
+          --ignore-unfixed \
+          --format table \
+          "$IMAGE"
+      done
+
+      # Rapport SARIF global (toutes images, toutes sévérités)
+      trivy image \
+        --exit-code 0 \
+        --severity HIGH,CRITICAL \
+        --ignore-unfixed \
+        --format sarif \
+        --output trivy-images-report.sarif \
+        $(echo "$IMAGES" | tr '\n' ' ') 2>/dev/null || true
+
+      exit $FAILED
+  artifacts:
+    reports:
+      sast: trivy-images-report.sarif
+    paths:
+      - trivy-images-report.sarif
+    expire_in: 1 week
+    when: always
+  dependencies:
+    - build:images
+  only:
+    - main
 
 # Scan OWASP ZAP
 security:zap:

@@ -41,7 +41,7 @@ services:
     configs:
       - source: mosquitto_conf
         target: /mosquitto/config/mosquitto.conf
-      - source: mosquitto_passwd
+      - source: mosquitto_passwd_v2
         target: /mosquitto/config/passwd
         uid: '1883'
         gid: '1883'
@@ -136,5 +136,5 @@ services:
 configs:
   mosquitto_conf:
     file: ../sentinel/mosquitto/mosquitto.conf
-  mosquitto_passwd:
+  mosquitto_passwd_v2:
     external: true
