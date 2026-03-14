@@ -1,0 +1,140 @@
+# Bojemoi Lab — Sentinel (Perimeter IoT sensor)
+# Détection smartphones ESP32 → MQTT → PostgreSQL + Prometheus
+#
+# Pré-requis :
+#   docker secret create sentinel_mqtt_pass  <(echo "changeme")
+#   docker secret create sentinel_pg_pass    <(echo "changeme")
+#   docker network create --driver overlay --attachable iot_network
+#
+# Deploy:
+#   docker stack deploy -c stack/55-service-sentinel.yml sentinel --prune --resolve-image always
+
+networks:
+  backend:
+    external: true
+  monitoring:
+    external: true
+  iot_network:
+    name: iot
+    driver: overlay
+    attachable: true
+
+volumes:
+  mosquitto_data:
+    driver: local
+  mosquitto_config:
+    driver: local
+
+secrets:
+  sentinel_mqtt_pass:
+    external: true
+  sentinel_pg_pass:
+    external: true
+
+services:
+
+  # ─── MQTT Broker ─────────────────────────────────────────────────────────
+  mosquitto:
+    image: localhost:5000/mosquitto:2.0
+    hostname: mosquitto
+
+    configs:
+      - source: mosquitto_conf
+        target: /mosquitto/config/mosquitto.conf
+      - source: mosquitto_passwd
+        target: /mosquitto/config/passwd
+        uid: '1883'
+        gid: '1883'
+        mode: 0400
+
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_config:/mosquitto/config
+
+    ports:
+      - "1883:1883"    # MQTT (ESP32 sur le LAN IoT)
+
+    networks:
+      - iot_network
+      - backend
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 64M
+
+  # ─── Collector MQTT → PostgreSQL + Prometheus ─────────────────────────────
+  collector:
+    image: localhost:5000/sentinel-collector:latest
+    hostname: sentinel-collector
+    depends_on:
+      - mosquitto
+
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_USER: sentinel
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: sentinel
+      POSTGRES_USER: sentinel
+      METRICS_PORT: "9101"
+      RSSI_ALERT_THRESHOLD: "-65"
+      PYTHONUNBUFFERED: "1"
+
+    secrets:
+      - sentinel_mqtt_pass
+      - sentinel_pg_pass
+
+    ports:
+      - "9101:9101"    # Prometheus scrape
+
+    networks:
+      - backend
+      - monitoring
+      - iot_network
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+
+configs:
+  mosquitto_conf:
+    file: ../sentinel/mosquitto/mosquitto.conf
+  mosquitto_passwd:
+    external: true
