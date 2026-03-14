@@ -37,7 +37,7 @@ inhibit_rules:
 receivers:
   - name: 'telegram-perimeter'
     telegram_configs:
-      - bot_token: '8174135689:AAHc1dO-NKen8Lvtcskmyl1qWQM2zmArmPk'
+      - bot_token_file: /run/secrets/telegram_bot_token
         chat_id: -5087117106
         parse_mode: 'HTML'
         message: |

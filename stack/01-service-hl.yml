@@ -606,6 +606,8 @@ services:
 #      - /opt/bojemoi/volumes/alertmanager/templates/default.tmpl:/etc/alertmanager/templates/default.tmpl:ro
       - /opt/bojemoi/volumes/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
+    secrets:
+      - telegram_bot_token
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
