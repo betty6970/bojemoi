@@ -221,8 +221,9 @@ services:
     environment:
       - ARME_TYPE=uzi
       - TARGET=container1
-      - LHOST=lhost.bojemoi.lab
-      - LPORT=4444
+      # LHOST non défini → auto-détection par container (chaque worker utilise sa propre IP)
+      - LPORT=24444
+      - LPORT_BIND=4444
       - BIND_PORT=5556
       - PYTHONUNBUFFERED=1
       - DEBUG_MODE=1

