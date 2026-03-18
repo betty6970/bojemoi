@@ -1,0 +1,38 @@
+server: Bojemoi Lab
+
+categories:
+  - name: "🏠 Général"
+    channels:
+      - annonces
+      - règles
+      - général
+      - off-topic
+
+  - name: "🏗️ Infrastructure"
+    channels:
+      - architecture
+      - docker-swarm
+      - deployments
+      - gitops
+      - ci-cd
+
+  - name: "🔬 Intelligence"
+    channels:
+      - borodino
+      - ml-threat
+      - osint
+      - mitre-attack
+
+  - name: "🔒 Sécurité"
+    channels:
+      - monitoring
+      - alertes
+      - security
+      - faraday
+      - trivy
+
+  - name: "📝 Contenu"
+    channels:
+      - blog
+      - projets
+      - ressources

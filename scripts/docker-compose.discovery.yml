@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # Base de données CTI existante
+  postgres:
+    image: postgres:15-alpine
+    container_name: bojemoi_cti_db
+    environment:
+      POSTGRES_DB: bojemoi_cti
+      POSTGRES_USER: cti_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - cti_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - bojemoi_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cti_user -d bojemoi_cti"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Service Tor (proxy SOCKS5)
+  tor:
+    image: alpine:latest
+    container_name: bojemoi_tor
+    command: sh -c "apk add --no-cache tor && tor -f /etc/tor/torrc"
+    volumes:
+      - ./tor_config:/etc/tor
+    networks:
+      - bojemoi_net
+    ports:
+      - "9050:9050"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9050"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Discovery Service
+  breachforum_discovery:
+    build:
+      context: .
+      dockerfile: Dockerfile.discovery
+    container_name: bojemoi_discovery
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tor:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_NAME: bojemoi_cti
+      DB_USER: cti_user
+      DB_PASS: ${DB_PASSWORD:-changeme}
+      PROXY_URL: socks5://tor:9050
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      LOG_LEVEL: INFO
+    networks:
+      - bojemoi_net
+    restart: on-failure
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Scheduler (cron-like runner)
+  scheduler:
+    image: python:3.11-alpine
+    container_name: bojemoi_discovery_scheduler
+    depends_on:
+      - breachforum_discovery
+    environment:
+      DISCOVERY_CONTAINER: bojemoi_discovery
+      SCHEDULE_INTERVAL: 3600  # Hourly
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - bojemoi_net
+    entrypoint: |
+      sh -c "
+        apk add --no-cache curl
+        while true; do
+          echo \"[$(date)] Running discovery...\"
+          docker exec bojemoi_discovery python breachforum_onion_discovery.py
+          sleep \$SCHEDULE_INTERVAL
+        done
+      "
+
+networks:
+  bojemoi_net:
+    driver: bridge
+
+volumes:
+  cti_data:
+    driver: local
