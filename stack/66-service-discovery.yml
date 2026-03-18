@@ -1,0 +1,73 @@
+# Breachforum CTI Discovery Service
+# Scrape multi-source .onion addresses, validate via Tor, store in PostgreSQL, alert Telegram.
+#
+# Pre-deploy:
+#   1. Build & push image:
+#        docker build -f discovery/Dockerfile -t localhost:5000/discovery:latest discovery/
+#        docker push localhost:5000/discovery:latest
+#
+#   2. Create PostgreSQL database (run on manager):
+#        docker exec $(docker ps -qf name=base_postgres) psql -U postgres \
+#          -c "CREATE DATABASE bojemoi_cti;"
+#
+#   3. Create Docker secrets (postgres password + already existing telegram token):
+#        printf 'bojemoi' | docker secret create discovery_db_password -
+#
+# Deploy:
+#   docker stack deploy -c stack/66-service-discovery.yml discovery --prune --resolve-image always
+
+networks:
+  backend:
+    external: true
+
+secrets:
+  telegram_bot_token:
+    external: true
+  discovery_db_password:
+    external: true
+
+services:
+  discovery:
+    image: localhost:5000/discovery:latest
+    hostname: breachforum-discovery
+
+    environment:
+      DB_HOST: postgres
+      DB_NAME: bojemoi_cti
+      DB_USER: postgres
+      PROXY_URL: socks5://127.0.0.1:9050
+      TELEGRAM_CHAT_ID: "-5087117106"
+      LOG_LEVEL: INFO
+      SCHEDULE_INTERVAL: "3600"
+      PYTHONUNBUFFERED: "1"
+
+    secrets:
+      - telegram_bot_token
+      - discovery_db_password
+
+    networks:
+      - backend
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 10
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
