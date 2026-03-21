@@ -109,6 +109,10 @@ services:
       - ZAP_PORT=8090
       - TARGET_URL=${TARGET_URL:-https://zap.bojemoi.lab}
       - REPORT_FORMAT=html
+    volumes:
+      - zap-data:/zap/wrk
+      - zap-reports:/zap/reports
+      - scan_logs:/zap/logs
     networks:
       - backend
       - pentest
@@ -202,7 +206,7 @@ services:
       - ARME_TYPE=bm12
       - TARGET=container1
       - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=0
+      - DEBUG_MODE=1
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - SHODAN_API_KEY=${SHODAN_API_KEY:-}
@@ -213,7 +217,7 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 5
+      replicas: 1
     command: /usr/bin/thearm_bm12
 
   uzi-service:
@@ -229,6 +233,7 @@ services:
       - DEBUG_MODE=1
       - MODE_RUN=1
       - TELEGRAM_ALERT_CHAT_ID=-5087117106
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     secrets:
       - telegram_bot_token
       - telegram_alert_chat_id
@@ -238,18 +243,8 @@ services:
         max-size: "10m"
         max-file: "3"
     deploy:
+      <<: *deploy-template
       replicas: 1
-      placement:
-        constraints:
-          - node.role == worker
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-      update_config:
-        parallelism: 1
-        delay: 10s
-        failure_action: rollback
       resources:
         limits:
           cpus: '1.0'

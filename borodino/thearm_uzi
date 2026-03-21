@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # corrige par code copilot
 import ipaddress
+import json
 import os
 import html
 import psutil
@@ -12,6 +13,11 @@ import psycopg2
 import requests
 from pathlib import Path
 from pymetasploit3.msfrpc import MsfRpcClient
+
+try:
+    import anthropic as _anthropic_sdk
+except ImportError:
+    _anthropic_sdk = None
 
 # Récupération sécurisée des credentials PostgreSQL
 PG_USER = os.getenv("PG_USER", "postgres")
@@ -157,7 +163,7 @@ def get_host_services_by_address(address):
         with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT s.port, s.name FROM services s "
+                    "SELECT s.port, s.name, s.info FROM services s "
                     "JOIN hosts h ON h.id = s.host_id "
                     "WHERE host(h.address::inet) = %s AND s.state = 'open';",
                     (str(address),)
@@ -168,13 +174,65 @@ def get_host_services_by_address(address):
         return []
 
 
+def extract_search_terms_via_ai(services):
+    """Utilise Claude pour extraire des termes de recherche MSF depuis les colonnes info."""
+    if not _anthropic_sdk:
+        return set()
+    api_key = os.getenv("ANTHROPIC_API_KEY") or read_secret("anthropic_api_key")
+    if not api_key:
+        return set()
+
+    services_data = [
+        {"port": port, "name": name or "", "info": info or ""}
+        for port, name, info in services
+        if info and info.strip()
+    ]
+    if not services_data:
+        return set()
+
+    try:
+        client = _anthropic_sdk.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=256,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Extract Metasploit module search terms from these network services.\n"
+                    "Return only product/software names that match MSF exploit module names.\n"
+                    f"Services:\n{json.dumps(services_data, indent=2)}\n"
+                    'Return JSON: {"search_terms": ["term1", "term2", ...]}\n'
+                    "Examples: vsftpd, proftpd, unreal, distcc, tomcat, samba, mysql, apache, bind"
+                )
+            }],
+            output_config={"format": {
+                "type": "json_schema",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "search_terms": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["search_terms"],
+                    "additionalProperties": False
+                }
+            }}
+        )
+        data = json.loads(response.content[0].text)
+        terms = set(t.lower() for t in data.get("search_terms", []))
+        print(f"[AI] Termes extraits depuis info: {sorted(terms)}")
+        return terms
+    except Exception as e:
+        print(f"[AI] Extraction échouée: {e}")
+        return set()
+
+
 def build_targeted_exploits(client, services):
     """
     Construit une liste d'exploits ciblés basée sur les services découverts.
     Retourne une liste dédupliquée de modules exploit.
     """
     search_terms = set()
-    for port, svc_name in services:
+    for port, svc_name, *_ in services:
         svc = (svc_name or '').lower()
         if svc in SERVICE_EXPLOIT_MAP:
             for term in SERVICE_EXPLOIT_MAP[svc]:
@@ -184,6 +242,10 @@ def build_targeted_exploits(client, services):
             if mapped in SERVICE_EXPLOIT_MAP:
                 for term in SERVICE_EXPLOIT_MAP[mapped]:
                     search_terms.add(term)
+
+    # Enrichissement IA : extraire les termes depuis la colonne info
+    ai_terms = extract_search_terms_via_ai(services)
+    search_terms.update(ai_terms)
 
     if not search_terms:
         print("[WARN] Aucun service mappé, fallback sur 'linux'")
@@ -449,7 +511,7 @@ def main():
          if not services:
              print(f"[DEBUG] Aucun service connu pour {host} — skip.")
              continue
-         print(f"[DEBUG] {len(services)} services: {[(p, s) for p, s in services]}")
+         print(f"[DEBUG] {len(services)} services: {[(p, s) for p, s, *_ in services]}")
          search_results = build_targeted_exploits(client, services)
          min_date = "2000-01-01"
      else:
@@ -462,7 +524,7 @@ def main():
          print("[INFO] Aucun hôte disponible.")
          return
 
-     open_ports = {port for port, _ in services} if services else set()
+     open_ports = {port for port, *_ in services} if services else set()
      print(f"[INFO] Scan de {host} en cours... ports ouverts: {sorted(open_ports)}")
 
      check_con = client.consoles.console()

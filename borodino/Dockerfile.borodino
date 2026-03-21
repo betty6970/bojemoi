@@ -35,7 +35,8 @@ RUN apk update && apk add --no-cache \
 
 # Install Python dependencies for pymetasploit3
 RUN pip3 install --no-cache-dir --break-system-packages msgpack retry && \
-    pip3 install --no-cache-dir --break-system-packages pymetasploit3
+    pip3 install --no-cache-dir --break-system-packages pymetasploit3 && \
+    pip3 install --no-cache-dir --break-system-packages anthropic
 
 # Set the working directory
 WORKDIR /opt/metasploit
