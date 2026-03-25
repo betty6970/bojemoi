@@ -17,6 +17,7 @@ from app.models.schemas import (
     BlockchainStatsResponse,
     Rapid7DeployRequest, Rapid7RegisterRequest,
     Rapid7DeployResponse, Rapid7StatusResponse,
+    VulnHubDeployRequest, VulnHubDeployResponse, VulnHubTargetsResponse,
 )
 from app.services.gitea_client import GiteaClient
 from app.services.xenserver_client_real import XenServerClient
@@ -26,6 +27,7 @@ from app.services.database import Database
 from app.services.ip2location_client import IP2LocationClient
 from app.services.blockchain import BlockchainService
 from app.services.rapid7_manager import Rapid7Manager
+from app.services.vulnhub_manager import VulnHubManager, VULNHUB_CATALOG
 from app.middleware.ip_validation import IPValidationMiddleware, get_request_ip_info
 from app.middleware.metrics import MetricsMiddleware
 from app.metrics import (
@@ -70,13 +72,14 @@ db: Optional[Database] = None
 ip2location_client: Optional[IP2LocationClient] = None
 blockchain_service: Optional[BlockchainService] = None
 rapid7_manager: Optional[Rapid7Manager] = None
+vulnhub_manager: Optional[VulnHubManager] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan (startup and shutdown)"""
     global gitea_client, xenserver_client, docker_client, cloudinit_gen, db
-    global ip2location_client, blockchain_service, rapid7_manager
+    global ip2location_client, blockchain_service, rapid7_manager, vulnhub_manager
 
     # Startup
     logger.info("Initializing Bojemoi Orchestrator...")
@@ -130,6 +133,11 @@ async def lifespan(app: FastAPI):
         await rapid7_manager.init()
         logger.info("Rapid7Manager initialized (host_debug ready)")
 
+        # Initialize VulnHub manager (same host_debug table, multi-target)
+        vulnhub_manager = VulnHubManager(settings.MSF_DB_URL)
+        await vulnhub_manager.init()
+        logger.info(f"VulnHubManager initialized ({len(VULNHUB_CATALOG)} VMs in catalogue)")
+
         # Set Prometheus app info
         set_app_info(
             version=settings.API_VERSION,
@@ -169,6 +177,9 @@ async def lifespan(app: FastAPI):
 
     if rapid7_manager:
         await rapid7_manager.close()
+
+    if vulnhub_manager:
+        await vulnhub_manager.close()
 
     logger.info("Shutdown complete")
 
@@ -692,6 +703,177 @@ async def rapid7_status():
         vm_power_state=vm_power_state,
         message="OK" if host else "Aucun hôte debug enregistré (host_debug vide).",
     )
+
+
+# ─── VulnHub VM Deployment ────────────────────────────────────────────────────
+
+@app.get("/api/v1/vm/vulnhub/catalog", tags=["VulnHub"])
+async def vulnhub_catalog():
+    """Retourne le catalogue des VMs VulnHub disponibles.
+
+    Les VMs doivent être pré-importées comme templates XenServer.
+    Utiliser scripts/import_vulnhub_ova.sh sur l'hôte XenServer pour l'import initial.
+    """
+    return {
+        "catalog": [
+            {"vm_id": vm_id, **entry}
+            for vm_id, entry in VULNHUB_CATALOG.items()
+        ],
+        "total": len(VULNHUB_CATALOG),
+        "note": "Chaque VM nécessite un template XenServer pré-importé (champ xen_template).",
+    }
+
+
+@app.get("/api/v1/vm/vulnhub/targets", response_model=VulnHubTargetsResponse, tags=["VulnHub"])
+async def vulnhub_targets():
+    """Retourne les VMs VulnHub actives dans host_debug (cibles bm12/uzi)."""
+    targets = await vulnhub_manager.list_targets()
+    serialized = [
+        {k: (str(v) if hasattr(v, "isoformat") else v) for k, v in t.items()}
+        for t in targets
+    ]
+    return VulnHubTargetsResponse(targets=serialized, total=len(serialized))
+
+
+@app.post("/api/v1/vm/vulnhub/{vm_id}", response_model=VulnHubDeployResponse, tags=["VulnHub"])
+async def deploy_vulnhub_vm(vm_id: str, request: VulnHubDeployRequest, req: Request):
+    """Déploie une VM VulnHub depuis le catalogue.
+
+    - Vérifie la présence du vm_id dans le catalogue
+    - Clone le template XenServer correspondant (sans cloud-init)
+    - Démarre la VM, détecte l'IP via XenTools
+    - Ajoute à host_debug pour ciblage par bm12/uzi (DEBUG_MODE=1)
+    - Enregistre dans l'audit blockchain
+
+    Prérequis : template XenServer importé (cf. scripts/import_vulnhub_ova.sh).
+    """
+    entry = VULNHUB_CATALOG.get(vm_id)
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"VM '{vm_id}' absente du catalogue. Disponibles : {list(VULNHUB_CATALOG.keys())}",
+        )
+
+    ip_info = get_request_ip_info(req)
+    start_time = time.time()
+    vm_name = f"vulnhub-{vm_id}"
+    xen_template = entry["xen_template"]
+    cpu = request.cpu_override or entry["cpu"]
+    memory_mb = request.memory_mb_override or entry["memory_mb"]
+    disk_gb = entry["disk_gb"]
+
+    try:
+        logger.info(f"Déploiement VulnHub VM '{vm_name}' depuis template '{xen_template}'")
+
+        vm_uuid = await xenserver_client.create_vm(
+            name=vm_name,
+            template=xen_template,
+            cpu=cpu,
+            memory=memory_mb,
+            disk=disk_gb,
+            network=request.network,
+            cloudinit_data=None,
+        )
+        logger.info(f"VM VulnHub créée : {vm_uuid}")
+
+        ip = await _poll_vm_ip(vm_uuid, request.ip_poll_timeout)
+
+        registered = False
+        if ip:
+            await vulnhub_manager.add_target(
+                address=ip,
+                vm_name=vm_name,
+                vm_uuid=vm_uuid,
+            )
+            registered = True
+            logger.info(f"host_debug ajouté : {ip} ({vm_name})")
+        else:
+            logger.warning(
+                f"IP non détectée après {request.ip_poll_timeout}s "
+                f"— enregistrement manuel via POST /api/v1/vm/rapid7/register"
+            )
+
+        await blockchain_service.create_block(
+            deployment_type="vm",
+            name=vm_name,
+            config={**request.dict(), "vm_id": vm_id, "xen_uuid": vm_uuid, "ip": ip,
+                    "known_vulns": entry["known_vulns"]},
+            resource_ref=vm_uuid,
+            status="success",
+            source_ip=ip_info.get("source_ip"),
+            source_country=ip_info.get("source_country"),
+        )
+        await db.log_deployment(
+            deployment_type="vm",
+            name=vm_name,
+            config={**request.dict(), "vm_id": vm_id, "xen_uuid": vm_uuid, "ip": ip},
+            resource_ref=vm_uuid,
+            status="success",
+        )
+
+        duration = time.time() - start_time
+        record_deployment("vm", "success", "dev", duration)
+
+        msg = (
+            f"VM {vm_name} déployée ({vm_uuid}), IP={ip}, ajoutée à host_debug."
+            if registered
+            else f"VM {vm_name} déployée ({vm_uuid}), IP non disponible — enregistrement manuel requis."
+        )
+        return VulnHubDeployResponse(
+            success=True,
+            vm_id=vm_id,
+            vm_uuid=vm_uuid,
+            ip_address=ip,
+            host_debug_registered=registered,
+            known_vulns=entry["known_vulns"],
+            message=msg,
+        )
+
+    except Exception as e:
+        duration = time.time() - start_time
+        record_deployment("vm", "failed", "dev", duration)
+        record_deployment_error("vm", type(e).__name__)
+        logger.error(f"Échec déploiement VulnHub VM '{vm_id}' : {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Échec déploiement VM VulnHub '{vm_id}' : {e}",
+        )
+
+
+@app.delete("/api/v1/vm/vulnhub/{vm_id}", tags=["VulnHub"])
+async def delete_vulnhub_vm(vm_id: str):
+    """Arrête une VM VulnHub et la retire de host_debug.
+
+    - Récupère le vm_uuid depuis host_debug
+    - Arrête et supprime la VM XenServer
+    - Supprime l'entrée host_debug correspondante
+    """
+    vm_name = f"vulnhub-{vm_id}"
+    targets = await vulnhub_manager.list_targets()
+    target = next((t for t in targets if t.get("vm_name") == vm_name), None)
+
+    vm_uuid = target.get("vm_uuid") if target else None
+
+    deleted_vm = False
+    if vm_uuid:
+        try:
+            await xenserver_client.delete_vm(vm_uuid, force=True)
+            deleted_vm = True
+            logger.info(f"VM XenServer supprimée : {vm_uuid}")
+        except Exception as e:
+            logger.warning(f"Impossible de supprimer la VM XenServer {vm_uuid} : {e}")
+
+    removed = await vulnhub_manager.remove_target_by_name(vm_name)
+    logger.info(f"host_debug : {removed} entrée(s) supprimée(s) pour '{vm_name}'")
+
+    return {
+        "success": True,
+        "vm_id": vm_id,
+        "vm_uuid": vm_uuid,
+        "vm_deleted": deleted_vm,
+        "host_debug_removed": removed,
+        "message": f"VM '{vm_name}' supprimée{'  (XenServer + host_debug)' if deleted_vm else ' (host_debug uniquement — VM XenServer introuvable)'}.",
+    }
 
 
 @app.get("/api/v1/deployments", response_model=DeploymentListResponse, tags=["Deployments"])

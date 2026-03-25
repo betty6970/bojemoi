@@ -411,3 +411,56 @@ class Rapid7StatusResponse(BaseModel):
     vm_uuid: Optional[str] = None
     vm_power_state: Optional[str] = None
     message: str
+
+
+# ─── VulnHub VM Deployment ────────────────────────────────────────────────────
+
+class VulnHubDeployRequest(BaseModel):
+    """Déploiement d'une VM VulnHub depuis le catalogue.
+
+    La VM est clonée depuis le template XenServer correspondant (pré-importé).
+    Après démarrage, l'IP est auto-détectée et ajoutée à host_debug.
+    """
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "network": "lab-internal",
+                "ip_poll_timeout": 120,
+            }
+        }
+    )
+
+    network: str = Field(
+        default="lab-internal",
+        pattern=NETWORK_PATTERN,
+        description="Réseau XenServer isolé pour la VM de test"
+    )
+    cpu_override: Optional[int] = Field(
+        default=None, ge=1, le=8,
+        description="Override du nombre de vCPUs (utilise valeur catalogue par défaut)"
+    )
+    memory_mb_override: Optional[int] = Field(
+        default=None, ge=256, le=8192,
+        description="Override de la RAM en MB"
+    )
+    ip_poll_timeout: int = Field(
+        default=120, ge=10, le=300,
+        description="Secondes max pour attendre l'IP guest (via XenTools)"
+    )
+
+
+class VulnHubDeployResponse(BaseModel):
+    """Réponse au déploiement d'une VM VulnHub."""
+    success: bool
+    vm_id: str
+    vm_uuid: Optional[str] = None
+    ip_address: Optional[str] = None
+    host_debug_registered: bool = False
+    known_vulns: List[str] = []
+    message: str
+
+
+class VulnHubTargetsResponse(BaseModel):
+    """Liste des VMs VulnHub actives dans host_debug."""
+    targets: List[Dict[str, Any]]
+    total: int
