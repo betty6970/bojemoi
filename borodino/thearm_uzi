@@ -164,6 +164,28 @@ SERVICE_EXPLOIT_MAP = {
     'bindshell':    ['bindshell'],
 }
 
+# Termes de recherche MSF par indicateur de vulnérabilité (depuis bm12 attack_surface)
+_VULN_EXPLOIT_TERMS = {
+    'wordpress':       ['wp_file_manager', 'wp_admin_ajax', 'wp_crop_image', 'wordpress'],
+    'joomla':          ['joomla', 'com_fields', 'com_media'],
+    'drupal':          ['drupal', 'drupalgeddon'],
+    'shellshock':      ['shellshock', 'apache_mod_cgi', 'apache_cgi_bash'],
+    'tomcat_manager':  ['tomcat', 'jmx_console', 'coyote'],
+    'webdav':          ['webdav', 'ms09_020'],
+    'phpmyadmin':      ['phpmyadmin'],
+    'jenkins':         ['jenkins', 'hudson'],
+    'struts':          ['struts'],
+    'vsftpd_backdoor': ['vsftpd'],
+    'proftpd_modcopy': ['proftpd'],
+    'anonymous_ftp':   ['ftp'],
+    'redis_noauth':    ['redis'],
+    'mongodb_noauth':  ['mongodb'],
+    'samba_old':       ['samba'],
+    'elasticsearch':   ['elasticsearch'],
+    'smtp_openrelay':  ['smtp'],
+    'nfs_export':      ['nfs'],
+}
+
 PORT_SERVICE_MAP = {
     21: 'ftp', 22: 'ssh', 23: 'telnet', 25: 'smtp', 53: 'domain',
     80: 'http', 139: 'netbios-ssn', 443: 'https', 445: 'microsoft-ds',
@@ -245,15 +267,18 @@ def build_profile_filter(services):
 
 
 _OS_EXPLOIT_PATHS = {
-    'linux':   ['exploit/linux/', 'exploit/unix/', 'exploit/multi/'],
-    'windows': ['exploit/windows/', 'exploit/multi/'],
-    'osx':     ['exploit/osx/', 'exploit/multi/'],
-    'bsd':     ['exploit/freebsd/', 'exploit/netbsd/', 'exploit/unix/', 'exploit/multi/'],
-    'solaris': ['exploit/solaris/', 'exploit/unix/', 'exploit/multi/'],
-    'android': ['exploit/android/', 'exploit/multi/'],
+    'linux':    ['exploit/linux/', 'exploit/unix/', 'exploit/multi/'],
+    'windows':  ['exploit/windows/', 'exploit/multi/'],
+    'osx':      ['exploit/osx/', 'exploit/multi/'],
+    'bsd':      ['exploit/freebsd/', 'exploit/netbsd/', 'exploit/unix/', 'exploit/multi/'],
+    'solaris':  ['exploit/solaris/', 'exploit/unix/', 'exploit/multi/'],
+    'android':  ['exploit/android/', 'exploit/multi/'],
     # IoT/embedded : cibler les modules HTTP spécifiques routeurs + linux générique
-    'iot':     ['exploit/linux/http/', 'exploit/linux/misc/', 'exploit/unix/http/',
-                'exploit/multi/http/', 'exploit/multi/', 'exploit/linux/'],
+    'iot':      ['exploit/linux/http/', 'exploit/linux/misc/', 'exploit/unix/http/',
+                 'exploit/multi/http/', 'exploit/multi/', 'exploit/linux/'],
+    # Web apps (WordPress, Joomla, Drupal, Shellshock, WebDAV...)
+    'vuln_web': ['exploit/unix/webapp/', 'exploit/multi/http/', 'exploit/unix/http/',
+                 'exploit/linux/http/', 'exploit/multi/'],
 }
 
 
@@ -264,6 +289,9 @@ def get_os_paths(os_name):
     if any(k in os_lower for k in ('iot', 'embedded', 'openwrt', 'busybox',
                                     'ddwrt', 'tomato', 'uclibc', 'router')):
         return _OS_EXPLOIT_PATHS['iot']
+    # Web app vulnérables (WordPress, Joomla, Drupal, Shellshock...)
+    if 'vuln_web' in os_lower or 'webapp' in os_lower:
+        return _OS_EXPLOIT_PATHS['vuln_web']
     if 'windows' in os_lower:
         return _OS_EXPLOIT_PATHS['windows']
     if 'linux' in os_lower or 'ubuntu' in os_lower or 'debian' in os_lower:
@@ -477,10 +505,11 @@ def extract_search_terms_via_ai(services):
         return set()
 
 
-def build_targeted_exploits(client, services, os_name='', products=None):
+def build_targeted_exploits(client, services, os_name='', products=None, scan_details=None):
     """
     Construit une liste d'exploits ciblés basée sur les services découverts.
     Si products (depuis bm12_v3 scan_details) est fourni, utilisé en priorité.
+    attack_surface (depuis bm12 detect_vuln_indicators) enrichit les termes de recherche.
     Retourne une liste dédupliquée de modules exploit.
     """
     search_terms = set()
@@ -492,6 +521,18 @@ def build_targeted_exploits(client, services, os_name='', products=None):
             if name and len(name) >= 3:
                 search_terms.add(name)
         print(f"[PROD] Termes depuis bm12_v3 products: {sorted(search_terms)}")
+
+    # Termes depuis attack_surface bm12 (VulnHub indicators)
+    attack_surface = (scan_details or {}).get('attack_surface', [])
+    if attack_surface:
+        as_terms = set()
+        for indicator in attack_surface:
+            vuln_name = indicator.get('vuln', '')
+            for term in _VULN_EXPLOIT_TERMS.get(vuln_name, []):
+                as_terms.add(term)
+        if as_terms:
+            print(f"[VULN] Termes depuis attack_surface: {sorted(as_terms)}")
+            search_terms.update(as_terms)
 
     # Fallback : mapping statique service → termes si aucun produit
     if not search_terms:
@@ -773,13 +814,17 @@ def main():
          continue
      print(f"[DEBUG] {len(services)} services: {[(p, s) for p, s, *_ in services]}")
      os_name = get_host_os(str(host)) or 'Linux'
-     # Forcer iot_embedded si bm12 l'a classifié ainsi
+     # Forcer le type bm12 si classifié (iot_embedded, vuln_web)
      host_type = scan_details.get('type', '')
      if host_type == 'iot_embedded':
          os_name = 'iot_embedded'
+     elif host_type == 'vuln_web':
+         os_name = 'vuln_web'
      host_arch = get_host_arch(str(host)) or scan_details.get('arch', '')
-     print(f"[INFO] OS: {os_name} | Arch: {host_arch or 'unknown'}")
-     search_results = build_targeted_exploits(client, services, os_name, products=products)
+     print(f"[INFO] OS: {os_name} | Type: {host_type or 'n/a'} | Arch: {host_arch or 'unknown'}")
+     if scan_details.get('attack_surface'):
+         print(f"[INFO] Attack surface: {[v['vuln'] for v in scan_details['attack_surface']]}")
+     search_results = build_targeted_exploits(client, services, os_name, products=products, scan_details=scan_details)
 
      if not host:
          print("[INFO] Aucun hôte disponible.")

@@ -29,11 +29,11 @@ DEBUG_MODE = int(os.getenv("DEBUG_MODE", "0"))
 # ─── NSE Scripts par catégorie de service ────────────────────────────────────
 # Scripts ciblés au lieu du wildcard dangereux {service}*
 NSE_SCRIPTS = {
-    "http": "ssl-cert,ssl-enum-ciphers,http-headers,http-server-header,http-title,http-methods,http-robots.txt,http-favicon",
-    "https": "ssl-cert,ssl-enum-ciphers,http-headers,http-server-header,http-title,http-methods",
+    "http": "ssl-cert,ssl-enum-ciphers,http-headers,http-server-header,http-title,http-methods,http-robots.txt,http-favicon,http-php-version,http-shellshock,http-webdav-scan,http-auth-finder,http-default-accounts",
+    "https": "ssl-cert,ssl-enum-ciphers,http-headers,http-server-header,http-title,http-methods,http-php-version,http-shellshock,http-webdav-scan,http-auth-finder,http-default-accounts",
     "ssl": "ssl-cert,ssl-enum-ciphers,ssl-date",
     "ssh": "ssh2-enum-algos,ssh-hostkey,ssh-auth-methods",
-    "smtp": "smtp-commands,smtp-enum-users,smtp-ntlm-info",
+    "smtp": "smtp-commands,smtp-enum-users,smtp-ntlm-info,smtp-open-relay",
     "ftp": "ftp-anon,ftp-syst,ftp-vsftpd-backdoor",
     "smb": "smb-os-discovery,smb-protocols,smb-security-mode",
     "dns": "dns-nsid,dns-service-discovery,dns-recursion",
@@ -51,6 +51,7 @@ NSE_SCRIPTS = {
     "ldap": "ldap-rootdse,ldap-search",
     "mongodb": "mongodb-info,mongodb-databases",
     "redis": "redis-info",
+    "nfs": "nfs-ls,nfs-showmount,nfs-statfs,rpcinfo",
     "docker": "docker-version",
     "rtsp": "rtsp-methods",
     "pptp": "pptp-version",
@@ -68,7 +69,8 @@ NSE_BY_PORT = {
     53: "dns",
     80: "http",
     110: "pop3",
-    111: "rpcinfo",
+    111: "nfs",
+    2049: "nfs",
     143: "imap",
     443: "https",
     445: "smb",
@@ -436,6 +438,80 @@ _IOT_KEYWORDS = {
 }
 
 
+# Indicateurs de vulnérabilités VulnHub-style (dans banners + NSE output)
+# Format: {vuln_name: (service_hint, regex)}
+_VULN_INDICATORS = {
+    # FTP
+    'anonymous_ftp':    ('ftp',      r'anonymous.*login.*allowed|230.*anonymous|login.*ok.*anonymous'),
+    'vsftpd_backdoor':  ('ftp',      r'vsftpd 2\.3\.4'),
+    'proftpd_modcopy':  ('ftp',      r'proftpd 1\.3\.[012][^\d]'),
+    # HTTP / Web apps
+    'wordpress':        ('http',     r'wordpress|wp-login|wp-json|xmlrpc\.php|wp-content|wp-includes'),
+    'joomla':           ('http',     r'joomla[!/]|/administrator/|mosConfig'),
+    'drupal':           ('http',     r'\bdrupal\b|drupal\.settings|sites/default'),
+    'shellshock':       ('http',     r'/cgi-bin/|\.cgi\b|cgi-bin'),
+    'tomcat_manager':   ('http',     r'apache tomcat|/manager/html|coyote/|jserv'),
+    'webdav':           ('http',     r'\bwebdav\b|dav class|ms-webdav'),
+    'phpmyadmin':       ('http',     r'phpmyadmin|phpMyAdmin'),
+    'jenkins':          ('http',     r'\bjenkins\b|\bhudson\b'),
+    'struts':           ('http',     r'struts[/ ]|apache struts'),
+    # Databases sans auth exposées
+    'redis_noauth':     ('redis',    r'redis_version|connected_clients|\+PONG'),
+    'mongodb_noauth':   ('mongodb',  r'mongodb\b|ismaster.*true|listDatabases'),
+    'elasticsearch':    ('http',     r'elasticsearch|\"cluster_name\"'),
+    # SMB / Samba
+    'samba_old':        ('smb',      r'samba [34]\.[0-4]\.'),
+    # SNMP
+    'snmp_public':      ('snmp',     r'community.*public|public.*mib|sys[Dd]escr'),
+    # SMTP
+    'smtp_openrelay':   ('smtp',     r'open relay|relay accepted|relay test'),
+    # NFS
+    'nfs_export':       ('nfs',      r'nfs export|/\*\)|everyone|0\.0\.0\.0'),
+}
+
+
+def detect_vuln_indicators(services):
+    """
+    Analyse les banners/outputs NSE pour détecter des indicateurs de vulnérabilités.
+    Retourne une liste: [{"vuln": name, "port": port, "evidence": str}, ...]
+    """
+    # Ports HTTP pour vérification de hint
+    _HTTP_PORTS  = {80, 443, 8080, 8443, 8000, 8888, 3000, 8008, 9090, 9200, 5601}
+    _FTP_PORTS   = {21, 2121}
+    _HINT_PORTS  = {'redis': {6379}, 'mongodb': {27017}, 'snmp': {161}, 'nfs': {111, 2049},
+                    'smb': {139, 445}, 'smtp': {25, 587, 465}}
+
+    found = []
+    seen_vulns = set()
+    for port, svc_name, info, *_ in services:
+        svc_lower = (svc_name or '').lower()
+        info_str  = (info or '').lower()
+
+        for vuln_name, (hint, pattern) in _VULN_INDICATORS.items():
+            if vuln_name in seen_vulns:
+                continue
+            # Vérifier que le service/port correspond au hint
+            if hint == 'http':
+                if hint not in svc_lower and port not in _HTTP_PORTS:
+                    continue
+            elif hint == 'ftp':
+                if hint not in svc_lower and port not in _FTP_PORTS:
+                    continue
+            elif hint in _HINT_PORTS:
+                if hint not in svc_lower and port not in _HINT_PORTS[hint]:
+                    continue
+            else:
+                if hint not in svc_lower:
+                    continue
+
+            if _re.search(pattern, info_str, _re.IGNORECASE):
+                evidence = (info or '')[:120].strip()
+                found.append({"vuln": vuln_name, "port": port, "evidence": evidence})
+                seen_vulns.add(vuln_name)
+
+    return found
+
+
 def detect_arch_and_iot(services):
     """
     Analyse les banners (services.info) pour détecter l'arch CPU et les indicateurs IoT.
@@ -618,6 +694,20 @@ def run_scan(host, host_id, pg_ip):
     if arch:
         print(f"[ARCH] Arch détectée depuis banners: {arch}")
         details['arch'] = arch
+
+    # 5b. Détecter les indicateurs de vulnérabilités (VulnHub-style)
+    vuln_indicators = detect_vuln_indicators(final_services)
+    if vuln_indicators:
+        vuln_names = [v['vuln'] for v in vuln_indicators]
+        print(f"[VULN] {len(vuln_indicators)} indicateur(s): {vuln_names}")
+        details['attack_surface'] = vuln_indicators
+        # Boost vuln_web si vulns web détectées (ne pas écraser iot_embedded)
+        _WEB_VULNS = {'wordpress', 'joomla', 'drupal', 'shellshock', 'tomcat_manager',
+                      'webdav', 'phpmyadmin', 'jenkins', 'struts', 'elasticsearch'}
+        web_hits = [v for v in vuln_names if v in _WEB_VULNS]
+        if web_hits and server_type not in ('iot_embedded',):
+            print(f"[VULN] Boost vuln_web ({web_hits})")
+            server_type = 'vuln_web'
 
     # Toujours stocker le type dans scan_details (utilisé par uzi)
     details['type'] = server_type
