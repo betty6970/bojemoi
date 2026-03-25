@@ -1065,11 +1065,10 @@ services:
     configs:
       - source: provisioning_env_v2
         target: /app/.env
-        mode: 0440
+        mode: 0444
+    environment:
+      - DOCKER_SWARM_URL=tcp://docker-socket-proxy:2375
     volumes:
-      # Socket Docker direct requis - l'orchestrator a besoin de POST/DELETE
-      # pour créer/supprimer des containers (non supporté par le proxy read-only)
-      - /var/run/docker.sock:/var/run/docker.sock
       # Logs persistants
       - provisioning_logs:/app/logs
       # Cache
