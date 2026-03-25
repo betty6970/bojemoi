@@ -105,72 +105,87 @@ check_required_files() {
 # Fonction pour tester l'accessibilité du registry
 test_registry_connectivity() {
     local registry_host="$1"
-    
-    echo "🔍 Vérification de l'accessibilité du registry $registry_host..."
-    
-    # Utiliser wget comme fallback si curl n'est pas disponible
-    if command -v curl >/dev/null 2>&1; then
-        if curl -4 -s --connect-timeout 5 "http://$registry_host/v2/" >/dev/null 2>&1; then
-            return 0
-        fi
-    elif command -v wget >/dev/null 2>&1; then
-        if wget -q --timeout=5 -O /dev/null "http://$registry_host/v2/" >/dev/null 2>&1; then
-            return 0
-        fi
+    if curl -4 -s --connect-timeout 5 "http://$registry_host/v2/" >/dev/null 2>&1; then
+        return 0
     fi
-    
     return 1
 }
 
-# Fonction pour demander confirmation (compatible ash)
-ask_confirmation() {
-    local prompt="$1"
-    local response
-    
-    printf "%s [y/N]: " "$prompt"
-    read -r response
-    
-    case "$response" in
-        [Yy]|[Yy][Ee][Ss]) return 0 ;;
-        *) return 1 ;;
-    esac
+# Fonction pour s'assurer que la registry est disponible (déploie boot si nécessaire)
+ensure_registry() {
+    local registry_host="$1"
+    local boot_stack_file="/opt/bojemoi_boot/stack/01-boot-service.yml"
+    local max_wait=60
+
+    echo "🔍 Vérification du registry $registry_host..."
+
+    if test_registry_connectivity "$registry_host"; then
+        echo "✅ Registry accessible"
+        return 0
+    fi
+
+    echo "⚠️  Registry non accessible — vérification de la stack boot..."
+
+    # Vérifier si le service boot_registry existe déjà
+    if docker service ls --format "{{.Name}}" 2>/dev/null | grep -q "^boot_registry$"; then
+        echo "   Service boot_registry présent mais non répondant, attente..."
+    else
+        echo "🚀 Déploiement de la stack boot ($boot_stack_file)..."
+        if [ ! -f "$boot_stack_file" ]; then
+            echo "❌ Fichier stack introuvable: $boot_stack_file"
+            return 1
+        fi
+        docker stack deploy -c "$boot_stack_file" boot --resolve-image always || {
+            echo "❌ Echec du déploiement de la stack boot"
+            return 1
+        }
+    fi
+
+    # Attendre que la registry réponde (max $max_wait secondes)
+    echo "   Attente du registry (max ${max_wait}s)..."
+    local elapsed=0
+    while [ $elapsed -lt $max_wait ]; do
+        if test_registry_connectivity "$registry_host"; then
+            echo "✅ Registry disponible (${elapsed}s)"
+            return 0
+        fi
+        sleep 3
+        elapsed=$((elapsed + 3))
+        printf "."
+    done
+
+    echo ""
+    echo "❌ Registry toujours inaccessible après ${max_wait}s"
+    return 1
 }
 
-# Fonction principale de construction
-build_image() {
+
+# Fonction principale de construction + push direct vers registry (sans stockage local)
+build_and_push() {
     local service_name="$1"
-    local local_tag="$2"
-    
-    echo "📦 Construction de l'image $local_tag..."
-    
-    # Changer vers le répertoire du service
+    local registry_tag="$2"
+    local timestamp_tag="$3"
+
+    echo "📦 Build + push direct vers registry (sans stockage local)..."
+
     cd "$service_name" || {
         echo "❌ Erreur: Impossible de changer vers le répertoire $service_name"
         return 1
     }
-    
-    # Construction avec gestion d'erreur améliorée
-    if docker build --no-cache -f "Dockerfile.$service_name" -t "$local_tag" .; then
-        echo "✅ Image construite avec succès"
-        cd ..
-        return 0
-    else
-        echo "❌ Erreur lors de la construction de l'image"
-        cd ..
-        return 1
-    fi
-}
 
-# Fonction pour pusher vers le registry
-push_to_registry() {
-    local tag="$1"
-    
-    echo "   Pushing $tag..."
-    if docker push "$tag"; then
-        echo "✅ Push $tag réussi"
+    if docker buildx build \
+        --no-cache \
+        --push \
+        -f "Dockerfile.$service_name" \
+        -t "$registry_tag" \
+        -t "$timestamp_tag" \
+        .; then
+        echo "✅ Build + push réussis"
+        cd ..
         return 0
     else
-        echo "❌ Erreur lors du push $tag"
+        echo "❌ Erreur lors du build/push"
+        cd ..
         return 1
     fi
 }
@@ -190,61 +205,29 @@ main() {
     validate_service_name "$service_name" || exit 1
     check_dependencies || exit 1
     check_required_files "$repertoire" "$service_name" || exit 1
-#---------------------
-# 
-     scripts/tannenberg.py $service_name -f 
-    
-    # Définir les tags
-    local local_tag="${service_name}:${VERSION}"
+    # Définir les tags (registry uniquement, pas de tag local)
     local registry_tag="${REGISTRY_HOST}/${service_name}:${VERSION}"
     local timestamp_tag="${REGISTRY_HOST}/${service_name}:${TIMESTAMP}"
-    
+
     # Afficher les informations
-    echo "🔨 Construction de l'image Docker..."
+    echo "🔨 Build direct vers registry (sans stockage local)..."
     echo "   Service: $service_name"
-    echo "   Tag local: $local_tag"
     echo "   Tag registry: $registry_tag"
     echo "   Tag timestamp: $timestamp_tag"
     echo ""
-    
-    # Construction de l'image
-    build_image "$service_name" "$local_tag" || exit 1
-    
-    # Tagger pour le registry
-    echo "🏷️  Ajout des tags pour le registry..."
-    docker tag "$local_tag" "$registry_tag" || {
-        echo "❌ Erreur lors du tagging $registry_tag"
-        exit 1
-    }
-    docker tag "$local_tag" "$timestamp_tag" || {
-        echo "❌ Erreur lors du tagging $timestamp_tag"
-        exit 1
-    }
-    
-    # Vérifier la connectivité du registry
-    if ! test_registry_connectivity "$REGISTRY_HOST"; then
-        echo "⚠️  Attention: Le registry $REGISTRY_HOST ne semble pas accessible"
-        echo "   Assurez-vous qu'il est démarré avec:"
-        echo "   docker run -d -p 5000:5000 --name registry registry:2"
-        
-        if ! ask_confirmation "Voulez-vous continuer quand même?"; then
-            echo "❌ Opération annulée"
-            exit 1
-        fi
-    fi
-    
-    # Push vers le registry
-    echo "🚀 Push vers le registry..."
-    push_to_registry "$registry_tag" || exit 1
-    push_to_registry "$timestamp_tag" || exit 1
-    
+
+    # S'assurer que la registry est disponible (déploie boot si nécessaire)
+    ensure_registry "$REGISTRY_HOST" || exit 1
+
+    # Build + push direct (pas de stockage local, pas de docker tag)
+    build_and_push "$service_name" "$registry_tag" "$timestamp_tag" || exit 1
+
     # Résumé
     cat << EOF
 
 🎉 Opération terminée avec succès!
 
-📋 Résumé:
-   Image locale: $local_tag
+📋 Résumé (aucune image stockée localement):
    Images dans le registry:
      - $registry_tag
      - $timestamp_tag
@@ -254,8 +237,8 @@ main() {
    docker run $registry_tag
 
 🔍 Pour voir les images dans le registry:
-   curl http://$REGISTRY_HOST/v2/_catalog
-   curl http://$REGISTRY_HOST/v2/$service_name/tags/list
+   curl -4 http://$REGISTRY_HOST/v2/_catalog
+   curl -4 http://$REGISTRY_HOST/v2/$service_name/tags/list
 EOF
 }
 

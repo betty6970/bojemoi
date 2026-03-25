@@ -98,6 +98,7 @@ if [ "$NODE_ROLE" = "true" ]; then
     deploy_stack "$DIR/stack/50-service-trivy.yml" "trivy" 5
     deploy_stack "$DIR/stack/55-service-sentinel.yml" "sentinel" 10
     deploy_stack "${DIR}/stack/60-service-telegram.yml" "telegram" 5
+    deploy_stack "${DIR}/stack/66-service-discovery.yml" "cti" 5
     deploy_stack "${DIR}/stack/65-service-medved.yml" "honeypot" 5
 
     # Deploy suricata standalone (needs network_mode: host, not supported in Swarm)

@@ -1,0 +1,55 @@
+# DVAR - Damn Vulnerable ARM Router
+# Serveur HTTP vulnérable compilé pour ARMv7 (cross-compilation), émulé via qemu-arm-static
+# Cible d'exploitation lab — NE PAS exposer en production
+
+# ── Stage 1 : cross-compilation ARM ──────────────────────────────────────────
+FROM localhost:5000/ubuntu:22.04 AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-arm-linux-gnueabi \
+    binutils-arm-linux-gnueabi \
+    libc6-dev-armel-cross \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY src/vuln_httpd.c /src/vuln_httpd.c
+
+# Compilation statique ARM (armle, soft-float, compatible ARMv5+)
+RUN arm-linux-gnueabi-gcc \
+    -static \
+    -O0 \
+    -fno-stack-protector \
+    -z execstack \
+    -no-pie \
+    -o /vuln_httpd \
+    /src/vuln_httpd.c
+
+# ── Stage 2 : runtime ─────────────────────────────────────────────────────────
+FROM localhost:5000/ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    qemu-user-static \
+    telnetd \
+    busybox \
+    postgresql-client \
+    iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Compte root sans mot de passe pour telnet
+RUN passwd -d root
+
+RUN mkdir -p /opt/dvar
+
+# Binaire HTTP ARM compilé
+COPY --from=builder /vuln_httpd /opt/dvar/httpd
+RUN chmod +x /opt/dvar/httpd
+
+# Busybox ARM statique (pour telnetd ARM natif si binfmt disponible)
+# On embarque le busybox x86 statique comme fallback
+RUN cp /bin/busybox /opt/dvar/busybox 2>/dev/null || true
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 21 23 80
+
+CMD ["/entrypoint.sh"]

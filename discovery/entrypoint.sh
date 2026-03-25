@@ -27,7 +27,7 @@ echo "[entrypoint] Starting discovery loop (interval: ${INTERVAL}s)"
 
 while true; do
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running discovery sweep..."
-    python /app/breachforum_onion_discovery.py || echo "[entrypoint] Sweep exited with error, will retry"
+    python /app/breachforum_onion_discovery.pyc || echo "[entrypoint] Sweep exited with error, will retry"
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Next run in ${INTERVAL}s"
     sleep "${INTERVAL}"
 done

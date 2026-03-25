@@ -126,8 +126,9 @@ SERVER_ROLES = {
         "weight": 3,
     },
     "iot_embedded": {
-        "services": ["upnp", "rtsp", "telnet", "cwmp"],
-        "ports": [554, 1900, 7547, 37215],
+        "services": ["upnp", "rtsp", "telnet", "cwmp", "tr-069", "hnap"],
+        "ports": [554, 1900, 7547, 37215, 8000, 37777, 34567, 9527],
+        # 8000=Hikvision, 37777/34567=Dahua, 9527=Dahua mobile, 7547/37215=TR-069
         "weight": 2,
     },
     "remote_access": {
@@ -147,7 +148,7 @@ def classify_server(services_list):
     scores = {}
     matched = {}
 
-    for port, svc_name in services_list:
+    for port, svc_name, *_ in services_list:
         svc_lower = (svc_name or "").lower()
         for role, criteria in SERVER_ROLES.items():
             hit = False
@@ -283,7 +284,7 @@ def discover_all_services(host, pg_ip):
         return None, []
 
     services = get_host_services(host_id)
-    print(f"[DEBUG] {len(services)} service(s) découvert(s) sur {host}: {[(p, s) for p, s in services]}")
+    print(f"[DEBUG] {len(services)} service(s) découvert(s) sur {host}: {[(p, s) for p, s, *_ in services]}")
     return host_id, services
 
 
@@ -320,7 +321,7 @@ def get_host_services(host_id):
         conn = get_db_connection()
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT port, name FROM services WHERE host_id = %s AND state = 'open';",
+                "SELECT port, name, info FROM services WHERE host_id = %s AND state = 'open';",
                 (host_id,),
             )
             return cur.fetchall()
@@ -332,7 +333,7 @@ def get_host_services(host_id):
             conn.close()
 
 
-def update_host_classification(host_id, server_type, details, osint_data=None):
+def update_host_classification(host_id, server_type, details, osint_data=None, arch=None):
     """Met à jour la classification du serveur et les données OSINT dans hosts."""
     conn = None
     try:
@@ -367,7 +368,7 @@ def update_host_classification(host_id, server_type, details, osint_data=None):
                            scan_details = %s,
                            info = %s,
                            last_scanned = CURRENT_DATE,
-                           scan_status = 'bm12_v2'
+                           scan_status = 'bm12_v3'
                        WHERE id = %s;""",
                     ("server", comments, json.dumps(details), info_val, host_id),
                 )
@@ -378,10 +379,19 @@ def update_host_classification(host_id, server_type, details, osint_data=None):
                            comments = %s,
                            scan_details = %s,
                            last_scanned = CURRENT_DATE,
-                           scan_status = 'bm12_v2'
+                           scan_status = 'bm12_v3'
                        WHERE id = %s;""",
                     ("server", comments, json.dumps(details), host_id),
                 )
+
+            # Écrire l'arch seulement si détectée (ne pas écraser un arch valide de db_nmap)
+            if arch:
+                cur.execute(
+                    "UPDATE hosts SET arch = %s WHERE id = %s AND (arch IS NULL OR arch = '');",
+                    (arch, host_id),
+                )
+                print(f"[ARCH] hosts.arch = {arch} pour host {host_id}")
+
             conn.commit()
             print(f"[CLASS] Host {host_id} classifié: {server_type} ({confidence}%)")
     except psycopg2.Error as e:
@@ -389,6 +399,97 @@ def update_host_classification(host_id, server_type, details, osint_data=None):
     finally:
         if conn:
             conn.close()
+
+
+# ─── Détection architecture + indicateurs IoT depuis banners ─────────────────
+import re as _re
+
+# Patterns arch → valeur MSF (ordre : du plus spécifique au plus générique)
+_ARCH_PATTERNS = [
+    (r'aarch64|armv8|arm64',                  'aarch64'),
+    (r'armv[5-7]|arm(?:hf|el|eabi|le)\b',    'armle'),
+    (r'armbe\b',                               'armbe'),
+    (r'\barm\b',                               'armle'),
+    (r'mips(?:el|le)\b|mips32le',             'mipsle'),
+    (r'mipsbe\b|mipsr2\b|\bmips\b',           'mipsbe'),
+    (r'x86[_-]64|amd64|\bx64\b',             'x64'),
+    (r'\bi[3-6]86\b|\bx86\b',                'x86'),
+    (r'\bppc\b|powerpc',                       'ppc'),
+]
+
+# Mots-clés IoT dans les banners (minuscules)
+_IOT_KEYWORDS = {
+    # Firmware / OS embarqué
+    'openwrt', 'dd-wrt', 'ddwrt', 'tomato', 'lede', 'freertos',
+    'busybox', 'uclibc', 'musl libc', 'vxworks', 'threadx',
+    # Serveurs HTTP typiques routeurs
+    'rompager', 'boa/', 'thttpd/', 'mini_httpd', 'alphapd', 'goahead',
+    # Marques routeurs/IoT
+    'netgear', 'd-link', 'dlink', 'asus', 'tp-link', 'tplink',
+    'linksys', 'zyxel', 'huawei', 'mikrotik', 'ubiquiti', 'buffalo',
+    'belkin', 'technicolor', 'fritz', 'fritzbox', 'hikvision', 'dahua',
+    'axis camera', 'vivotek', 'synology', 'qnap',
+    # Chipsets
+    'broadcom', 'mediatek', 'ralink rt', 'qualcomm atheros', 'marvell',
+    # Protocoles IoT
+    'cwmp', 'tr-069', 'tr069', 'upnp/1', 'igdp',
+}
+
+
+def detect_arch_and_iot(services):
+    """
+    Analyse les banners (services.info) pour détecter l'arch CPU et les indicateurs IoT.
+    Retourne (arch_msf | None, iot_score, iot_evidence_list).
+    """
+    combined = ' '.join(
+        (info or '').lower()
+        for _, _, info, *_ in services
+        if info
+    )
+
+    # Arch : premier pattern qui matche
+    arch = None
+    for pattern, arch_val in _ARCH_PATTERNS:
+        if _re.search(pattern, combined, _re.IGNORECASE):
+            arch = arch_val
+            break
+
+    # IoT keywords
+    iot_evidence = [kw for kw in _IOT_KEYWORDS if kw in combined]
+    iot_score    = len(iot_evidence)
+
+    return arch, iot_score, iot_evidence
+
+
+# ─── Extraction produits depuis services.info ────────────────────────────────
+
+_VERSION_RE = _re.compile(r'(\d+\.\d+[\d.a-z\-]*)')
+_SKIP_WORDS = {'protocol', 'smtpd', 'httpd', 'daemon', 'server', 'service', 'linux', 'debian', 'ubuntu'}
+
+
+def extract_products(services):
+    """Parse services.info pour extraire noms de produits et versions."""
+    products = []
+    seen = set()
+    for port, name, info, *_ in services:
+        if not info or not info.strip():
+            continue
+        info_str = info.strip()
+        m = _VERSION_RE.search(info_str)
+        version = m.group(1) if m else None
+        before = info_str[:m.start()].strip() if m else info_str
+        words = [w for w in before.split() if w.lower() not in _SKIP_WORDS and w.isalpha()]
+        product_name = words[-1] if words else (before.split()[0] if before else None)
+        if not product_name or len(product_name) < 2:
+            continue
+        key = (product_name.lower(), port)
+        if key not in seen:
+            seen.add(key)
+            entry = {"name": product_name, "port": port}
+            if version:
+                entry["version"] = version
+            products.append(entry)
+    return products
 
 
 # ─── Construction des commandes nmap ─────────────────────────────────────────
@@ -431,7 +532,7 @@ def build_nmap_command(host, services_list, pg_ip):
     all_ports = []
     all_scripts = set()
 
-    for port, svc_name in services_list:
+    for port, svc_name, *_ in services_list:
         all_ports.append(str(port))
         scripts = resolve_nse_scripts(port, svc_name)
         for s in scripts.split(","):
@@ -466,7 +567,7 @@ def run_scan(host, host_id, pg_ip):
         print(f"[INFO] Aucun service ouvert pour {host}, skip.")
         return
 
-    print(f"[INFO] {host} — {len(services)} services: {[(p, s) for p, s in services]}")
+    print(f"[INFO] {host} — {len(services)} services: {[(p, s) for p, s, *_ in services]}")
 
     # 1. Classifier le serveur
     server_type, confidence, details = classify_server(services)
@@ -497,11 +598,35 @@ def run_scan(host, host_id, pg_ip):
         print(f"[INFO] Services mis à jour: {len(services)} → {len(updated_services)}")
         server_type, confidence, details = classify_server(updated_services)
 
-    # 4. Enrichissement OSINT
+    # 4. Extraire les produits depuis services.info
+    final_services = updated_services if updated_services and len(updated_services) != len(services) else services
+    products = extract_products(final_services)
+    if products:
+        details["products"] = products
+        print(f"[PROD] {len(products)} produit(s): {[p['name'] + ' ' + p.get('version', '') for p in products]}")
+
+    # 5. Détecter arch + indicateurs IoT depuis banners
+    arch, iot_score, iot_evidence = detect_arch_and_iot(final_services)
+
+    # Boost iot_embedded si banners IoT trouvés (même si score de ports insuffisant)
+    if iot_score > 0:
+        if server_type != 'iot_embedded':
+            print(f"[IOT] Banner boost ({iot_score} indicateurs: {iot_evidence}) → iot_embedded")
+            server_type = 'iot_embedded'
+        details['iot_evidence'] = iot_evidence
+
+    if arch:
+        print(f"[ARCH] Arch détectée depuis banners: {arch}")
+        details['arch'] = arch
+
+    # Toujours stocker le type dans scan_details (utilisé par uzi)
+    details['type'] = server_type
+
+    # 6. Enrichissement OSINT
     osint_data = osint_lookup(host)
 
-    # 5. Stocker la classification + OSINT
-    update_host_classification(host_id, server_type, details, osint_data)
+    # 7. Stocker la classification + OSINT + arch
+    update_host_classification(host_id, server_type, details, osint_data, arch=arch)
 
     threat_info = ""
     if osint_data and osint_data.get("is_malicious"):

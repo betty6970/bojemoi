@@ -4,7 +4,7 @@ set -e
 
 
 # Démarrage du script de monitoring
-python3 /scripts/rsync-master.py &
+python3 /scripts/rsync-master.pyc &
 
 # Maintien du container actif
 sleep 10

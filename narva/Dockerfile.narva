@@ -152,26 +152,16 @@ LABEL maintainer="Your Name <your.email@example.com>"
 # Update and install dependencies
 RUN apk update && apk add --no-cache \
     bash \
-    build-base \
     curl \
     git \
     openssl \
-    openssl-dev \
-    postgresql-dev \
-    python3 \
+    postgresql-client libpq \
     python3 py3-pip \
     py3-psycopg2 \
     py3-requests \
     py3-msgpack \
     py3-psutil \
-    gcc \
-    musl-dev \
-    readline-dev \
-    sqlite-dev \
-    zlib-dev \
-    ncurses \
-    libpcap-dev \
-    postgresql-client \
+    ncurses libpcap \
     nmap \
     nmap-scripts \
     openvpn \

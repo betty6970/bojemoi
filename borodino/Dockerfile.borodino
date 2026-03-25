@@ -3,35 +3,20 @@
 
 FROM ruby:3.3-alpine
 
-# Install system dependencies
+# Runtime packages
 RUN apk update && apk add --no-cache \
-    bash \
-    build-base \
-    curl \
-    git \
-    openssl \
-    openssl-dev \
-    postgresql-dev \
-    python3 \
-    py3-pip \
-    py3-psycopg2 \
-    py3-psutil \
-    gcc \
-    musl-dev \
-    linux-headers \
-    libffi-dev \
-    yaml-dev \
-    readline-dev \
-    sqlite-dev \
-    zlib-dev \
-    ncurses \
-    libpcap-dev \
-    postgresql-client \
-    nmap \
-    nmap-scripts \
-    openvpn \
-    gcompat && \
+    bash curl git \
+    openssl libpq postgresql-client \
+    python3 py3-pip py3-psycopg2 py3-psutil \
+    ncurses libpcap \
+    nmap nmap-scripts openvpn gcompat && \
     rm -rf /var/cache/apk/*
+
+# Build-only dependencies (removed after compilation)
+RUN apk add --no-cache --virtual .build-deps \
+    build-base musl-dev linux-headers \
+    libffi-dev yaml-dev readline-dev sqlite-dev zlib-dev \
+    openssl-dev postgresql-dev libpcap-dev
 
 # Install Python dependencies for pymetasploit3
 RUN pip3 install --no-cache-dir --break-system-packages msgpack retry && \
@@ -46,13 +31,11 @@ ENV HOME='/opt/metasploit'
 # Clone the Metasploit Framework repository
 RUN git clone https://github.com/rapid7/metasploit-framework.git .
 
-# Install Metasploit gems (skip dev/test groups)
+# Install Metasploit gems and remove build deps
 RUN git config --global --add safe.directory /opt/metasploit && \
     bundle config set --local without 'development test' && \
-    bundle install --jobs=$(nproc)
-
-# Expose the port commonly used by Metasploit (e.g., msfrpcd)
-#EXPOSE 55553
+    bundle install --jobs=$(nproc) && \
+    apk del .build-deps
 
 USER root
 
@@ -64,6 +47,10 @@ RUN adduser postgres -g root || :
 COPY --chown=postgres:root --chmod=777 thearm_* /usr/bin/
 COPY --chown=postgres:root --chmod=644 osint_lookup.py /usr/bin/
 COPY --chmod=755 start_uzi.sh /usr/bin/start_uzi.sh
+
+# Compile Python sources
+RUN python3 -m compileall -b /usr/bin/osint_lookup.py && \
+    rm /usr/bin/osint_lookup.py
 
 WORKDIR /etc/openvpn
 

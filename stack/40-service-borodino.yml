@@ -206,7 +206,7 @@ services:
       - ARME_TYPE=bm12
       - TARGET=container1
       - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=1
+      - DEBUG_MODE=0
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - SHODAN_API_KEY=${SHODAN_API_KEY:-}
@@ -217,7 +217,7 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 1
+      replicas: 15
     command: /usr/bin/thearm_bm12
 
   uzi-service:
@@ -230,13 +230,14 @@ services:
       - LPORT_BIND=4444
       - BIND_PORT=5556
       - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=1
       - MODE_RUN=1
+      - LHOST=192.168.1.121
       - TELEGRAM_ALERT_CHAT_ID=-5087117106
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     secrets:
       - telegram_bot_token
       - telegram_alert_chat_id
+      - anthropic_api_key
     logging:
       driver: json-file
       options:
@@ -244,7 +245,14 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 1
+      replicas: 3
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 3
       resources:
         limits:
           cpus: '1.0'
@@ -646,4 +654,6 @@ secrets:
   telegram_bot_token:
     external: true
   telegram_alert_chat_id:
+    external: true
+  anthropic_api_key:
     external: true

@@ -56,6 +56,14 @@ class OnionAddress:
     is_active: bool = True
     metadata: Dict = None
 
+    def __hash__(self):
+        return hash(self.address)
+
+    def __eq__(self, other):
+        if isinstance(other, OnionAddress):
+            return self.address == other.address
+        return False
+
 # ============== DATABASE ==============
 class PostgresCtiBridge:
     """PostgreSQL logging for discovered onions"""
@@ -162,7 +170,7 @@ class DiscoverySource(ABC):
         retry_strategy = Retry(
             total=3,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+            status_forcelist=[500, 502, 503, 504],
             allowed_methods=["HEAD", "GET"]
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -185,24 +193,22 @@ class AhmiaSource(DiscoverySource):
     def discover(self) -> Set[OnionAddress]:
         results = set()
         try:
-            # Ahmia has public JSON API for .onion search
-            url = "https://ahmia.fi/search/?q=breachforum&format=json"
-            resp = self.session.get(url, timeout=10)
+            # Ahmia returns HTML search results — extract onion addresses via regex
+            url = "https://ahmia.fi/search/?q=breachforum"
+            resp = self.session.get(url, timeout=20)
             if resp.status_code == 200:
-                data = resp.json()
-                for result in data.get('results', []):
-                    onion_url = result.get('url', '')
-                    match = ONION_PATTERN.search(onion_url)
-                    if match:
-                        addr = match.group(1)
-                        results.add(OnionAddress(
-                            address=addr,
-                            source="ahmia",
-                            confidence=0.7,
-                            discovered_at=datetime.now(),
-                            metadata={"search_result": result}
-                        ))
+                matches = ONION_PATTERN.findall(resp.text)
+                for addr in matches:
+                    results.add(OnionAddress(
+                        address=addr,
+                        source="ahmia",
+                        confidence=0.7,
+                        discovered_at=datetime.now(),
+                        metadata={"search_query": "breachforum"}
+                    ))
                 logger.info(f"✓ Ahmia: found {len(results)} candidates")
+            else:
+                logger.warning(f"✗ Ahmia: HTTP {resp.status_code}")
         except Exception as e:
             logger.error(f"✗ Ahmia source failed: {e}")
         return results
@@ -216,16 +222,17 @@ class RedditSource(DiscoverySource):
         
         for subreddit in subreddits:
             try:
-                url = f"https://reddit.com/r/{subreddit}/search?q=breachforum&restrict_sr=on&sort=new&t=month&limit=100"
-                resp = self.session.get(url, timeout=10, headers={
+                url = f"https://www.reddit.com/r/{subreddit}/search.json?q=breachforum&restrict_sr=on&sort=new&t=month&limit=100"
+                resp = self.session.get(url, timeout=20, headers={
                     "User-Agent": USER_AGENT,
                     "Accept": "application/json"
                 })
-                
+
+                if resp.status_code == 429:
+                    logger.warning(f"✗ Reddit r/{subreddit}: rate limited (429), skipping")
+                    continue
                 if resp.status_code == 200:
-                    # Reddit returns HTML by default, extract onions from text
-                    text = resp.text
-                    matches = ONION_PATTERN.findall(text)
+                    matches = ONION_PATTERN.findall(resp.text)
                     for match in matches:
                         results.add(OnionAddress(
                             address=match,
@@ -234,7 +241,9 @@ class RedditSource(DiscoverySource):
                             discovered_at=datetime.now(),
                             metadata={"subreddit": subreddit}
                         ))
-                logger.info(f"✓ Reddit r/{subreddit}: found {len(matches)} candidates")
+                    logger.info(f"✓ Reddit r/{subreddit}: found {len(matches)} candidates")
+                else:
+                    logger.warning(f"✗ Reddit r/{subreddit}: HTTP {resp.status_code}")
             except Exception as e:
                 logger.error(f"✗ Reddit r/{subreddit} failed: {e}")
         
@@ -253,9 +262,10 @@ class TorProjectListSource(DiscoverySource):
         
         for url in sources:
             try:
-                resp = self.session.get(url, timeout=10)
+                resp = self.session.get(url, timeout=30)
                 if resp.status_code == 200:
                     matches = ONION_PATTERN.findall(resp.text)
+                    count = 0
                     for match in matches:
                         if any(kw in resp.text.lower() for kw in BREACHFORUM_KEYWORDS):
                             results.add(OnionAddress(
@@ -265,11 +275,108 @@ class TorProjectListSource(DiscoverySource):
                                 discovered_at=datetime.now(),
                                 metadata={"source_url": url}
                             ))
-                logger.info(f"✓ Directory {url}: found {len(results)} candidates")
+                            count += 1
+                    logger.info(f"✓ Directory {url}: found {count} candidates")
+                else:
+                    logger.warning(f"✗ Directory {url}: HTTP {resp.status_code}")
             except Exception as e:
                 logger.error(f"✗ Directory {url} failed: {e}")
         
         return results
+
+class TelegramBotApiSource(DiscoverySource):
+    """Monitor a Telegram channel via Bot API getUpdates.
+    Requires the bot to be added as admin to the channel.
+    Stores last update_id in DB to avoid reprocessing.
+    """
+
+    OFFSET_FILE = "/tmp/tg_offset.txt"
+
+    def __init__(self, channel: str = "BreachForumHub"):
+        super().__init__()
+        self.channel = channel.lower()
+        self.token = TELEGRAM_BOT_TOKEN
+
+    def _get_offset(self) -> int:
+        try:
+            with open(self.OFFSET_FILE) as f:
+                return int(f.read().strip())
+        except Exception:
+            return 0
+
+    def _save_offset(self, offset: int):
+        try:
+            with open(self.OFFSET_FILE, "w") as f:
+                f.write(str(offset))
+        except Exception:
+            pass
+
+    def discover(self) -> Set[OnionAddress]:
+        results = set()
+        if not self.token:
+            logger.warning("✗ Telegram Bot API: no token configured")
+            return results
+
+        offset = self._get_offset()
+        url = f"https://api.telegram.org/bot{self.token}/getUpdates"
+        params = {
+            "offset": offset,
+            "limit": 100,
+            "allowed_updates": ["channel_post"],
+            "timeout": 5
+        }
+
+        try:
+            resp = self.session.get(url, params=params, timeout=15)
+            if resp.status_code != 200:
+                logger.warning(f"✗ Telegram Bot API: HTTP {resp.status_code}")
+                return results
+
+            data = resp.json()
+            if not data.get("ok"):
+                logger.warning(f"✗ Telegram Bot API error: {data.get('description')}")
+                return results
+
+            updates = data.get("result", [])
+            max_update_id = offset
+
+            for update in updates:
+                update_id = update.get("update_id", 0)
+                if update_id >= max_update_id:
+                    max_update_id = update_id + 1
+
+                post = update.get("channel_post", {})
+                chat = post.get("chat", {})
+                username = (chat.get("username") or "").lower()
+
+                if username != self.channel:
+                    continue
+
+                text = post.get("text", "") + " " + post.get("caption", "")
+                matches = ONION_PATTERN.findall(text)
+                for addr in matches:
+                    results.add(OnionAddress(
+                        address=addr,
+                        source=f"telegram_bot_{self.channel}",
+                        confidence=0.9,
+                        discovered_at=datetime.now(),
+                        metadata={
+                            "channel": self.channel,
+                            "message_id": post.get("message_id"),
+                            "date": post.get("date")
+                        }
+                    ))
+
+            if max_update_id > offset:
+                self._save_offset(max_update_id)
+
+            logger.info(f"✓ Telegram @{self.channel}: {len(updates)} updates, {len(results)} onions found")
+
+        except Exception as e:
+            logger.error(f"✗ Telegram Bot API failed: {e}")
+
+        return results
+
 
 class CtiReportSource(DiscoverySource):
     """CTI feeds and threat intelligence summaries"""
@@ -343,6 +450,7 @@ class BreachforumDiscoveryService:
             AhmiaSource(),
             RedditSource(),
             TorProjectListSource(),
+            TelegramBotApiSource("BreachForumHub"),
             CtiReportSource()
         ]
         self.validator = OnionValidator()

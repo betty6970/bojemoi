@@ -23,6 +23,11 @@ COPY modules/  /usr/lib/python3.12/site-packages/
 RUN find /scripts -name "*.sh" -exec chmod +x {} \; && \
      find /scripts -name "*.py" -exec chmod +x {} \;
 
+# Compile Python sources (modules + scripts)
+RUN python3 -m compileall -b /scripts /usr/lib/python3.12/site-packages/ && \
+    find /scripts -name "*.py" -delete && \
+    find /usr/lib/python3.12/site-packages/ -maxdepth 1 -name "*.py" -delete
+
 EXPOSE 8080
 
 CMD ["/scripts/rsync-start.sh"]
