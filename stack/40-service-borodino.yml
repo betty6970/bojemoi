@@ -13,6 +13,15 @@ x-arme-template: &arme-template
   image: localhost:5000/borodino:latest
   networks:
     - backend
+  environment:                                                                     
+    - PYTHONUNBUFFERED=1                                                           
+    - DEBUG_MODE=0                                                                 
+    - PG_HOST=postgres                                                             
+    - PG_PORT=5432                                                                 
+    - PG_USER=postgres                                                             
+    - PG_PASSWORD=bojemoi                                                          
+    - PG_DBNAME=msf                                                                
+    - IP2LOC_DBNAME=ip2location
 
 # Template de deploiement separe
 x-deploy-template: &deploy-template
@@ -153,18 +162,24 @@ services:
       DB_NAME: msf
       DB_USER: postgres
       DB_PASSWORD: bojemoi
-      FARADAY_URL: http://faraday.bojemoi.lab
-      FARADAY_TOKEN: 9a48aa3fb074b442e0fae943f9a0a7d93a3214401d08821a14a1dcc6165b6659
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       ZAP_HOST: zaproxy
       ZAP_PORT: 8090
       ZAP_API_KEY: ""
+      ZAP_CONCURRENCY: 3
+      FEED_INTERVAL_SECONDS: 300
+      BATCH_SIZE: 50
+      FARADAY_URL: http://faraday.bojemoi.lab
+      FARADAY_TOKEN: 9a48aa3fb074b442e0fae943f9a0a7d93a3214401d08821a14a1dcc6165b6659
+      FARADAY_WORKSPACE: default
       PYTHONUNBUFFERED: 1
-      LOG_LEVEL: ERROR
+      LOG_LEVEL: INFO
     volumes:
-      - scan_results:/results
       - scan_logs:/logs
     networks:
       - backend
+      - pentest
     dns_search:
       - bojemoi.lab
     logging:
@@ -190,12 +205,6 @@ services:
     environment:
       - ARME_TYPE=ak47
       - TARGET=container1
-      - PG_HOST=postgres
-      - PG_PORT=5432
-      - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
-      - PG_DBNAME=msf
-      - IP2LOC_DBNAME=ip2location
     logging:
       driver: json-file
       options:
@@ -211,13 +220,6 @@ services:
     environment:
       - ARME_TYPE=bm12
       - TARGET=container1
-      - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=0
-      - PG_HOST=postgres
-      - PG_PORT=5432
-      - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
-      - PG_DBNAME=msf
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - SHODAN_API_KEY=${SHODAN_API_KEY:-}
@@ -236,16 +238,10 @@ services:
     environment:
       - ARME_TYPE=uzi
       - TARGET=container1
-      - PG_HOST=postgres
-      - PG_PORT=5432
-      - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
-      - PG_DBNAME=msf
       # LHOST non défini → auto-détection par container (chaque worker utilise sa propre IP)
       - LPORT=24444
       - LPORT_BIND=4444
       - BIND_PORT=5556
-      - PYTHONUNBUFFERED=1
       - MODE_RUN=1
       - LHOST=192.168.1.121
       - TELEGRAM_ALERT_CHAT_ID=-5087117106

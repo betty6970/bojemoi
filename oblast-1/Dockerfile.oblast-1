@@ -15,6 +15,12 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV DB_HOST=postgres
 ENV DB_PORT=5432
 ENV DB_NAME=msf
+ENV REDIS_HOST=redis
+ENV REDIS_PORT=6379
+ENV ZAP_CONCURRENCY=3
+ENV FEED_INTERVAL_SECONDS=300
+ENV BATCH_SIZE=50
+ENV FARADAY_WORKSPACE=default
 ENV DB_USER=postgres
 ENV DB_PASSWORD=bojemoi
 
@@ -27,7 +33,10 @@ ENV ZAP_API_KEY=""
 RUN addgroup -g 1000 scanner && \
     adduser -D -s /bin/sh -u 1000 -G scanner scanner
 
-# Installer les dépendances système
+# Copier requirements avant le RUN pour le cache Docker
+COPY requirements.txt /tmp/requirements.txt
+
+# Installer les dépendances système + redis via pip
 RUN apk update && \
     apk add --no-cache \
         python3 \
@@ -41,24 +50,22 @@ RUN apk update && \
         libffi-dev \
         openssl-dev \
         curl \
-        ca-certificates  \
-        py3-psycopg2  \
-        py3-requests  \
-        py3-urllib3  \
-        py3-certifi  \
-        py3-charset-normalizer  \
+        ca-certificates \
+        py3-psycopg2 \
+        py3-requests \
+        py3-urllib3 \
+        py3-certifi \
+        py3-charset-normalizer \
         py3-idna && \
+    pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt && \
     rm -rf /var/cache/apk/*
 
 # Créer les répertoires de travail
-RUN mkdir -p /app /results /logs && \
-    chown -R scanner:scanner /app /results /logs
+RUN mkdir -p /app /logs && \
+    chown -R scanner:scanner /app /logs
 
 # Définir le répertoire de travail
 WORKDIR /app
-
-# Copier le fichier requirements.txt
-COPY requirements.txt .
 
 
 # Copier le script principal
