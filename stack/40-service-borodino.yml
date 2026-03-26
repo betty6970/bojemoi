@@ -190,6 +190,12 @@ services:
     environment:
       - ARME_TYPE=ak47
       - TARGET=container1
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
+      - IP2LOC_DBNAME=ip2location
     logging:
       driver: json-file
       options:
@@ -207,6 +213,11 @@ services:
       - TARGET=container1
       - PYTHONUNBUFFERED=1
       - DEBUG_MODE=0
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - SHODAN_API_KEY=${SHODAN_API_KEY:-}
@@ -225,6 +236,11 @@ services:
     environment:
       - ARME_TYPE=uzi
       - TARGET=container1
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
       # LHOST non défini → auto-détection par container (chaque worker utilise sa propre IP)
       - LPORT=24444
       - LPORT_BIND=4444

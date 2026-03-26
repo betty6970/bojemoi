@@ -1,27 +1,23 @@
 #!/bin/ash
 
-# Variables
-set HOME="/opt/bojemoi"
-export POSTGRESQL
-user="postgres"            # Nom d'utilisateur PostgreSQL
-password="bojemoi"             # Mot de passe PostgreSQL
-dbname="msf"               # Base de données par défaut
+export HOME="/opt/bojemoi"
 
+# Config depuis variables d'environnement (définies dans le stack)
+PG_HOST="${PG_HOST:-postgres}"
+PG_PORT="${PG_PORT:-5432}"
+PG_USER="${PG_USER:-postgres}"
+PG_PASSWORD="${PG_PASSWORD:-}"
+PG_DBNAME="${PG_DBNAME:-msf}"
+IP2LOC_DBNAME="${IP2LOC_DBNAME:-ip2location}"
 
 # Attendre que PostgreSQL soit prêt (retry indéfini)
-echo "[ATTENTE] Résolution DNS postgres..."
+echo "[ATTENTE] Attente PostgreSQL sur $PG_HOST:$PG_PORT..."
 while true; do
-    ip=$(ping -c 1 -W 1 "postgres" 2>/dev/null | head -n 1 | awk '{print $3}')
-    sql_ip="${ip:1:-2}"
-    if [ -n "$sql_ip" ] && ping -c 1 -W 1 "postgres" &>/dev/null; then
-        if pg_isready -h "$sql_ip" -U "$user" -d "$dbname" > /dev/null 2>&1; then
-            echo "[INFO] PostgreSQL détecté à $sql_ip"
-            break
-        else
-            echo "[ATTENTE] PostgreSQL pas prêt à $sql_ip... retry dans 10s"
-        fi
+    if pg_isready -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DBNAME" > /dev/null 2>&1; then
+        echo "[INFO] PostgreSQL prêt sur $PG_HOST"
+        break
     else
-        echo "[ATTENTE] Résolution DNS postgres... retry dans 10s"
+        echo "[ATTENTE] PostgreSQL pas prêt sur $PG_HOST... retry dans 10s"
     fi
     sleep 10
 done
@@ -35,7 +31,7 @@ else
     TABLE="ip2location_db1"
 fi
 
-ip=$(echo "SELECT cidr_z FROM $TABLE TABLESAMPLE SYSTEM(1) WHERE country_code = 'RU' AND nmap = '0' LIMIT 1;" |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location -t )
+ip=$(echo "SELECT cidr_z FROM $TABLE TABLESAMPLE SYSTEM(1) WHERE country_code = 'RU' AND nmap = '0' LIMIT 1;" | PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$IP2LOC_DBNAME" -t)
 output=$(echo "$ip" | tr -d '[:space:]')
 
 # Fallback sur l'autre table si la sélection est vide
@@ -45,7 +41,7 @@ if [ -z "$output" ]; then
     else
         TABLE="ip2location_db1_v6"
     fi
-    ip=$(echo "SELECT cidr_z FROM $TABLE TABLESAMPLE SYSTEM(1) WHERE country_code = 'RU' AND nmap = '0' LIMIT 1;" |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location -t )
+    ip=$(echo "SELECT cidr_z FROM $TABLE TABLESAMPLE SYSTEM(1) WHERE country_code = 'RU' AND nmap = '0' LIMIT 1;" | PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$IP2LOC_DBNAME" -t)
     output=$(echo "$ip" | tr -d '[:space:]')
 fi
 
@@ -58,7 +54,7 @@ fi
 
 echo "current cidr :$output on going (table: $TABLE)"
 tz=$(echo "UPDATE $TABLE SET nmap = '1', date_nmap = (SELECT CURRENT_TIMESTAMP) WHERE cidr_z >>= '$output';")
-echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location
+echo $tz | PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$IP2LOC_DBNAME"
 
 # Détecter IPv6 (contient ":") et ajouter le flag -6
 if echo "$output" | grep -q ":"; then
@@ -67,11 +63,11 @@ else
     IPV6_FLAG=""
 fi
 
-msfconsole -q -x "db_connect postgres:bojemoi@$sql_ip/$dbname;db_nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f  --mtu 16  --data-length 64 --randomize-hosts -PA -PM -Pn $IPV6_FLAG  $output; quit"
+msfconsole -q -x "db_connect $PG_USER:$PG_PASSWORD@$PG_HOST/$PG_DBNAME;db_nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f  --mtu 16  --data-length 64 --randomize-hosts -PA -PM -Pn $IPV6_FLAG  $output; quit"
 
 echo "cidr :$output done"
 tz=$(echo "UPDATE $TABLE SET nmap = '2', date_nmap = (SELECT CURRENT_TIMESTAMP) WHERE cidr_z >>= '$output';")
-echo $tz |PGPASSWORD=bojemoi psql -h $sql_ip -U postgres -d ip2location
+echo $tz | PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$IP2LOC_DBNAME"
 
 done
 

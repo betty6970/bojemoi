@@ -21,14 +21,13 @@ except ImportError:
     _anthropic_sdk = None
 
 # Récupération sécurisée des credentials PostgreSQL
+PG_HOST = os.getenv("PG_HOST", "postgres")
+PG_PORT = int(os.getenv("PG_PORT", "5432"))
 PG_USER = os.getenv("PG_USER", "postgres")
-PG_PASSWORD = os.getenv("PG_PASSWORD", "bojemoi")  # Ne pas mettre de valeur par défaut pour plus de sécurité
+PG_PASSWORD = os.getenv("PG_PASSWORD", "")
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
-PG_HOST = "postgres"
 
-
-# dry run or not
-MODE_RUN = 1
+MODE_RUN = int(os.getenv("MODE_RUN", "1"))
 
 def _detect_local_ip() -> str:
     for url in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"):
@@ -310,7 +309,7 @@ def get_os_paths(os_name):
 def get_host_os(address):
     """Récupère l'OS de la cible depuis msf.hosts."""
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT os_name FROM hosts WHERE host(address::inet) = %s LIMIT 1;",
@@ -325,7 +324,7 @@ def get_host_os(address):
 def get_host_arch(address):
     """Récupère l'arch de la cible depuis msf.hosts (armle, armbe, mipsle, x86, x64...)."""
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT arch FROM hosts WHERE host(address::inet) = %s LIMIT 1;",
@@ -340,7 +339,7 @@ def get_host_arch(address):
 def get_host_id(address):
     """Récupère l'id de l'hôte depuis msf.hosts."""
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id FROM hosts WHERE host(address::inet) = %s LIMIT 1;",
@@ -360,7 +359,7 @@ def report_vuln(address, exploit_name, payload_name, session_id):
         print(f"[DB] Host {address} non trouvé, vuln ignorée.")
         return
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO vulns (host_id, name, info, created_at, updated_at) "
@@ -389,7 +388,7 @@ def report_note(address, enriched_info):
         "pid":      enriched_info.get("_getpid", ""),
     })
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO notes (host_id, ntype, data, critical, seen, created_at, updated_at) "
@@ -419,7 +418,7 @@ def filter_exploits_by_profile(exploits, allowed_patterns, os_name=''):
 def get_host_services_by_address(address):
     """Récupère les services ouverts pour une IP depuis msf.services."""
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT s.port, s.name, s.info FROM services s "
@@ -577,7 +576,7 @@ def build_targeted_exploits(client, services, os_name='', products=None, scan_de
 def get_all_debug_hosts():
     """Sélectionne un hôte classifié par bm12_v3 avec des produits identifiés."""
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST) as conn:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id, address, scan_details FROM hosts TABLESAMPLE SYSTEM(0.5) "
