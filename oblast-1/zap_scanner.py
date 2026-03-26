@@ -161,33 +161,42 @@ class ZAPManager:
             logger.error(f"Erreur lors du démarrage du spider scan: {e}")
             return None
     
-    def wait_for_spider_completion(self, scan_id: str):
+    def wait_for_spider_completion(self, scan_id: str, timeout: int = 1800):
         """Attendre la fin du scan spider"""
         logger.info(f"Attente de la fin du spider scan {scan_id}")
-        
+        start_time = time.time()
+
         while True:
+            if time.time() - start_time > timeout:
+                logger.warning(f"Spider scan {scan_id}: timeout après {timeout}s — abandon")
+                break
+
             try:
                 params = {
                     'scanId': scan_id,
                     'apikey': self.zap_api_key
                 }
-                
+
                 response = requests.get(
                     f"{self.base_url}/JSON/spider/view/status/",
-                    params=params
+                    params=params,
+                    timeout=10
                 )
-                
+
                 if response.status_code == 200:
-                    status = int(response.json().get('status', 0))
+                    data = response.json()
+                    if data.get('code') == 'DOES_NOT_EXIST':
+                        logger.warning(f"Spider scan {scan_id} introuvable (ZAP redémarré?) — abandon")
+                        break
+                    status = int(data.get('status', 0))
                     logger.info(f"Spider scan progression: {status}%")
-                    
                     if status >= 100:
                         logger.info("Spider scan terminé")
                         break
-                
+
             except Exception as e:
                 logger.error(f"Erreur lors de la vérification du statut spider: {e}")
-            
+
             time.sleep(10)
     
     def start_active_scan(self, target_url: str) -> Optional[str]:
@@ -215,33 +224,43 @@ class ZAPManager:
             logger.error(f"Erreur lors du démarrage du scan actif: {e}")
             return None
     
-    def wait_for_active_scan_completion(self, scan_id: str):
+    def wait_for_active_scan_completion(self, scan_id: str, timeout: int = 3600):
         """Attendre la fin du scan actif"""
         logger.info(f"Attente de la fin du scan actif {scan_id}")
-        
+        start_time = time.time()
+
         while True:
+            if time.time() - start_time > timeout:
+                logger.warning(f"Scan actif {scan_id}: timeout après {timeout}s — abandon")
+                break
+
             try:
                 params = {
                     'scanId': scan_id,
                     'apikey': self.zap_api_key
                 }
-                
+
                 response = requests.get(
                     f"{self.base_url}/JSON/ascan/view/status/",
-                    params=params
+                    params=params,
+                    timeout=10
                 )
-                
+
                 if response.status_code == 200:
-                    status = int(response.json().get('status', 0))
+                    data = response.json()
+                    # ZAP renvoie {"code": "DOES_NOT_EXIST"} si le scan n'existe plus
+                    if data.get('code') == 'DOES_NOT_EXIST':
+                        logger.warning(f"Scan actif {scan_id} introuvable (ZAP redémarré?) — abandon")
+                        break
+                    status = int(data.get('status', 0))
                     logger.info(f"Scan actif progression: {status}%")
-                    
                     if status >= 100:
                         logger.info("Scan actif terminé")
                         break
-                
+
             except Exception as e:
                 logger.error(f"Erreur lors de la vérification du statut du scan actif: {e}")
-            
+
             time.sleep(15)
     
     def get_scan_results(self, target_url: str) -> Dict:
