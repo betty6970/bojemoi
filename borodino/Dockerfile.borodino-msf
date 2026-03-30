@@ -9,7 +9,7 @@ RUN apk update && apk add --no-cache \
     openssl libpq postgresql-client \
     python3 py3-pip py3-psycopg2 py3-psutil \
     ncurses libpcap \
-    nmap nmap-scripts openvpn gcompat && \
+    nmap nmap-scripts openvpn iproute2 gcompat && \
     rm -rf /var/cache/apk/*
 
 # Build-only dependencies (removed after compilation)
@@ -48,6 +48,7 @@ COPY --chown=postgres:root --chmod=777 thearm_uzi /usr/bin/
 COPY --chown=postgres:root --chmod=644 osint_lookup.py /usr/bin/
 COPY --chmod=755 start_uzi.sh /usr/bin/start_uzi.sh
 COPY --chmod=755 start_msf_server.sh /usr/bin/start_msf_server.sh
+COPY --chmod=755 route-setup.sh /usr/bin/route-setup.sh
 
 # Compile Python sources
 RUN python3 -m compileall -b /usr/bin/osint_lookup.py && \

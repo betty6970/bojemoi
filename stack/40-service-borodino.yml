@@ -354,6 +354,12 @@ services:
   uzi-service:
     <<: *arme-template
     image: localhost:5000/borodino-msf:latest
+    networks:
+      - backend
+      - pentest
+      - scan_net
+    cap_add:
+      - NET_ADMIN
     environment:
       - ARME_TYPE=uzi
       - TARGET=container1
@@ -372,6 +378,7 @@ services:
       - FARADAY_USER=faraday
       - FARADAY_PASSWORD=bojemoi2
       - FARADAY_WORKSPACE=default
+      - SCAN_GATEWAY_HOST=wg-gateway
     secrets:
       - telegram_bot_token
       - telegram_alert_chat_id
@@ -398,7 +405,7 @@ services:
         reservations:
           cpus: '0.2'
           memory: 512M
-    command: /usr/bin/start_uzi.sh
+    command: ["/usr/bin/route-setup.sh", "/usr/bin/start_uzi.sh"]
 
   karacho-blockchain:
     image: localhost:5000/karacho:latest
