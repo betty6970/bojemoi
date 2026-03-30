@@ -151,6 +151,9 @@ services:
         - traefik.http.routers.zaproxy.entrypoints=websecure
         - traefik.http.routers.zaproxy.tls=true
         - traefik.http.services.zaproxy.loadbalancer.server.port=8090
+  # =========================================================================
+  # FROM: 10-service-oblast.yml - ZAP Proxy
+  # =========================================================================
 
   # ZAP Scanner application
   zap-scanner:
@@ -170,8 +173,9 @@ services:
       ZAP_CONCURRENCY: 3
       FEED_INTERVAL_SECONDS: 300
       BATCH_SIZE: 50
-      FARADAY_URL: http://faraday.bojemoi.lab
-      FARADAY_TOKEN: 9a48aa3fb074b442e0fae943f9a0a7d93a3214401d08821a14a1dcc6165b6659
+      FARADAY_URL: http://faraday:5985
+      FARADAY_USER: faraday
+      FARADAY_PASSWORD: bojemoi2
       FARADAY_WORKSPACE: default
       PYTHONUNBUFFERED: 1
       LOG_LEVEL: INFO
@@ -232,20 +236,75 @@ services:
       <<: *deploy-template
       replicas: 15
     command: /usr/bin/thearm_bm12
+  ########################################################
+  #
+  ########################################################
+  msf-teamserver:
+    image: localhost:5000/borodino-msf:latest
+    environment:
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
+    networks:
+      - backend
+      - pentest
+      - proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+        max_replicas_per_node: 1
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=proxy
+        - traefik.tcp.routers.meterpreter.rule=HostSNI(`*`)
+        - traefik.tcp.routers.meterpreter.entrypoints=meterpreter
+        - traefik.tcp.services.meterpreter.loadbalancer.server.port=4444
+    command: /usr/bin/start_msf_server.sh
+  ########################################################
+  #
+  ########################################################
 
   uzi-service:
     <<: *arme-template
+    image: localhost:5000/borodino-msf:latest
     environment:
       - ARME_TYPE=uzi
       - TARGET=container1
-      # LHOST non défini → auto-détection par container (chaque worker utilise sa propre IP)
+      # MSF_HOST : hostname du service msf-teamserver (réseau pentest/backend)
+      - MSF_HOST=msf-teamserver
+      # C2_REDIRECTORS : IPs publiques des redirecteurs (virgule), ex: 1.2.3.4,5.6.7.8
+      # Mettre à jour après fly ips allocate-v4 + provision-redirector.sh
+      - C2_REDIRECTORS=37.16.12.4
       - LPORT=24444
       - LPORT_BIND=4444
       - BIND_PORT=5556
       - MODE_RUN=1
-      - LHOST=192.168.1.121
       - TELEGRAM_ALERT_CHAT_ID=-5087117106
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - FARADAY_URL=http://faraday:5985
+      - FARADAY_USER=faraday
+      - FARADAY_PASSWORD=bojemoi2
+      - FARADAY_WORKSPACE=default
     secrets:
       - telegram_bot_token
       - telegram_alert_chat_id
@@ -272,11 +331,6 @@ services:
         reservations:
           cpus: '0.2'
           memory: 512M
-      labels:
-        - traefik.enable=true
-        - traefik.tcp.routers.meterpreter.rule=HostSNI(`*`)
-        - traefik.tcp.routers.meterpreter.entrypoints=meterpreter
-        - traefik.tcp.services.meterpreter.loadbalancer.server.port=4444
     command: /usr/bin/start_uzi.sh
 
   karacho-blockchain:
@@ -581,6 +635,10 @@ services:
       - proxy
       - backend
       - pentest
+
+
+
+
     dns_search:
       - bojemoi.lab
     # ports removed - access via Traefik (faraday.bojemoi.lab)

@@ -1,0 +1,6 @@
+# PKI — ne jamais committer les clés privées
+pki/
+clients/
+server/
+ccd/
+redirectors/

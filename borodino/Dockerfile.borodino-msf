@@ -1,0 +1,58 @@
+# Borodino - Metasploit scanning workers
+# Using stable Ruby 3.3 (Ruby 3.5.0-preview1 has native extension incompatibilities)
+
+FROM ruby:3.3-alpine
+
+# Runtime packages
+RUN apk update && apk add --no-cache \
+    bash curl git \
+    openssl libpq postgresql-client \
+    python3 py3-pip py3-psycopg2 py3-psutil \
+    ncurses libpcap \
+    nmap nmap-scripts openvpn gcompat && \
+    rm -rf /var/cache/apk/*
+
+# Build-only dependencies (removed after compilation)
+RUN apk add --no-cache --virtual .build-deps \
+    build-base musl-dev linux-headers \
+    libffi-dev yaml-dev readline-dev sqlite-dev zlib-dev \
+    openssl-dev postgresql-dev libpcap-dev
+
+# Install Python dependencies for pymetasploit3
+RUN pip3 install --no-cache-dir --break-system-packages msgpack retry && \
+    pip3 install --no-cache-dir --break-system-packages pymetasploit3 && \
+    pip3 install --no-cache-dir --break-system-packages anthropic
+
+# Set the working directory
+WORKDIR /opt/metasploit
+ENV PATH="/opt/metasploit:$PATH"
+ENV HOME='/opt/metasploit'
+
+# Clone the Metasploit Framework repository
+RUN git clone https://github.com/rapid7/metasploit-framework.git .
+
+# Install Metasploit gems and remove build deps
+RUN git config --global --add safe.directory /opt/metasploit && \
+    bundle config set --local without 'development test' && \
+    bundle install --jobs=$(nproc) && \
+    apk del .build-deps
+
+USER root
+
+RUN chmod 0777 .
+RUN chown postgres:root /opt/metasploit/ || :
+
+RUN adduser postgres -g root || :
+
+COPY --chown=postgres:root --chmod=777 thearm_uzi /usr/bin/
+COPY --chown=postgres:root --chmod=644 osint_lookup.py /usr/bin/
+COPY --chmod=755 start_uzi.sh /usr/bin/start_uzi.sh
+COPY --chmod=755 start_msf_server.sh /usr/bin/start_msf_server.sh
+
+# Compile Python sources
+RUN python3 -m compileall -b /usr/bin/osint_lookup.py && \
+    rm /usr/bin/osint_lookup.py
+
+WORKDIR /etc/openvpn
+
+#CMD ["/usr/bin/ak47"]
