@@ -12,12 +12,13 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 RUN pip3 install --no-cache-dir --break-system-packages \
-    requests anthropic
+    requests anthropic msgpack
 
 COPY --chmod=755 thearm_ak47 /usr/bin/thearm_ak47
 COPY --chmod=755 thearm_bm12 /usr/bin/thearm_bm12
 COPY --chmod=755 route-setup.sh /usr/bin/route-setup.sh
 COPY --chmod=644 osint_lookup.py /usr/bin/osint_lookup.py
+COPY --chmod=644 msf_import.py /usr/bin/msf_import.py
 
-RUN python3 -m compileall -b /usr/bin/osint_lookup.py && \
-    rm /usr/bin/osint_lookup.py
+RUN python3 -m compileall -b /usr/bin/osint_lookup.py /usr/bin/msf_import.py && \
+    rm /usr/bin/osint_lookup.py /usr/bin/msf_import.py

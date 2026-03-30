@@ -262,6 +262,8 @@ services:
       - ARME_TYPE=ak47
       - TARGET=container1
       - SCAN_GATEWAY_HOST=wg-gateway
+      - MSF_HOST=msf-teamserver
+      - MSF_PORT=55553
     logging:
       driver: json-file
       options:
