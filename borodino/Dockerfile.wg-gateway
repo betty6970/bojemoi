@@ -1,0 +1,16 @@
+# VPN Gateway — sortie scan via ProtonVPN (OpenVPN TCP)
+# Fait office de gateway NAT pour le réseau scan_net
+
+FROM alpine:3.20
+
+RUN apk add --no-cache \
+    openvpn \
+    iptables \
+    iproute2 \
+    bash \
+    curl \
+    && rm -rf /var/cache/apk/*
+
+COPY --chmod=755 wg-gateway-start.sh /usr/bin/wg-gateway-start.sh
+
+ENTRYPOINT ["/usr/bin/wg-gateway-start.sh"]

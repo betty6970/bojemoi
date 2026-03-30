@@ -8,6 +8,7 @@ RUN apk add --no-cache \
     python3 py3-pip py3-psycopg2 py3-psutil \
     postgresql-client \
     nmap nmap-scripts \
+    iproute2 \
     && rm -rf /var/cache/apk/*
 
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -15,6 +16,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 COPY --chmod=755 thearm_ak47 /usr/bin/thearm_ak47
 COPY --chmod=755 thearm_bm12 /usr/bin/thearm_bm12
+COPY --chmod=755 route-setup.sh /usr/bin/route-setup.sh
 COPY --chmod=644 osint_lookup.py /usr/bin/osint_lookup.py
 
 RUN python3 -m compileall -b /usr/bin/osint_lookup.py && \

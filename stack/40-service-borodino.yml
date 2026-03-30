@@ -57,6 +57,13 @@ networks:
     name: pentest
     driver: overlay
     attachable: true
+  scan_net:
+    name: borodino_scan_net
+    driver: overlay
+    attachable: false
+    ipam:
+      config:
+        - subnet: 10.11.0.0/24
 #--------------------------------------------------------------------------------
 # VOLUMES
 #--------------------------------------------------------------------------------
@@ -204,11 +211,57 @@ services:
   # =========================================================================
   # FROM: 50-service-borodino.yml - Arme services
   # =========================================================================
+
+  wg-gateway:
+    image: localhost:5000/wg-gateway:latest
+    networks:
+      - scan_net
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    secrets:
+      - protonvpn_ovpn
+      - protonvpn_auth
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+        max_replicas_per_node: 1
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
   ak47-service:
     <<: *arme-template
+    networks:
+      - backend
+      - scan_net
+    cap_add:
+      - NET_ADMIN
     environment:
+      - PYTHONUNBUFFERED=1
+      - DEBUG_MODE=0
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
+      - IP2LOC_DBNAME=ip2location
       - ARME_TYPE=ak47
       - TARGET=container1
+      - SCAN_GATEWAY_HOST=wg-gateway
     logging:
       driver: json-file
       options:
@@ -217,16 +270,30 @@ services:
     deploy:
       <<: *deploy-template
       replicas: 5
-    command: /usr/bin/thearm_ak47
+    command: ["/usr/bin/route-setup.sh", "/usr/bin/thearm_ak47"]
 
   bm12-service:
     <<: *arme-template
+    networks:
+      - backend
+      - scan_net
+    cap_add:
+      - NET_ADMIN
     environment:
+      - PYTHONUNBUFFERED=1
+      - DEBUG_MODE=0
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
+      - IP2LOC_DBNAME=ip2location
       - ARME_TYPE=bm12
       - TARGET=container1
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - SHODAN_API_KEY=${SHODAN_API_KEY:-}
+      - SCAN_GATEWAY_HOST=wg-gateway
     logging:
       driver: json-file
       options:
@@ -235,7 +302,7 @@ services:
     deploy:
       <<: *deploy-template
       replicas: 15
-    command: /usr/bin/thearm_bm12
+    command: ["/usr/bin/route-setup.sh", "/usr/bin/thearm_bm12"]
   ########################################################
   #
   ########################################################
@@ -726,4 +793,8 @@ secrets:
   telegram_alert_chat_id:
     external: true
   anthropic_api_key:
+    external: true
+  protonvpn_ovpn:
+    external: true
+  protonvpn_auth:
     external: true
