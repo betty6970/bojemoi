@@ -1,5 +1,5 @@
 # Merged stack file: borodino.yml
-# Source files: 10-service-oblast.yml, 11-service-zaproxy.yml, 20-service-kyiv.yml,
+# Source files: 10-service-oblast.yml, 11-service-zaproxy.yml,
 #               50-service-borodino.yml, 50-service-tsushima.yml, 55-service-nuclei.yml,
 #               56-service-vulnx.yml, 60-service-samsonov.yml, 70-service-zarovnik.yml
 #--------------------------------------------------------------------------------
@@ -183,7 +183,7 @@ services:
       FARADAY_URL: http://faraday:5985
       FARADAY_USER: faraday
       FARADAY_PASSWORD: bojemoi2
-      FARADAY_WORKSPACE: default
+      FARADAY_WORKSPACE: zap
       PYTHONUNBUFFERED: 1
       LOG_LEVEL: INFO
     volumes:
@@ -379,7 +379,7 @@ services:
       - FARADAY_URL=http://faraday:5985
       - FARADAY_USER=faraday
       - FARADAY_PASSWORD=bojemoi2
-      - FARADAY_WORKSPACE=default
+      - FARADAY_WORKSPACE=uzi
       - SCAN_GATEWAY_HOST=wg-gateway
     secrets:
       - telegram_bot_token
@@ -538,6 +538,94 @@ services:
           cpus: '0.5'
           memory: 512M
 
+  logpull:
+    image: localhost:5000/borodino:latest
+    networks:
+      - backend
+    volumes:
+      - /home/docker/.fly/bin/fly:/usr/local/bin/fly:ro
+      - /home/docker/LightsailDefaultKey-eu-central-1.pem:/root/.ssh/lightsail.pem:ro
+    environment:
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
+      - FLY_APP=redirector-1
+      - FLY_LOG_LINES=2000
+      - LIGHTSAIL_HOST=bojemoi.me
+      - LIGHTSAIL_USER=ec2-user
+      - LIGHTSAIL_KEY=/root/.ssh/lightsail.pem
+      - LIGHTSAIL_LOG_LINES=5000
+      - LOOP_INTERVAL=3600
+    secrets:
+      - fly_api_token
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == meta-76
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+    command: ["python3", "/usr/bin/thearm_logpull"]
+
+  nuclei-worker:
+    image: localhost:5000/borodino:latest
+    networks:
+      - backend
+      - pentest
+    environment:
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
+      - NUCLEI_API_URL=http://nuclei-api:8001
+      - NUCLEI_SEVERITY=critical,high,medium
+      - NUCLEI_POLL_INTERVAL=15
+      - NUCLEI_SCAN_TIMEOUT=1200
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - FARADAY_URL=http://faraday:5985
+      - FARADAY_USER=faraday
+      - FARADAY_PASSWORD=bojemoi2
+      - FARADAY_WORKSPACE=nuclei
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 15s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    command: ["python3", "/usr/bin/thearm_nuclei"]
+
   nuclei-api:
     image: localhost:5000/nuclei:latest
     entrypoint: /bin/sh
@@ -556,11 +644,15 @@ services:
       - NUCLEI_HOST=nuclei
       - RESULTS_DIR=/results
       - NUCLEI_TEMPLATES=/root/nuclei-templates
+      - FARADAY_URL=http://faraday:5985
+      - FARADAY_USER=faraday
+      - FARADAY_PASSWORD=bojemoi2
+      - FARADAY_WORKSPACE=nuclei
     command:
       - -c
       - |
         apk add --no-cache python3 py3-pip
-        pip install fastapi uvicorn redis httpx --break-system-packages
+        pip install fastapi uvicorn redis httpx requests --break-system-packages
         nuclei -update-templates
         python -m uvicorn main:app --host 0.0.0.0 --port 8001
     logging:
@@ -796,6 +888,43 @@ services:
           - node.role == worker
 
 
+  redis-commander:
+    image: localhost:5000/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    networks:
+      - backend
+      - proxy
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=proxy
+        - traefik.http.routers.redis-commander.rule=Host(`redis.bojemoi.lab`)
+        - traefik.http.routers.redis-commander.entrypoints=websecure
+        - traefik.http.routers.redis-commander.tls=true
+        - traefik.http.services.redis-commander.loadbalancer.server.port=8081
+
+
 secrets:
   telegram_bot_token:
     external: true
@@ -806,4 +935,6 @@ secrets:
   protonvpn_ovpn:
     external: true
   protonvpn_auth:
+    external: true
+  fly_api_token:
     external: true

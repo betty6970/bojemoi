@@ -4,7 +4,7 @@
 FROM alpine:3.20
 
 RUN apk add --no-cache \
-    bash curl \
+    bash curl openssh-client \
     python3 py3-pip py3-psycopg2 py3-psutil \
     postgresql-client \
     nmap nmap-scripts \
@@ -12,10 +12,12 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 RUN pip3 install --no-cache-dir --break-system-packages \
-    requests anthropic msgpack
+    requests anthropic msgpack redis
 
 COPY --chmod=755 thearm_ak47 /usr/bin/thearm_ak47
 COPY --chmod=755 thearm_bm12 /usr/bin/thearm_bm12
+COPY --chmod=755 thearm_nuclei /usr/bin/thearm_nuclei
+COPY --chmod=755 thearm_logpull /usr/bin/thearm_logpull
 COPY --chmod=755 route-setup.sh /usr/bin/route-setup.sh
 COPY --chmod=644 osint_lookup.py /usr/bin/osint_lookup.py
 COPY --chmod=644 msf_import.py /usr/bin/msf_import.py

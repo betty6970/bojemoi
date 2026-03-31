@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""
+thearm_nuclei — Worker Nuclei pour Borodino
+Sélectionne des hôtes bm12_v3 depuis MSF DB et les soumet à nuclei-api.
+Trace les résultats dans nuclei_scan_log.
+"""
+
+import os
+import time
+import json
+import logging
+import psycopg2
+import psycopg2.extras
+import requests
+import redis
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+log = logging.getLogger('nuclei-worker')
+
+# PostgreSQL
+PG_HOST     = os.getenv('PG_HOST', 'postgres')
+PG_PORT     = int(os.getenv('PG_PORT', '5432'))
+PG_USER     = os.getenv('PG_USER', 'postgres')
+PG_PASSWORD = os.getenv('PG_PASSWORD', '')
+PG_DBNAME   = os.getenv('PG_DBNAME', 'msf')
+
+# Nuclei API
+NUCLEI_API_URL = os.getenv('NUCLEI_API_URL', 'http://nuclei-api:8001')
+
+# Redis
+REDIS_HOST     = os.getenv('REDIS_HOST', 'redis')
+REDIS_PORT     = int(os.getenv('REDIS_PORT', '6379'))
+QUEUE_KEY      = 'pentest:nuclei_queue'
+BRPOP_TIMEOUT  = 30  # secondes; None en queue item, déclenche backfill DB
+
+# Comportement
+POLL_INTERVAL   = int(os.getenv('NUCLEI_POLL_INTERVAL', '15')) # secondes entre polls de statut
+SCAN_TIMEOUT    = int(os.getenv('NUCLEI_SCAN_TIMEOUT', '1200'))# timeout max par scan (20 min)
+SEVERITY        = os.getenv('NUCLEI_SEVERITY', 'critical,high,medium')
+
+# Mapping produit bm12 → tags Nuclei
+PRODUCT_TAG_MAP = {
+    'wordpress':  'wordpress',
+    'drupal':     'drupal',
+    'joomla':     'joomla',
+    'apache':     'apache',
+    'nginx':      'nginx',
+    'iis':        'iis',
+    'tomcat':     'apache,tomcat',
+    'jenkins':    'jenkins',
+    'gitlab':     'gitlab',
+    'mysql':      'mysql',
+    'mssql':      'mssql',
+    'postgresql':  'postgresql',
+    'mongodb':    'mongodb',
+    'redis':      'redis',
+    'elasticsearch': 'elasticsearch',
+    'openssh':    'ssh',
+    'ssh':        'ssh',
+    'ftp':        'ftp',
+    'smb':        'smb',
+    'rdp':        'rdp',
+    'vnc':        'vnc',
+    'telnet':     'telnet',
+    'phpmyadmin': 'phpmyadmin',
+    'php':        'php',
+    'spring':     'spring',
+    'struts':     'apache,struts',
+    'exchange':   'exchange',
+    'sharepoint': 'sharepoint',
+    'citrix':     'citrix',
+    'vmware':     'vmware',
+    'cisco':      'cisco',
+    'fortinet':   'fortinet',
+    'paloalto':   'paloalto',
+}
+
+
+def get_db_conn():
+    return psycopg2.connect(
+        host=PG_HOST, port=PG_PORT,
+        user=PG_USER, password=PG_PASSWORD,
+        dbname=PG_DBNAME
+    )
+
+
+def get_redis():
+    return redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True,
+                       socket_connect_timeout=5)
+
+
+def is_honeypot_suspect(conn, address: str) -> str | None:
+    """
+    Vérifie si l'IP est suspecte (honeypot/chercheur sécu).
+    Retourne la raison ou None si OK.
+    """
+    # Extrait l'IP pure (sans le /32 éventuel)
+    ip = address.split('/')[0]
+    with conn.cursor() as cur:
+        # 1. A-t-il attaqué notre honeypot local ?
+        cur.execute(
+            "SELECT COUNT(*) FROM honeypot_events WHERE source_ip = %s::inet",
+            (ip,)
+        )
+        if cur.fetchone()[0] > 0:
+            return 'honeypot_events'
+
+        # 2. A-t-il sondé nos redirecteurs ou Lightsail ?
+        cur.execute(
+            "SELECT server, hit_count FROM redirector_hits WHERE source_ip = %s::inet LIMIT 1",
+            (ip,)
+        )
+        row = cur.fetchone()
+        if row:
+            return f'redirector_hits:{row[0]}:{row[1]}hits'
+
+    return None
+
+
+def pick_target(conn):
+    """Sélectionne un hôte bm12_v3 non encore scanné par Nuclei."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("""
+            SELECT h.id, h.address::text AS address, h.scan_details
+            FROM (SELECT * FROM hosts TABLESAMPLE SYSTEM(1)) AS h
+            WHERE h.scan_status = 'bm12_v3'
+              AND h.scan_details IS NOT NULL
+              AND (h.scan_details::jsonb) ? 'products'
+              AND host(h.address::inet) NOT LIKE 'fe80:%%'
+              AND h.id NOT IN (
+                  SELECT host_id FROM nuclei_scan_log
+                  WHERE status IN ('completed', 'running', 'no_findings')
+              )
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        if not row:
+            # Fallback : prend aussi les no_findings pour re-scanner éventuellement
+            cur.execute("""
+                SELECT h.id, h.address::text AS address, h.scan_details
+                FROM (SELECT * FROM hosts TABLESAMPLE SYSTEM(1)) AS h
+                WHERE h.scan_status = 'bm12_v3'
+                  AND h.scan_details IS NOT NULL
+                  AND (h.scan_details::jsonb) ? 'products'
+                  AND host(h.address::inet) NOT LIKE 'fe80:%%'
+                  AND h.id NOT IN (
+                      SELECT host_id FROM nuclei_scan_log
+                      WHERE status IN ('completed', 'running')
+                  )
+                LIMIT 1
+            """)
+            row = cur.fetchone()
+        return row
+
+
+def extract_tags(scan_details_raw) -> str:
+    """Extrait les tags Nuclei depuis scan_details.products."""
+    try:
+        if isinstance(scan_details_raw, str):
+            details = json.loads(scan_details_raw)
+        else:
+            details = scan_details_raw or {}
+
+        products = details.get('products', [])
+        if isinstance(products, str):
+            products = [products]
+
+        tags = set()
+        for product in products:
+            p = product.lower()
+            for keyword, tag in PRODUCT_TAG_MAP.items():
+                if keyword in p:
+                    for t in tag.split(','):
+                        tags.add(t.strip())
+
+        # Toujours ajouter cve pour chercher les CVEs connues
+        tags.add('cve')
+
+        return ','.join(sorted(tags)) if tags else 'cve'
+    except Exception:
+        return 'cve'
+
+
+def mark_running(conn, host_id: int, address: str, tags: str):
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO nuclei_scan_log (host_id, address, status, tags_used, scanned_at)
+            VALUES (%s, %s, 'running', %s, now())
+            ON CONFLICT (host_id) DO UPDATE SET
+                status = 'running',
+                tags_used = EXCLUDED.tags_used,
+                scanned_at = now()
+        """, (host_id, address, tags))
+    conn.commit()
+
+
+def mark_result(conn, host_id: int, status: str, findings: dict, faraday_ok: bool):
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE nuclei_scan_log SET
+                status      = %s,
+                findings    = %s,
+                critical    = %s,
+                high        = %s,
+                medium      = %s,
+                low         = %s,
+                info        = %s,
+                faraday_ok  = %s,
+                scanned_at  = now()
+            WHERE host_id = %s
+        """, (
+            status,
+            findings.get('total', 0),
+            findings.get('critical', 0),
+            findings.get('high', 0),
+            findings.get('medium', 0),
+            findings.get('low', 0),
+            findings.get('info', 0),
+            faraday_ok,
+            host_id
+        ))
+    conn.commit()
+
+
+def submit_scan(target: str, tags: str) -> str | None:
+    """Soumet un scan à nuclei-api. Retourne le scan_id ou None."""
+    try:
+        resp = requests.post(
+            f'{NUCLEI_API_URL}/scan',
+            json={'target': target, 'severity': SEVERITY, 'tags': tags},
+            timeout=15
+        )
+        if resp.status_code == 200:
+            return resp.json().get('scan_id')
+        log.warning(f'nuclei-api POST /scan → {resp.status_code}: {resp.text[:200]}')
+        return None
+    except Exception as e:
+        log.error(f'Erreur soumission scan: {e}')
+        return None
+
+
+def wait_for_scan(scan_id: str) -> dict:
+    """Attend la fin du scan et retourne les données de résultat."""
+    deadline = time.time() + SCAN_TIMEOUT
+    while time.time() < deadline:
+        try:
+            resp = requests.get(f'{NUCLEI_API_URL}/scan/{scan_id}', timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                status = data.get('status', '')
+                if status in ('completed', 'error', 'timeout'):
+                    return data
+            time.sleep(POLL_INTERVAL)
+        except Exception as e:
+            log.warning(f'Erreur poll scan {scan_id}: {e}')
+            time.sleep(POLL_INTERVAL)
+
+    return {'status': 'timeout', 'findings_count': 0}
+
+
+def parse_severity_breakdown(scan_id: str) -> dict:
+    """Récupère le breakdown par sévérité depuis les résultats JSONL."""
+    counts = {'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
+    try:
+        resp = requests.get(f'{NUCLEI_API_URL}/scan/{scan_id}/results', timeout=15)
+        if resp.status_code == 200:
+            findings = resp.json().get('findings', [])
+            counts['total'] = len(findings)
+            for f in findings:
+                sev = f.get('info', {}).get('severity', 'info').lower()
+                if sev in counts:
+                    counts[sev] += 1
+    except Exception:
+        pass
+    return counts
+
+
+def run():
+    log.info('=== thearm_nuclei démarrage (Redis queue) ===')
+    log.info(f'nuclei-api: {NUCLEI_API_URL} | Redis: {REDIS_HOST}:{REDIS_PORT}')
+    log.info(f'Severity: {SEVERITY} | Poll: {POLL_INTERVAL}s | Timeout: {SCAN_TIMEOUT}s')
+
+    r = get_redis()
+
+    while True:
+        conn = None
+        try:
+            # BRPOP bloquant — 0 CPU en attente
+            item = r.brpop(QUEUE_KEY, timeout=BRPOP_TIMEOUT)
+            conn = get_db_conn()
+
+            if item is None:
+                # Timeout BRPOP: backfill un ancien bm12_v3 non scanné depuis la DB
+                target = pick_target(conn)
+                if target:
+                    log.debug(f'[backfill] {target["address"]} → {QUEUE_KEY}')
+                    r.rpush(QUEUE_KEY, json.dumps({
+                        'host_id': target['id'],
+                        'address': target['address'],
+                        'scan_details': target['scan_details'],
+                    }))
+                conn.close()
+                continue
+
+            data = json.loads(item[1])
+            host_id = data.get('host_id')
+            address = data.get('address', '')
+            scan_details_raw = data.get('scan_details')
+
+            # Dédup: déjà scanné ou en cours ?
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT status FROM nuclei_scan_log WHERE host_id = %s",
+                    (host_id,)
+                )
+                row = cur.fetchone()
+                if row and row[0] in ('completed', 'running', 'no_findings'):
+                    log.debug(f'[{address}] Skip — déjà {row[0]}')
+                    conn.close()
+                    continue
+
+            tags = extract_tags(scan_details_raw)
+
+            # Vérification honeypot
+            reason = is_honeypot_suspect(conn, address)
+            if reason:
+                log.warning(f'[{address}] SKIP honeypot suspect ({reason})')
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO nuclei_scan_log (host_id, address, status, scanned_at)
+                        VALUES (%s, %s, 'honeypot_suspect', now())
+                        ON CONFLICT (host_id) DO UPDATE SET
+                            status = 'honeypot_suspect', scanned_at = now()
+                    """, (host_id, address))
+                conn.commit()
+                conn.close()
+                continue
+
+            log.info(f'[{address}] Scan → tags: {tags}')
+            mark_running(conn, host_id, address, tags)
+
+            scan_id = submit_scan(address, tags)
+            if not scan_id:
+                log.error(f'[{address}] Échec soumission nuclei-api')
+                mark_result(conn, host_id, 'failed', {}, False)
+                conn.close()
+                continue
+
+            log.info(f'[{address}] scan_id={scan_id} — attente résultat...')
+            # Libérer la connexion DB pendant l'attente du scan (peut durer 20 min)
+            conn.close()
+            conn = None
+
+            scan_data = wait_for_scan(scan_id)
+            final_status = scan_data.get('status', 'error')
+            findings_count = scan_data.get('findings_count', 0)
+            faraday_imported = scan_data.get('faraday_imported', 0)
+
+            if findings_count > 0:
+                findings = parse_severity_breakdown(scan_id)
+            else:
+                findings = {'total': 0, 'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
+
+            if final_status == 'completed' and findings_count == 0:
+                db_status = 'no_findings'
+            elif final_status == 'completed':
+                db_status = 'completed'
+            else:
+                db_status = final_status
+
+            conn = get_db_conn()
+            mark_result(conn, host_id, db_status, findings, faraday_imported > 0)
+            conn.close()
+            conn = None
+
+            log.info(
+                f'[{address}] {db_status} | '
+                f'findings={findings_count} '
+                f'(crit={findings["critical"]} high={findings["high"]} med={findings["medium"]}) '
+                f'| faraday={faraday_imported}'
+            )
+
+        except redis.ConnectionError as e:
+            log.error(f'Redis connection error: {e} — retry dans 10s')
+            time.sleep(10)
+            try:
+                r = get_redis()
+            except Exception:
+                pass
+        except psycopg2.Error as e:
+            log.error(f'DB error: {e}')
+        except Exception as e:
+            log.error(f'Erreur inattendue: {e}', exc_info=True)
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+
+if __name__ == '__main__':
+    run()

@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""
+thearm_logpull — Collecte les logs nginx des redirecteurs
+et alimente redirector_hits dans la DB MSF.
+
+Sources:
+  - Fly.io redirector-1  : via `fly logs`
+  - Lightsail bojemoi.me : via SSH + tail nginx access.log
+"""
+
+import os
+import re
+import time
+import subprocess
+import logging
+import psycopg2
+import psycopg2.extras
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+log = logging.getLogger('logpull')
+
+# PostgreSQL
+PG_HOST     = os.getenv('PG_HOST', 'postgres')
+PG_PORT     = int(os.getenv('PG_PORT', '5432'))
+PG_USER     = os.getenv('PG_USER', 'postgres')
+PG_PASSWORD = os.getenv('PG_PASSWORD', '')
+PG_DBNAME   = os.getenv('PG_DBNAME', 'msf')
+
+# Fly.io
+FLY_BIN     = os.getenv('FLY_BIN', '/usr/local/bin/fly')
+# Token : env var ou Docker secret
+_token_file = '/run/secrets/fly_api_token'
+FLY_TOKEN   = os.getenv('FLY_API_TOKEN') or (
+    open(_token_file).read().strip() if os.path.exists(_token_file) else ''
+)
+FLY_APP     = os.getenv('FLY_APP', 'redirector-1')
+FLY_LINES   = int(os.getenv('FLY_LOG_LINES', '2000'))
+
+# Lightsail
+LS_HOST     = os.getenv('LIGHTSAIL_HOST', 'bojemoi.me')
+LS_USER     = os.getenv('LIGHTSAIL_USER', 'ec2-user')
+LS_KEY      = os.getenv('LIGHTSAIL_KEY', '/root/.ssh/lightsail.pem')
+LS_LINES    = int(os.getenv('LIGHTSAIL_LOG_LINES', '5000'))
+
+# Boucle
+LOOP_INTERVAL = int(os.getenv('LOOP_INTERVAL', '3600'))
+
+# Regex nginx combined log — extrait ip, path, status, ua
+NGINX_RE = re.compile(
+    r'^(\d{1,3}(?:\.\d{1,3}){3})'   # IP
+    r'[^"]*"(?:\w+) '                # method
+    r'(\S+) HTTP/[^"]*"'             # path
+    r' (\d{3})'                      # status
+    r'[^"]*"[^"]*"'                  # bytes + referer
+    r' "([^"]*)"'                    # user-agent
+)
+
+# IPs privées/internes à ignorer
+PRIVATE_RE = re.compile(
+    r'^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1|fd)'
+)
+
+
+def is_private(ip: str) -> bool:
+    return bool(PRIVATE_RE.match(ip))
+
+
+def get_db_conn():
+    return psycopg2.connect(
+        host=PG_HOST, port=PG_PORT,
+        user=PG_USER, password=PG_PASSWORD,
+        dbname=PG_DBNAME
+    )
+
+
+def upsert_hit(cur, ip: str, server: str, path: str, ua: str):
+    cur.execute("""
+        INSERT INTO redirector_hits (source_ip, server, first_seen, last_seen, hit_count, sample_path, sample_ua)
+        VALUES (%s::inet, %s, now(), now(), 1, %s, %s)
+        ON CONFLICT (source_ip, server) DO UPDATE SET
+            last_seen  = now(),
+            hit_count  = redirector_hits.hit_count + 1,
+            sample_path = EXCLUDED.sample_path,
+            sample_ua   = EXCLUDED.sample_ua
+    """, (ip, server, path[:500] if path else None, ua[:500] if ua else None))
+
+
+def parse_nginx_lines(lines: list[str], server: str, cur) -> int:
+    """Parse les lignes nginx et insère dans redirector_hits. Retourne le nb d'IPs insérées."""
+    inserted = 0
+    for line in lines:
+        m = NGINX_RE.search(line)
+        if not m:
+            continue
+        ip, path, status, ua = m.group(1), m.group(2), m.group(3), m.group(4)
+        if is_private(ip):
+            continue
+        upsert_hit(cur, ip, server, path, ua)
+        inserted += 1
+    return inserted
+
+
+def pull_fly_logs() -> list[str]:
+    """Récupère les logs du redirecteur Fly.io via fly CLI."""
+    if not FLY_TOKEN:
+        log.warning('FLY_API_TOKEN non défini — skip Fly.io logs')
+        return []
+    try:
+        result = subprocess.run(
+            [FLY_BIN, 'logs', '--app', FLY_APP,
+             '--access-token', FLY_TOKEN,
+             '-n'],
+            capture_output=True, text=True, timeout=60
+        )
+        lines = result.stdout.splitlines()
+        # fly logs format avec codes ANSI :
+        # "\x1b[2m2026-03-31T...\x1b[0m app[id] cdg \x1b[0m[info]\x1b[0m<message>"
+        # On strip les codes ANSI, puis on extrait tout après le dernier ']'
+        ansi_re = re.compile(r'\x1b\[[0-9;]*m')
+        parsed = []
+        for line in lines:
+            clean = ansi_re.sub('', line)
+            # Cherche le dernier ']' suivi d'espace ou de contenu nginx
+            idx = clean.rfind(']')
+            if idx >= 0:
+                msg = clean[idx + 1:].strip()
+                if msg:
+                    parsed.append(msg)
+            else:
+                parsed.append(clean)
+        log.info(f'Fly.io: {len(parsed)} lignes récupérées')
+        return parsed[-FLY_LINES:]  # garder les N dernières
+    except subprocess.TimeoutExpired:
+        log.error('Timeout fly logs')
+        return []
+    except Exception as e:
+        log.error(f'Erreur fly logs: {e}')
+        return []
+
+
+def pull_lightsail_logs() -> list[str]:
+    """Récupère les logs nginx Lightsail via SSH."""
+    try:
+        result = subprocess.run(
+            ['ssh',
+             '-i', LS_KEY,
+             '-o', 'StrictHostKeyChecking=no',
+             '-o', 'ConnectTimeout=15',
+             f'{LS_USER}@{LS_HOST}',
+             f'sudo tail -n {LS_LINES} /var/log/nginx/access.log 2>/dev/null'],
+            capture_output=True, text=True, timeout=30
+        )
+        lines = result.stdout.splitlines()
+        log.info(f'Lightsail: {len(lines)} lignes récupérées')
+        return lines
+    except subprocess.TimeoutExpired:
+        log.error('Timeout SSH Lightsail')
+        return []
+    except Exception as e:
+        log.error(f'Erreur SSH Lightsail: {e}')
+        return []
+
+
+def run_once():
+    log.info('--- Pull logs ---')
+    conn = None
+    try:
+        conn = get_db_conn()
+        cur = conn.cursor()
+
+        # Fly.io redirecteur
+        fly_lines = pull_fly_logs()
+        n = parse_nginx_lines(fly_lines, FLY_APP, cur)
+        log.info(f'Fly.io {FLY_APP}: {n} IPs insérées/mises à jour')
+
+        # Lightsail
+        ls_lines = pull_lightsail_logs()
+        n = parse_nginx_lines(ls_lines, 'lightsail', cur)
+        log.info(f'Lightsail: {n} IPs insérées/mises à jour')
+
+        conn.commit()
+
+        # Stats globales
+        cur.execute("SELECT COUNT(DISTINCT source_ip) FROM redirector_hits")
+        total = cur.fetchone()[0]
+        log.info(f'Total IPs dans redirector_hits: {total}')
+
+    except Exception as e:
+        log.error(f'Erreur run_once: {e}', exc_info=True)
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+
+
+def run():
+    log.info('=== thearm_logpull démarrage ===')
+    log.info(f'Fly app: {FLY_APP} | Lightsail: {LS_HOST} | Interval: {LOOP_INTERVAL}s')
+
+    while True:
+        run_once()
+        log.info(f'Prochain pull dans {LOOP_INTERVAL}s')
+        time.sleep(LOOP_INTERVAL)
+
+
+if __name__ == '__main__':
+    run()

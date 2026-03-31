@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import psycopg2
+import redis as _redis
 
 # osint_lookup.py est copié dans /usr/bin/ avec thearm_bm12
 sys.path.insert(0, "/usr/bin")
@@ -24,8 +25,11 @@ PG_PORT = int(os.getenv("PG_PORT", "5432"))
 PG_USER = os.getenv("PG_USER", "postgres")
 PG_PASSWORD = os.getenv("PG_PASSWORD", "")
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
-SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", "600"))  # 10 min max par host
-DEBUG_MODE = int(os.getenv("DEBUG_MODE", "0"))
+SCAN_TIMEOUT   = int(os.getenv("SCAN_TIMEOUT", "600"))  # 10 min max par host
+DEBUG_MODE     = int(os.getenv("DEBUG_MODE", "0"))
+REDIS_HOST     = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT     = int(os.getenv("REDIS_PORT", "6379"))
+NUCLEI_QUEUE   = "pentest:nuclei_queue"
 
 # ─── NSE Scripts par catégorie de service ────────────────────────────────────
 # Scripts ciblés au lieu du wildcard dangereux {service}*
@@ -140,6 +144,18 @@ SERVER_ROLES = {
         "weight": 0,  # presque tous les serveurs ont SSH, ne pas surpondérer
     },
 }
+
+
+def push_to_nuclei_queue(host_id, host, details):
+    """Push l'hôte classifié vers la queue Redis pour scan Nuclei."""
+    try:
+        r = _redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True,
+                         socket_connect_timeout=2)
+        payload = json.dumps({'host_id': host_id, 'address': host, 'scan_details': details})
+        r.lpush(NUCLEI_QUEUE, payload)
+        print(f'[NUCLEI] {host} → {NUCLEI_QUEUE}')
+    except Exception as e:
+        print(f'[NUCLEI] Erreur push queue: {e}')
 
 
 def classify_server(services_list):
@@ -718,6 +734,9 @@ def run_scan(host, host_id, pg_ip):
 
     # 7. Stocker la classification + OSINT + arch
     update_host_classification(host_id, server_type, details, osint_data, arch=arch)
+
+    # 8. Pousser vers la queue Nuclei pour scan asynchrone
+    push_to_nuclei_queue(host_id, host, details)
 
     threat_info = ""
     if osint_data and osint_data.get("is_malicious"):
