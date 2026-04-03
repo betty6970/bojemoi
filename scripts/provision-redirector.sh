@@ -37,6 +37,9 @@ FLY_IMAGE="registry.fly.io/${NAME}:latest"
 RELAY_HOST="bojemoi.me"
 RELAY_PORT="8443"
 PROVIDER="fly.io"
+OVPN_FILE="/opt/bojemoi/volumes/c2-vpn/clients/${NAME}.ovpn"
+MSF_VPN_IP="${MSF_VPN_IP:-192.168.1.121}"
+MSF_VPN_PORT="${MSF_VPN_PORT:-4444}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[+]${NC} $*"; }
@@ -44,12 +47,34 @@ info() { echo -e "${CYAN}[i]${NC} $*"; }
 
 mkdir -p "$REGISTRY_DIR"
 
+# ── VPN config check ──────────────────────────────────────────────────────────
+if [ ! -f "$OVPN_FILE" ]; then
+    echo -e "${RED}[ERROR]${NC} Missing VPN config: $OVPN_FILE"
+    echo "  Run: easyrsa build-client-full $NAME nopass"
+    echo "  Then re-run this script."
+    exit 1
+fi
+VPN_CONFIG_B64=$(base64 -w0 "$OVPN_FILE")
+
 # ── Tag + push image to Fly registry ─────────────────────────────────────────
 log "Tagging $LOCAL_IMAGE → $FLY_IMAGE..."
 docker tag "$LOCAL_IMAGE" "$FLY_IMAGE"
 
-log "Pushing to Fly.io registry (requires: fly auth docker)..."
+log "Authenticating Docker with Fly registry..."
+fly auth docker 2>&1
+
+log "Pushing to Fly.io registry..."
 docker push "$FLY_IMAGE" 2>&1
+
+# ── Set Fly secrets ───────────────────────────────────────────────────────────
+log "Staging VPN_CONFIG secret on $NAME..."
+fly secrets set \
+    --app "$NAME" \
+    --stage \
+    "VPN_CONFIG=${VPN_CONFIG_B64}" \
+    "MSF_VPN_IP=${MSF_VPN_IP}" \
+    "MSF_VPN_PORT=${MSF_VPN_PORT}" \
+    2>&1
 
 # ── Deploy on Fly.io ──────────────────────────────────────────────────────────
 log "Deploying machine on Fly.io (region: $REGION)..."

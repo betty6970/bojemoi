@@ -28,8 +28,6 @@ curl -4 msf.bojemoi.lab
 curl -4 faraday.bojemoi.lab
 curl -4 faraday-server.bojemoi.lab
 curl -4 vuln.bojemoi.lab
-curl -4 burp.bojemoi.lab
-curl -4 burpsuite.bojemoi.lab
 curl -4 nmap.bojemoi.lab
 curl -4 sqlmap.bojemoi.lab
 # Analyse

@@ -434,8 +434,6 @@ services:
   prometheus:
     user: "65534:1003" 
     image: localhost:5000/prometheus:latest
-  
-  
     dns_search:
       - bojemoi.lab
     networks:
@@ -500,7 +498,8 @@ services:
   # Service
           - traefik.http.services.prometheus.loadbalancer.server.port=9090
   # Authentification - HASH COMPLET !
-          - traefik.http.middlewares.prometheus-auth.basicauth.users=admin:$$apr1$$rH8L9x2v$$pQzKvM3F8xY2nW5tR7sD91
+          - traefik.http.middlewares.prometheus-auth.basicauth.users=admin:$$apr1$$mw4ify37$$x5ZsAP8aS7LMF3WiM4QIh/
+
 
 
   # =========================================================================

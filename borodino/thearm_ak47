@@ -63,7 +63,12 @@ else
     IPV6_FLAG=""
 fi
 
-msfconsole -q -x "db_connect $PG_USER:$PG_PASSWORD@$PG_HOST/$PG_DBNAME;db_nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f  --mtu 16  --data-length 64 --randomize-hosts -PA -PM -Pn $IPV6_FLAG  $output; quit"
+#msfconsole -q -x "db_connect $PG_USER:$PG_PASSWORD@$PG_HOST/$PG_DBNAME;db_nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f  --mtu 16  --data-length 64 --randomize-hosts -PA -PM -Pn $IPV6_FLAG  $output; quit"
+SCAN_XML="/tmp/scan_$(echo $output | tr '/' '_').xml"    
+nmap -sS -A -O --reason --traceroute --spoof-mac 0 -f --mtu 16 --data-length 64 --randomize-hosts -PA -PM -Pn $IPV6_FLAG -oX "$SCAN_XML" "$output" 2>/dev/null || true
+python3 /usr/bin/msf_import.pyc "$SCAN_XML" || echo "[WARN] MSF import failed for $output" 
+rm -f "$SCAN_XML"
+
 
 echo "cidr :$output done"
 tz=$(echo "UPDATE $TABLE SET nmap = '2', date_nmap = (SELECT CURRENT_TIMESTAMP) WHERE cidr_z >>= '$output';")

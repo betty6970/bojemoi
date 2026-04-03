@@ -1,0 +1,51 @@
+# Bojemoi Lab - Ollama GPU inference stack
+# Runs on meta-68 (NVIDIA T400 4GB PCI passthrough)
+
+networks:
+  backend:
+    external: true
+
+volumes:
+  ollama-models:
+    driver: local
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+      - type: bind
+        source: /opt/nvidia-drivers
+        target: /usr/local/nvidia/lib64
+        read_only: true
+    networks:
+      - backend
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      OLLAMA_LOAD_TIMEOUT: "300"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      placement:
+        constraints:
+          - node.hostname == meta-68
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 6G
+        reservations:
+          cpus: '1.0'
+          memory: 2G

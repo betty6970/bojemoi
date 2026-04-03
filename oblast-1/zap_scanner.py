@@ -42,9 +42,10 @@ ZAP_API_KEY     = os.getenv('ZAP_API_KEY', '')
 ZAP_CONCURRENCY = int(os.getenv('ZAP_CONCURRENCY', '3'))
 ZAP_BASE        = f"http://{ZAP_HOST}:{ZAP_PORT}"
 
-FARADAY_URL   = os.getenv('FARADAY_URL', '').rstrip('/')
-FARADAY_TOKEN = os.getenv('FARADAY_TOKEN', '')
-FARADAY_WS    = os.getenv('FARADAY_WORKSPACE', 'default')
+FARADAY_URL      = os.getenv('FARADAY_URL', '').rstrip('/')
+FARADAY_USER     = os.getenv('FARADAY_USER', 'faraday')
+FARADAY_PASSWORD = os.getenv('FARADAY_PASSWORD', '')
+FARADAY_WS       = os.getenv('FARADAY_WORKSPACE', 'default')
 
 FEED_INTERVAL = int(os.getenv('FEED_INTERVAL_SECONDS', '300'))
 BATCH_SIZE    = int(os.getenv('BATCH_SIZE', '50'))
@@ -185,6 +186,14 @@ def zap_ascan_status(scan_id: str) -> Optional[int]:
         return None
 
 
+def zap_urls_found(url: str) -> int:
+    """Returns number of URLs found by spider for a given base URL."""
+    data = zap_get('/JSON/core/view/urls/', {'baseurl': url})
+    if data and 'urls' in data:
+        return len(data['urls'])
+    return 0
+
+
 def zap_alerts(url: str) -> List[Dict]:
     data = zap_get('/JSON/core/view/alerts/', {'baseurl': url})
     if data and 'alerts' in data:
@@ -194,10 +203,33 @@ def zap_alerts(url: str) -> List[Dict]:
 
 # ── Faraday client ────────────────────────────────────────────────────────────
 
+def faraday_get_or_create_host(ip: str, auth: tuple) -> Optional[int]:
+    """Crée le host dans Faraday si nécessaire, retourne son ID."""
+    base = f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WS}"
+    # Créer (ignore 409 si déjà existant)
+    requests.post(f"{base}/hosts", auth=auth, json={"ip": ip, "description": "ZAP scan target"}, timeout=10)
+    # Récupérer l'ID
+    try:
+        r = requests.get(f"{base}/hosts", auth=auth, params={"search": ip}, timeout=10)
+        if r.status_code == 200:
+            rows = r.json().get("rows", [])
+            if rows:
+                return rows[0]["id"]
+    except Exception as e:
+        logger.debug(f"Faraday host lookup failed for {ip}: {e}")
+    return None
+
+
 def faraday_post_vulns(address: str, alerts: List[Dict]):
-    if not FARADAY_URL or not FARADAY_TOKEN or not alerts:
+    if not FARADAY_URL or not FARADAY_PASSWORD or not alerts:
         return
-    headers = {'Authorization': f'Token {FARADAY_TOKEN}', 'Content-Type': 'application/json'}
+    auth = (FARADAY_USER, FARADAY_PASSWORD)
+    ip = address.split('/')[0]
+    host_id = faraday_get_or_create_host(ip, auth)
+    if not host_id:
+        logger.debug(f"Faraday: impossible de récupérer host_id pour {ip}")
+        return
+    posted = 0
     for alert in alerts:
         risk = alert.get('riskdesc', '')
         severity = 'critical' if 'High' in risk else 'med' if 'Medium' in risk else 'low'
@@ -205,18 +237,27 @@ def faraday_post_vulns(address: str, alerts: List[Dict]):
             'name': alert.get('name', 'ZAP finding'),
             'desc': alert.get('description', ''),
             'severity': severity,
-            'refs': [alert.get('reference', '')],
-            'target': address,
-            'tool': 'zaproxy',
+            'refs': [{'name': r, 'type': 'other'} for r in [alert.get('reference', '')] if r],
             'data': alert.get('solution', ''),
+            'type': 'Vulnerability',
+            'parent': host_id,
+            'parent_type': 'Host',
         }
         try:
-            requests.post(
-                f"{FARADAY_URL}/api/v3/ws/{FARADAY_WS}/vulns/",
-                headers=headers, json=vuln, timeout=10
+            r = requests.post(
+                f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WS}/vulns",
+                auth=auth, json=vuln, timeout=10
             )
+            if r.status_code in (200, 201):
+                posted += 1
+            elif r.status_code == 409:
+                posted += 1  # déjà existant = OK
+            else:
+                logger.debug(f"Faraday POST {r.status_code} for {ip}: {r.text[:100]}")
         except Exception as e:
-            logger.debug(f"Faraday POST failed for {address}: {e}")
+            logger.debug(f"Faraday POST failed for {ip}: {e}")
+    if posted:
+        logger.info(f"[FARADAY] {ip} → {posted}/{len(alerts)} vulns postées")
 
 
 # ── DB Feeder thread ──────────────────────────────────────────────────────────
@@ -256,13 +297,15 @@ class DbFeeder(threading.Thread):
 # ── Scan Worker ───────────────────────────────────────────────────────────────
 
 def build_url(address: str, port: int, svc: str) -> str:
+    # Strip CIDR mask if present (e.g. "5.8.8.2/32" → "5.8.8.2")
+    host = address.split('/')[0]
     if port == 443 or 'https' in (svc or '').lower():
         proto = 'https'
     else:
         proto = 'http'
     if (proto == 'http' and port == 80) or (proto == 'https' and port == 443):
-        return f"{proto}://{address}"
-    return f"{proto}://{address}:{port}"
+        return f"{proto}://{host}"
+    return f"{proto}://{host}:{port}"
 
 
 class ActiveScan:
@@ -313,8 +356,14 @@ def run_scanner(rdb: redis.Redis):
                         mark_scanned(scan.host_id, scan.address, 0, 'error')
                         del active[url]
                     elif pct >= 100:
-                        logger.info(f"[SPIDER] {url} terminé")
-                        scan.phase = 'active'
+                        n = zap_urls_found(url)
+                        if n == 0:
+                            logger.info(f"[SPIDER] {url} terminé — 0 URL trouvées (host injoignable)")
+                            mark_scanned(scan.host_id, scan.address, 0, 'no_web')
+                            del active[url]
+                        else:
+                            logger.info(f"[SPIDER] {url} terminé — {n} URLs")
+                            scan.phase = 'active'
 
             elif scan.phase == 'active':
                 if scan.ascan_id is None:
