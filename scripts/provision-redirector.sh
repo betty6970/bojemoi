@@ -82,7 +82,7 @@ fly machine run "$FLY_IMAGE" \
     --app "$NAME" \
     --region "$REGION" \
     --port 80:80/tcp \
-    --port 443:443/tcp \
+    --port 443:443/tcp:proxy_proto \
     --vm-size shared-cpu-1x \
     --vm-memory 256 2>&1
 

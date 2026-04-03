@@ -111,27 +111,25 @@ def pull_fly_logs() -> list[str]:
         return []
     try:
         result = subprocess.run(
-            [FLY_BIN, 'logs', '--app', FLY_APP,
-             '--access-token', FLY_TOKEN,
-             '-n'],
-            capture_output=True, text=True, timeout=60
+            [FLY_BIN, 'logs', '--app', FLY_APP, '-n'],
+            capture_output=True, text=True, timeout=60,
+            env={**os.environ, 'FLY_API_TOKEN': FLY_TOKEN}
         )
         lines = result.stdout.splitlines()
         # fly logs format avec codes ANSI :
         # "\x1b[2m2026-03-31T...\x1b[0m app[id] cdg \x1b[0m[info]\x1b[0m<message>"
         # On strip les codes ANSI, puis on extrait tout après le dernier ']'
-        ansi_re = re.compile(r'\x1b\[[0-9;]*m')
+        ansi_re   = re.compile(r'\x1b\[[0-9;]*m')
+        level_re  = re.compile(r'\[(?:info|warn|error|debug)\](.+)', re.IGNORECASE)
         parsed = []
         for line in lines:
             clean = ansi_re.sub('', line)
-            # Cherche le dernier ']' suivi d'espace ou de contenu nginx
-            idx = clean.rfind(']')
-            if idx >= 0:
-                msg = clean[idx + 1:].strip()
-                if msg:
-                    parsed.append(msg)
-            else:
-                parsed.append(clean)
+            # Fly format: "2026-..Z app[id] region [info]<nginx-log>"
+            # Extract the nginx log content after the level marker.
+            m = level_re.search(clean)
+            msg = m.group(1).strip() if m else clean.strip()
+            if msg:
+                parsed.append(msg)
         log.info(f'Fly.io: {len(parsed)} lignes récupérées')
         return parsed[-FLY_LINES:]  # garder les N dernières
     except subprocess.TimeoutExpired:

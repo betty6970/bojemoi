@@ -1,5 +1,5 @@
 # Bojemoi Lab - Ollama GPU inference stack
-# Runs on meta-68 (NVIDIA T400 4GB PCI passthrough)
+# Runs on nodes labelled nvidia.vgpu=true (currently meta-68, NVIDIA T400 4GB PCI passthrough)
 
 networks:
   backend:
@@ -33,7 +33,7 @@ services:
     deploy:
       placement:
         constraints:
-          - node.hostname == meta-68
+          - node.labels.nvidia.vgpu == true
       restart_policy:
         condition: on-failure
         delay: 10s

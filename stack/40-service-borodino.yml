@@ -96,10 +96,6 @@ volumes:
   nuclei-results:
     driver: local
 
-  # VulnX volumes
-  vulnx-results:
-    driver: local
-
   # Faraday/Redis volumes
   faraday_data:
     driver: local
@@ -151,6 +147,13 @@ services:
       placement:
         constraints:
           - node.role == worker
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
       labels:
         - traefik.enable=true
         - traefik.docker.network=proxy
@@ -177,7 +180,7 @@ services:
       ZAP_HOST: zaproxy
       ZAP_PORT: 8090
       ZAP_API_KEY: ""
-      ZAP_CONCURRENCY: 3
+      ZAP_CONCURRENCY: 1
       FEED_INTERVAL_SECONDS: 300
       BATCH_SIZE: 50
       FARADAY_URL: http://faraday:5985
@@ -207,6 +210,10 @@ services:
         constraints:
           - node.role == worker
         max_replicas_per_node: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
   # =========================================================================
   # FROM: 50-service-borodino.yml - Arme services
@@ -602,6 +609,10 @@ services:
       - FARADAY_USER=faraday
       - FARADAY_PASSWORD=bojemoi2
       - FARADAY_WORKSPACE=nuclei
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_ENABLED=true
+      - OLLAMA_MODEL=mistral:7b-instruct
+      - OLLAMA_TIMEOUT=30
     logging:
       driver: json-file
       options:
@@ -654,11 +665,15 @@ services:
       - FARADAY_PASSWORD=bojemoi2
       - FARADAY_WORKSPACE=nuclei
       - SCAN_GATEWAY_HOST=wg-gateway
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_ENABLED=true
+      - OLLAMA_MODEL=mistral:7b-instruct
+      - OLLAMA_TIMEOUT=120
     command:
       - -c
       - |
         apk add --no-cache python3 py3-pip iproute2
-        pip install fastapi uvicorn redis httpx requests --break-system-packages
+        pip install fastapi uvicorn redis httpx requests pyyaml --break-system-packages
         nuclei -update-templates
         ORIG_GW=$$(ip route show default 2>/dev/null | head -1 | cut -d' ' -f3)
         WG_GW=$${SCAN_GATEWAY_HOST:-wg-gateway}
@@ -703,51 +718,6 @@ services:
         - traefik.http.routers.nuclei-api.entrypoints=websecure
         - traefik.http.routers.nuclei-api.tls=true
         - traefik.http.services.nuclei-api.loadbalancer.server.port=8001
-
-  # =========================================================================
-  # FROM: 56-service-vulnx.yml - VulnX Scanner
-  # =========================================================================
-  vulnx:
-    image: localhost:5000/python:3.11-slim
-    networks:
-      - backend
-      - pentest
-    volumes:
-      - vulnx-results:/results
-      - /opt/bojemoi/samsonov/vulnx_wrapper:/app
-    working_dir: /app
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - RESULTS_DIR=/results
-    command: >
-      sh -c "apt-get update && apt-get install -y git &&
-             pip install requests colorama redis --break-system-packages &&
-             git clone https://github.com/anouarbensaad/vulnx.git /opt/vulnx 2>/dev/null || true &&
-             pip install -r /opt/vulnx/requirements.txt --break-system-packages || true &&
-             python main.py --daemon"
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == worker
-      restart_policy:
-        condition: on-failure
-        delay: 10s
-        max_attempts: 3
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
-        reservations:
-          cpus: '0.25'
-          memory: 256M
 
   # =========================================================================
   # FROM: 60-service-samsonov.yml - Faraday & Redis
@@ -856,6 +826,13 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+        reservations:
+          cpus: '0.2'
+          memory: 256M
 
   redis-exporter:
     image: localhost:5000/redis-exporter:latest

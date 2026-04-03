@@ -45,6 +45,12 @@ POLL_INTERVAL   = int(os.getenv('NUCLEI_POLL_INTERVAL', '15')) # secondes entre 
 SCAN_TIMEOUT    = int(os.getenv('NUCLEI_SCAN_TIMEOUT', '1200'))# timeout max par scan (20 min)
 SEVERITY        = os.getenv('NUCLEI_SEVERITY', 'critical,high,medium')
 
+# Ollama AI tag enrichment
+OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434')
+OLLAMA_ENABLED  = os.getenv('OLLAMA_ENABLED', 'false').lower() == 'true'
+OLLAMA_MODEL    = os.getenv('OLLAMA_MODEL', 'mistral:7b-instruct')
+OLLAMA_TIMEOUT  = int(os.getenv('OLLAMA_TIMEOUT', '30'))
+
 # Mapping produit bm12 → tags Nuclei
 PRODUCT_TAG_MAP = {
     'wordpress':  'wordpress',
@@ -188,6 +194,66 @@ def extract_tags(scan_details_raw) -> str:
         return 'cve'
 
 
+def enrich_tags(scan_details_raw, base_tags: str) -> str:
+    """Ask Ollama to suggest additional Nuclei tags based on bm12 scan context."""
+    if not OLLAMA_ENABLED:
+        return base_tags
+    try:
+        if isinstance(scan_details_raw, str):
+            details = json.loads(scan_details_raw)
+        else:
+            details = scan_details_raw or {}
+
+        context = {
+            'os':           details.get('os', ''),
+            'products':     details.get('products', []),
+            'ports':        details.get('ports', []),
+            'banners':      details.get('banners', {}),
+            'current_tags': base_tags,
+        }
+        payload = {
+            'model': OLLAMA_MODEL,
+            'messages': [
+                {
+                    'role': 'system',
+                    'content': (
+                        'You are a security scanner expert. Based on the scan context, '
+                        'suggest additional Nuclei template tags.\n'
+                        'Return ONLY a JSON array of tag strings (max 12 total), '
+                        'e.g. ["apache","cve","default-login","exposed"].\n'
+                        'Use only valid Nuclei tag names. No markdown, no explanation.'
+                    ),
+                },
+                {'role': 'user', 'content': json.dumps(context)},
+            ],
+            'max_tokens': 200,
+            'temperature': 0.1,
+        }
+        resp = requests.post(
+            f'{OLLAMA_BASE_URL}/v1/chat/completions',
+            json=payload,
+            timeout=OLLAMA_TIMEOUT,
+        )
+        resp.raise_for_status()
+        content = resp.json()['choices'][0]['message']['content'].strip()
+        if content.startswith('```'):
+            lines = content.split('\n')
+            content = '\n'.join(lines[1:])
+            if content.endswith('```'):
+                content = content[:-3].strip()
+        ai_tags = json.loads(content)
+        if not isinstance(ai_tags, list):
+            return base_tags
+        base = {t.strip() for t in base_tags.split(',') if t.strip()}
+        merged = base | {str(t).strip().lower() for t in ai_tags if t}
+        result = ','.join(sorted(merged))
+        log.info(f'AI tags: {base_tags} → {result}')
+        return result
+    except Exception as e:
+        log.warning(f'enrich_tags failed: {e}')
+        return base_tags
+
+
 def mark_running(conn, host_id: int, address: str, tags: str):
     with conn.cursor() as cur:
         cur.execute("""
@@ -229,12 +295,21 @@ def mark_result(conn, host_id: int, status: str, findings: dict, faraday_ok: boo
     conn.commit()
 
 
-def submit_scan(target: str, tags: str) -> str | None:
+def submit_scan(target: str, tags: str, scan_details_raw=None) -> str | None:
     """Soumet un scan à nuclei-api. Retourne le scan_id ou None."""
     try:
+        payload = {'target': target, 'severity': SEVERITY, 'tags': tags}
+        if scan_details_raw is not None:
+            if isinstance(scan_details_raw, str):
+                try:
+                    payload['scan_details'] = json.loads(scan_details_raw)
+                except Exception:
+                    pass
+            else:
+                payload['scan_details'] = scan_details_raw
         resp = requests.post(
             f'{NUCLEI_API_URL}/scan',
-            json={'target': target, 'severity': SEVERITY, 'tags': tags},
+            json=payload,
             timeout=15
         )
         if resp.status_code == 200:
@@ -327,6 +402,7 @@ def run():
                     continue
 
             tags = extract_tags(scan_details_raw)
+            tags = enrich_tags(scan_details_raw, tags)
 
             # Vérification honeypot
             reason = is_honeypot_suspect(conn, address)
@@ -346,7 +422,7 @@ def run():
             log.info(f'[{address}] Scan → tags: {tags}')
             mark_running(conn, host_id, address, tags)
 
-            scan_id = submit_scan(address, tags)
+            scan_id = submit_scan(address, tags, scan_details_raw)
             if not scan_id:
                 log.error(f'[{address}] Échec soumission nuclei-api')
                 mark_result(conn, host_id, 'failed', {}, False)

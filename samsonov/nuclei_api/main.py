@@ -6,7 +6,9 @@ Permet de lancer des scans Nuclei via HTTP/Redis
 
 import os
 import json
+import shutil
 import subprocess
+import tempfile
 import asyncio
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +18,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 import redis
+from nuclei_ai import NucleiAI
 import requests as http_requests
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -37,6 +40,8 @@ FARADAY_WORKSPACE = os.environ.get('FARADAY_WORKSPACE', 'default')
 # Redis client
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
+ai = NucleiAI()
+
 
 class ScanRequest(BaseModel):
     target: str
@@ -44,6 +49,7 @@ class ScanRequest(BaseModel):
     tags: Optional[str] = None
     templates: Optional[List[str]] = None
     timeout: Optional[int] = 600
+    scan_details: Optional[dict] = None
 
 
 class ScanResult(BaseModel):
@@ -139,9 +145,17 @@ def push_to_faraday(findings: list, target: str) -> int:
         return 0
 
 
-def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None):
+def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, scan_details: dict = None):
     """Exécute un scan Nuclei en arrière-plan"""
     output_file = RESULTS_DIR / f"{scan_id}.json"
+
+    # Pre-scan: generate AI custom templates
+    tmpl_dir = None
+    ai_templates = ai.generate_templates(scan_details) if scan_details else []
+    if ai_templates:
+        tmpl_dir = Path(tempfile.mkdtemp(prefix='nuclei-ai-'))
+        for i, yaml_str in enumerate(ai_templates):
+            (tmpl_dir / f'ai-template-{i}.yaml').write_text(yaml_str)
 
     cmd = [
         'nuclei',
@@ -170,6 +184,28 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None):
             timeout=1800
         )
 
+        # Run AI template scan and append results to output_file
+        if tmpl_dir:
+            try:
+                ai_out = RESULTS_DIR / f"{scan_id}-ai.json"
+                subprocess.run(
+                    ['nuclei', '-u', target, '-t', str(tmpl_dir),
+                     '-json-export', str(ai_out), '-silent', '-nc'],
+                    capture_output=True, text=True, timeout=300
+                )
+                if ai_out.exists():
+                    with open(output_file, 'a') as fout:
+                        with open(ai_out) as fin:
+                            for line in fin:
+                                if line.strip():
+                                    fout.write(line)
+                    ai_out.unlink(missing_ok=True)
+            except Exception as e:
+                log.warning(f'AI template scan failed: {e}')
+            finally:
+                shutil.rmtree(str(tmpl_dir), ignore_errors=True)
+                tmpl_dir = None
+
         # Compte les findings
         findings_count = 0
         if output_file.exists():
@@ -190,6 +226,7 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None):
 
         # Import vers Faraday
         faraday_imported = 0
+        ai_json = ''
         if findings_count > 0:
             all_findings = []
             if output_file.exists():
@@ -201,6 +238,13 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None):
                             except json.JSONDecodeError:
                                 pass
             faraday_imported = push_to_faraday(all_findings, target)
+            # AI triage (fire-and-forget, does not block Faraday import)
+            severity_counts = {}
+            for f in all_findings:
+                sev = f.get('info', {}).get('severity', 'info').lower()
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            ai_result = ai.analyze_findings(_extract_ip(target), all_findings, severity_counts)
+            ai_json = json.dumps(ai_result) if ai_result else ''
 
         # Met à jour le statut final
         r.hset(f'nuclei:scan:{scan_id}', mapping={
@@ -209,7 +253,8 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None):
             'output_file': str(output_file),
             'completed_at': datetime.now().isoformat(),
             'faraday_imported': faraday_imported,
-            'faraday_workspace': FARADAY_WORKSPACE
+            'faraday_workspace': FARADAY_WORKSPACE,
+            'ai_analysis': ai_json
         })
 
         # Publie le résultat
@@ -258,7 +303,8 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
         scan_id,
         request.target,
         request.severity,
-        request.tags
+        request.tags,
+        request.scan_details
     )
 
     return ScanResult(

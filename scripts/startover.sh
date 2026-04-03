@@ -90,6 +90,12 @@ if [ "$NODE_ROLE" = "true" ]; then
     deploy_stack "${DIR}_boot/stack/01-boot-service.yml" "boot" 15
     deploy_stack "$DIR/stack/01-service-hl.yml" "base" 15
     deploy_stack "$DIR/stack/40-service-borodino.yml" "borodino" 15
+    # Force-restart nuclei-api: bind-mount files may have changed but Swarm
+    # won't rolling-update the service if the stack spec is unchanged.
+    # rsync-master keeps /opt/bojemoi in sync on workers, so files are ready.
+    docker service update --force borodino_nuclei-api > /dev/null 2>&1 \
+        && log_info "nuclei-api restarted (bind-mount refresh)" \
+        || log_warn "nuclei-api restart skipped (service not found)"
     deploy_stack "$DIR/stack/45-service-ml-threat-intel.yml" "ml-threat" 15
     deploy_stack "$DIR/stack/46-service-razvedka.yml" "razvedka" 10
     deploy_stack "$DIR/stack/47-service-vigie.yml" "vigie" 10

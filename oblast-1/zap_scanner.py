@@ -256,6 +256,7 @@ def faraday_post_vulns(address: str, alerts: List[Dict]):
                 logger.debug(f"Faraday POST {r.status_code} for {ip}: {r.text[:100]}")
         except Exception as e:
             logger.debug(f"Faraday POST failed for {ip}: {e}")
+        time.sleep(0.15)  # throttle: max ~6 req/s pour ne pas saturer Faraday
     if posted:
         logger.info(f"[FARADAY] {ip} → {posted}/{len(alerts)} vulns postées")
 
