@@ -5,6 +5,7 @@ Permet de lancer des scans Nuclei via HTTP/Redis
 """
 
 import os
+import re
 import json
 import shutil
 import subprocess
@@ -69,8 +70,10 @@ def _extract_ip(target: str) -> str:
 
 _SEVERITY_MAP = {
     'critical': 'critical', 'high': 'high',
-    'medium': 'med', 'low': 'low', 'info': 'info'
+    'medium': 'medium', 'low': 'low', 'info': 'info'
 }
+
+_CVE_RE = re.compile(r'CVE-\d{4}-\d+', re.I)
 
 
 def push_to_faraday(findings: list, target: str) -> int:
@@ -120,17 +123,53 @@ def push_to_faraday(findings: list, target: str) -> int:
         for finding in findings:
             info = finding.get('info', {})
             severity = info.get('severity', 'info').lower()
+
+            # Extract CVE refs; fall back to URL refs
+            raw_refs = info.get('reference', [])
+            if isinstance(raw_refs, str):
+                raw_refs = [raw_refs]
+            refs = []
+            for ref in raw_refs:
+                cves = _CVE_RE.findall(ref)
+                for cve in cves:
+                    refs.append({'name': cve.upper(), 'type': 'CVE'})
+                if not cves and ref.strip():
+                    refs.append({'name': ref.strip(), 'type': 'other'})
+
+            # HTTP evidence
+            data_parts = []
+            req = finding.get('request', '')
+            resp_raw = finding.get('response', '')
+            if req:
+                data_parts.append(f"Request:\n{req[:2000]}")
+            if resp_raw:
+                data_parts.append(f"Response:\n{resp_raw[:1000]}")
+
+            # Description + remediation
+            desc = info.get('description', '')
+            remediation = info.get('remediation', '')
+            if remediation:
+                desc = f"{desc}\n\nRemediation: {remediation}".strip()
+
+            # Tags: keep template tags + add 'nuclei'
+            tmpl_tags = list(info.get('tags', [])) if isinstance(info.get('tags'), list) else []
+            if 'nuclei' not in tmpl_tags:
+                tmpl_tags.append('nuclei')
+
             vuln = {
                 'name': info.get('name', finding.get('template-id', 'Nuclei Finding')),
-                'desc': info.get('description', ''),
+                'desc': desc,
                 'severity': _SEVERITY_MAP.get(severity, 'info'),
                 'type': 'Vulnerability',
                 'parent': host_id,
                 'parent_type': 'Host',
                 'path': finding.get('matched-at', ''),
-                'refs': info.get('reference', []) if isinstance(info.get('reference'), list) else [],
-                'tags': info.get('tags', []) if isinstance(info.get('tags'), list) else [],
-                'external_id': finding.get('template-id', '')
+                'refs': refs,
+                'tags': tmpl_tags,
+                'external_id': finding.get('template-id', ''),
+                'data': '\n\n'.join(data_parts),
+                'status': 'open',
+                'confirmed': False,
             }
             resp = session.post(
                 f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WORKSPACE}/vulns",
@@ -197,7 +236,8 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, 
                     with open(output_file, 'a') as fout:
                         with open(ai_out) as fin:
                             for line in fin:
-                                if line.strip():
+                                stripped = line.strip()
+                                if stripped and stripped not in ('[]', '{}', '[][]'):
                                     fout.write(line)
                     ai_out.unlink(missing_ok=True)
             except Exception as e:
@@ -221,8 +261,13 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, 
                     except json.JSONDecodeError:
                         # JSONL format (one JSON per line)
                         for line in content.split('\n'):
-                            if line.strip() and line.strip() not in ('[]', '{}'):
-                                findings_count += 1
+                            stripped = line.strip()
+                            if stripped and stripped not in ('[]', '{}', '[][]'):
+                                try:
+                                    json.loads(stripped)
+                                    findings_count += 1
+                                except json.JSONDecodeError:
+                                    pass
 
         # Import vers Faraday
         faraday_imported = 0

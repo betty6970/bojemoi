@@ -372,6 +372,11 @@ services:
     environment:
       - ARME_TYPE=uzi
       - TARGET=container1
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_USER=postgres
+      - PG_PASSWORD=bojemoi
+      - PG_DBNAME=msf
       # MSF_HOST : hostname du service msf-teamserver (réseau pentest/backend)
       - MSF_HOST=msf-teamserver
       # C2_REDIRECTORS : IPs publiques des redirecteurs (virgule), ex: 1.2.3.4,5.6.7.8

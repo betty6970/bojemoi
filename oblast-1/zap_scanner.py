@@ -64,7 +64,7 @@ def get_db():
 
 
 def ensure_zap_scan_log():
-    """Crée la table zap_scan_log si elle n'existe pas."""
+    """Crée/migre la table zap_scan_log."""
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -73,9 +73,28 @@ def ensure_zap_scan_log():
                     address    TEXT NOT NULL,
                     scanned_at TIMESTAMP DEFAULT NOW(),
                     alerts     INT DEFAULT 0,
-                    status     TEXT DEFAULT 'done'
+                    status     TEXT DEFAULT 'done',
+                    critical   INT DEFAULT 0,
+                    high       INT DEFAULT 0,
+                    medium     INT DEFAULT 0,
+                    low        INT DEFAULT 0,
+                    info       INT DEFAULT 0,
+                    faraday_ok BOOLEAN DEFAULT FALSE
                 )
             """)
+            # Migration idempotente pour tables existantes
+            for col, definition in [
+                ('critical',   'INT DEFAULT 0'),
+                ('high',       'INT DEFAULT 0'),
+                ('medium',     'INT DEFAULT 0'),
+                ('low',        'INT DEFAULT 0'),
+                ('info',       'INT DEFAULT 0'),
+                ('faraday_ok', 'BOOLEAN DEFAULT FALSE'),
+            ]:
+                cur.execute(f"""
+                    ALTER TABLE zap_scan_log
+                    ADD COLUMN IF NOT EXISTS {col} {definition}
+                """)
         conn.commit()
     logger.info("zap_scan_log prête")
 
@@ -106,15 +125,33 @@ def fetch_unscanned_hosts(batch: int) -> List[Dict]:
             return cur.fetchall()
 
 
-def mark_scanned(host_id: int, address: str, alerts: int, status: str = 'done'):
+def severity_breakdown(alerts: List[Dict]) -> Dict:
+    counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
+    for a in alerts:
+        sev = _ZAP_SEV.get(int(a.get('riskcode', 0)), 'info')
+        if sev in counts:
+            counts[sev] += 1
+    return counts
+
+
+def mark_scanned(host_id: int, address: str, alerts: int, status: str = 'done',
+                 breakdown: Dict = None, faraday_ok: bool = False):
+    bd = breakdown or {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO zap_scan_log (host_id, address, scanned_at, alerts, status)
-                VALUES (%s, %s, NOW(), %s, %s)
-                ON CONFLICT (host_id) DO UPDATE
-                    SET scanned_at = NOW(), alerts = EXCLUDED.alerts, status = EXCLUDED.status
-            """, (host_id, address, alerts, status))
+                INSERT INTO zap_scan_log
+                    (host_id, address, scanned_at, alerts, status,
+                     critical, high, medium, low, info, faraday_ok)
+                VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (host_id) DO UPDATE SET
+                    scanned_at = NOW(), alerts = EXCLUDED.alerts, status = EXCLUDED.status,
+                    critical = EXCLUDED.critical, high = EXCLUDED.high,
+                    medium = EXCLUDED.medium, low = EXCLUDED.low,
+                    info = EXCLUDED.info, faraday_ok = EXCLUDED.faraday_ok
+            """, (host_id, address, alerts, status,
+                  bd['critical'], bd['high'], bd['medium'], bd['low'], bd['info'],
+                  faraday_ok))
         conn.commit()
 
 
@@ -146,6 +183,9 @@ def zap_ready(timeout: int = 300) -> bool:
         data = zap_get('/JSON/core/view/version/')
         if data:
             logger.info(f"ZAP prêt — version {data.get('version', '?')}")
+            # Réduire le timeout HTTP de ZAP pour rejeter les hôtes morts plus vite
+            zap_get('/JSON/core/action/setOptionTimeoutInSecs/', {'Integer': '5'})
+            logger.info("ZAP HTTP timeout → 5s")
             return True
         time.sleep(5)
     logger.error("ZAP non disponible après timeout")
@@ -220,9 +260,12 @@ def faraday_get_or_create_host(ip: str, auth: tuple) -> Optional[int]:
     return None
 
 
-def faraday_post_vulns(address: str, alerts: List[Dict]):
+_ZAP_SEV = {3: 'high', 2: 'medium', 1: 'low', 0: 'info'}
+
+
+def faraday_post_vulns(address: str, alerts: List[Dict]) -> int:
     if not FARADAY_URL or not FARADAY_PASSWORD or not alerts:
-        return
+        return 0
     auth = (FARADAY_USER, FARADAY_PASSWORD)
     ip = address.split('/')[0]
     host_id = faraday_get_or_create_host(ip, auth)
@@ -231,17 +274,43 @@ def faraday_post_vulns(address: str, alerts: List[Dict]):
         return
     posted = 0
     for alert in alerts:
-        risk = alert.get('riskdesc', '')
-        severity = 'critical' if 'High' in risk else 'med' if 'Medium' in risk else 'low'
+        riskcode = int(alert.get('riskcode', 0))
+        severity = _ZAP_SEV.get(riskcode, 'info')
+
+        # HTTP evidence from first instance
+        instances = alert.get('instances', [])
+        first_inst = instances[0] if instances else {}
+        evidence_parts = []
+        if first_inst.get('method'):
+            evidence_parts.append(f"Method: {first_inst['method']}")
+        if first_inst.get('uri'):
+            evidence_parts.append(f"URI: {first_inst['uri']}")
+        if first_inst.get('evidence'):
+            evidence_parts.append(f"Evidence: {first_inst['evidence']}")
+
+        solution = alert.get('solution', '')
+        data_parts = []
+        if solution:
+            data_parts.append(f"Solution: {solution}")
+        if evidence_parts:
+            data_parts.append('\n'.join(evidence_parts))
+
+        # Refs: split multi-line reference field
+        ref_str = alert.get('reference', '')
+        refs = [{'name': r.strip(), 'type': 'other'} for r in ref_str.split('\n') if r.strip()]
+
         vuln = {
             'name': alert.get('name', 'ZAP finding'),
             'desc': alert.get('description', ''),
             'severity': severity,
-            'refs': [{'name': r, 'type': 'other'} for r in [alert.get('reference', '')] if r],
-            'data': alert.get('solution', ''),
+            'refs': refs,
+            'data': '\n\n'.join(data_parts),
             'type': 'Vulnerability',
             'parent': host_id,
             'parent_type': 'Host',
+            'status': 'open',
+            'confirmed': False,
+            'tags': ['zap'],
         }
         try:
             r = requests.post(
@@ -259,6 +328,7 @@ def faraday_post_vulns(address: str, alerts: List[Dict]):
         time.sleep(0.15)  # throttle: max ~6 req/s pour ne pas saturer Faraday
     if posted:
         logger.info(f"[FARADAY] {ip} → {posted}/{len(alerts)} vulns postées")
+    return posted
 
 
 # ── DB Feeder thread ──────────────────────────────────────────────────────────
@@ -385,9 +455,14 @@ def run_scanner(rdb: redis.Redis):
                     elif pct >= 100:
                         logger.info(f"[ASCAN] {url} terminé — récupération alertes")
                         alerts = zap_alerts(url)
-                        mark_scanned(scan.host_id, scan.address, len(alerts), 'done')
-                        faraday_post_vulns(scan.address, alerts)
-                        logger.info(f"[DONE] {url} — {len(alerts)} alertes")
+                        bd = severity_breakdown(alerts)
+                        faraday_ok = faraday_post_vulns(scan.address, alerts) > 0
+                        status = 'done' if alerts else 'no_findings'
+                        mark_scanned(scan.host_id, scan.address, len(alerts), status,
+                                     breakdown=bd, faraday_ok=faraday_ok)
+                        logger.info(f"[DONE] {url} — {len(alerts)} alertes "
+                                    f"(h={bd['high']} m={bd['medium']} l={bd['low']}) "
+                                    f"faraday={'ok' if faraday_ok else 'no'}")
                         del active[url]
                     else:
                         logger.debug(f"[ASCAN] {url} {pct}%")
@@ -403,6 +478,14 @@ def run_scanner(rdb: redis.Redis):
 
                 if url in active:
                     continue  # déjà en cours
+
+                # Pre-check HTTP rapide (3s) — évite 25s de timeout ZAP sur hosts morts
+                try:
+                    requests.get(url, timeout=3, verify=False, allow_redirects=True)
+                except Exception:
+                    logger.info(f"[SKIP] {url} — pas de réponse HTTP (host_id={target['host_id']})")
+                    mark_scanned(target['host_id'], target['address'], 0, 'no_web')
+                    continue
 
                 active[url] = ActiveScan(target['host_id'], target['address'], url)
                 logger.info(f"[QUEUE→ZAP] {url} (host_id={target['host_id']})")

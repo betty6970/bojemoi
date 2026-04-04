@@ -11,7 +11,7 @@ volumes:
 
 services:
   ollama:
-    image: ollama/ollama:latest
+    image: localhost:5000/ollama:latest
     volumes:
       - ollama-models:/root/.ollama
       - type: bind
