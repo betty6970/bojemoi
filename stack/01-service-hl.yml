@@ -84,10 +84,10 @@ configs:
      file: /opt/bojemoi/volumes/alloy/config/config.alloy
    grafana-ini_config:
      file: /opt/bojemoi/volumes/grafana/grafana.ini
-   grafana-provisioning_config:
-     file: /opt/bojemoi/volumes/grafana/provisioning/dashboards/dashboards.yml
-   grafana-dashboard_config:
+   grafana-datasources_v2:
      file: /opt/bojemoi/volumes/grafana/provisioning/datasources/datasources.yml
+   grafana-dashboards-provider_v2:
+     file: /opt/bojemoi/volumes/grafana/provisioning/dashboards/dashboards.yml
    loki_config:
      file: /opt/bojemoi/volumes/loki/loki-config.yml
    postfix_config:
@@ -306,15 +306,19 @@ services:
     configs:
       - source: grafana-ini_config
         target: /etc/grafana/grafana.ini
-      - source: grafana-provisioning_config
-        target: /etc/grafana/provisioning/datasources/datasources.yml 
-      - source: grafana-dashboard_config
-        target: /etc/grafana//provisioning/dashboards/dashboards.yml 
+      - source: grafana-datasources_v2
+        target: /etc/grafana/provisioning/datasources/datasources.yml
+      - source: grafana-dashboards-provider_v2
+        target: /etc/grafana/provisioning/dashboards/dashboards.yml
  
     volumes:
       # Données persistantes (DB, plugins, sessions)
       - grafana_data:/var/lib/grafana
-      
+      # Dashboards JSON provisionnés depuis le host
+      - type: bind
+        source: /opt/bojemoi/volumes/grafana/dashboards
+        target: /var/lib/grafana/dashboards
+        read_only: true
 
     logging:
       driver: json-file

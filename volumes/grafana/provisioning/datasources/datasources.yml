@@ -74,3 +74,21 @@ datasources:
       lokiSearch:
         datasourceUid: loki
 
+
+  # PostgreSQL - MSF scan results (nuclei_scan_log, zap_scan_log, uzi_scan_log)
+  - name: PostgreSQL-MSF
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    database: msf
+    user: postgres
+    editable: true
+    jsonData:
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1500
+      timescaledb: false
+    secureJsonData:
+      password: bojemoi
