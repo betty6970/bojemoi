@@ -67,10 +67,17 @@ log "MSF target: ${MSF_VPN_IP}:${MSF_VPN_PORT}"
 # ── Test nginx config ────────────────────────────────────────────────────────
 nginx -t
 
-# ── Redirect nginx logs → stdout/stderr (visibles via fly logs) ─────────────
+# ── Nginx logs → real file (for Loki shipper) + tail to stdout (fly logs) ───
 mkdir -p /var/log/nginx
-ln -sf /dev/stdout /var/log/nginx/access.log
-ln -sf /dev/stderr /var/log/nginx/error.log
+touch /var/log/nginx/access.log /var/log/nginx/error.log
+tail -F /var/log/nginx/access.log &
+tail -F /var/log/nginx/error.log >&2 &
+
+# ── Start Loki log shipper (via VPN) ─────────────────────────────────────────
+if [ -n "${LOKI_URL:-}" ] || ip link show tun0 >/dev/null 2>&1; then
+    log "Starting Loki log shipper → ${LOKI_URL:-http://192.168.1.121:3100/loki/api/v1/push}"
+    python3 /usr/bin/loki-shipper.py &
+fi
 
 # ── Start nginx (foreground) ─────────────────────────────────────────────────
 log "Starting nginx..."

@@ -512,7 +512,11 @@ services:
       - backend
     dns_search:
       - bojemoi.lab
-    # ports removed - services push logs via overlay network
+    ports:
+      - target: 3100
+        published: 3100
+        protocol: tcp
+        mode: host
     command:
       -  -config.file=/etc/loki/local-config.yml
       -  -config.expand-env=true 
