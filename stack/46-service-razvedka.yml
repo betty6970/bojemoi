@@ -26,13 +26,13 @@ secrets:
 
 services:
   razvedka:
-    image: localhost:5000/razvedka:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/razvedka:latest
     hostname: razvedka
     environment:
       PG_HOST: postgres
       PG_PORT: 5432
       PG_USER: postgres
-      PG_PASSWORD: bojemoi
+      PG_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       PG_DATABASE: razvedka
       TELEGRAM_CHANNELS: >-
         ddos_separ,

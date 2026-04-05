@@ -77,38 +77,38 @@ configs:
    # NOTE: traefik_tls_config, dnsmask_config, traefik_config, crowdsec_config,
    #       registry_config moved to /opt/bojemoi_boot/stack/01-boot-service.yml
    alertmanager_config:
-     file: /opt/bojemoi/volumes/alertmanager/alertmanager.yml
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alertmanager/alertmanager.yml
    tls_alertmanager_config:
-     file: /opt/bojemoi/volumes/alertmanager/certs/protonmail-bridge.crt
-   alloy_config:
-     file: /opt/bojemoi/volumes/alloy/config/config.alloy
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alertmanager/certs/protonmail-bridge.crt
+   alloy_config_v2:
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alloy/config/config.alloy
    grafana-ini_config:
-     file: /opt/bojemoi/volumes/grafana/grafana.ini
-   grafana-datasources_v2:
-     file: /opt/bojemoi/volumes/grafana/provisioning/datasources/datasources.yml
-   grafana-dashboards-provider_v2:
-     file: /opt/bojemoi/volumes/grafana/provisioning/dashboards/dashboards.yml
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/grafana/grafana.ini
+   grafana-datasources_v4:
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/grafana/provisioning/datasources/datasources.yml
+   grafana-dashboards-provider_v4:
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/grafana/provisioning/dashboards/dashboards.yml
    loki_config:
-     file: /opt/bojemoi/volumes/loki/loki-config.yml
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/loki/loki-config.yml
    postfix_config:
-     file: /opt/bojemoi/volumes/postfix/main.cf
-   prometheus_config:
-     file: /opt/bojemoi/volumes/prometheus/prometheus.yml
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/postfix/main.cf
+   prometheus_config_v3:
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/prometheus/prometheus.yml
    # suricata configs removed - suricata uses bind mounts instead
-   # (/opt/bojemoi/volumes/suricata:/etc/suricata)
+   # (${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata:/etc/suricata)
    # Rules files are 41MB+ which exceeds Docker's 4MB gRPC config limit
    tempo_config:
-     file: /opt/bojemoi/volumes/tempo/config/tempo.yaml
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/tempo/config/tempo.yaml
    provisioning_env_v2:
-     file: /opt/bojemoi/volumes/provisioning/.env
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/provisioning/.env
    rsync_rsyncd:
-     file: /opt/bojemoi/volumes/rsync/configs/rsyncd.conf
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/rsync/configs/rsyncd.conf
    rsync_jobs:
-     file: /opt/bojemoi/volumes/rsync/configs/rsync_jobs.json
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/rsync/configs/rsync_jobs.json
 
 # Template de base avec anchor                                                   
 x-mode-template: &mode-template                                             
-  image: localhost:5000/koursk:latest
+  image: ${IMAGE_REGISTRY:-localhost:5000}/koursk:latest
   networks:
     -  backend                       
 
@@ -151,11 +151,11 @@ services:
   # =========================================================================
 
   postgres:
-    image: localhost:5000/postgres:latest 
+    image: ${IMAGE_REGISTRY:-localhost:5000}/postgres:latest
     environment:
-      POSTGRES_PASSWORD: bojemoi 
-      POSTGRES_USER: postgres 
-      POSTGRES_DB: msf 
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${MSF_DBNAME:-msf}
     volumes:
       - postgres_data:/var/lib/postgresql/
     logging:
@@ -191,10 +191,10 @@ services:
   # =========================================================================
 
   pgadmin:
-    image: localhost:5000/pgadmin4
+    image: ${IMAGE_REGISTRY:-localhost:5000}/pgadmin4
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: root
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?PGADMIN_PASSWORD is required}
     volumes:
       - pgadmin-data:/var/lib/pgadmin
     networks:
@@ -227,11 +227,11 @@ services:
         - traefik.enable=true
         - traefik.swarm.network=proxy
         # Router HTTP
-        - traefik.http.routers.pgadmin.rule=Host(`pgadmin.bojemoi.lab`)
+        - traefik.http.routers.pgadmin.rule=Host(`pgadmin.${LAB_DOMAIN:-${LAB_DOMAIN:-bojemoi.lab}}`)
         - traefik.http.routers.pgadmin.entrypoints=web
         - traefik.http.routers.pgadmin.middlewares=redirect-to-https
         # Router HTTPS
-        - traefik.http.routers.pgadmin-secure.rule=Host(`pgadmin.bojemoi.lab`)
+        - traefik.http.routers.pgadmin-secure.rule=Host(`pgadmin.${LAB_DOMAIN:-${LAB_DOMAIN:-bojemoi.lab}}`)
         - traefik.http.routers.pgadmin-secure.entrypoints=websecure
         - traefik.http.routers.pgadmin-secure.tls=true
 #        - traefik.http.routers.pgadmin-secure.tls.certresolver=letsencrypt
@@ -246,10 +246,10 @@ services:
   # =========================================================================
   # Suricata Exporter pour les métriques Prometheus
   suricata-exporter:
-    image: localhost:5000/suricata_exporter
+    image: ${IMAGE_REGISTRY:-localhost:5000}/suricata_exporter
     volumes:
-      - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata
-      - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/run:/var/run/suricata
     networks:
       - monitoring
       - backend
@@ -262,7 +262,10 @@ services:
         max-size: "10m"
         max-file: "3"
     deploy:
-      mode: global  # Clé importante : déploie une instance sur chaque node
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == ${SURICATA_NODE_HOSTNAME:-meta-70}  # Suricata socket only exists on this node
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -270,7 +273,6 @@ services:
       update_config:
         parallelism: 1
         delay: 10s
-#        failure_action: rollback
       labels:
         - prometheus.enable=true
         - prometheus.port=9917
@@ -284,31 +286,31 @@ services:
   # SERVICE: Grafana (Serveur principal de visualisation)
   # =========================================================================
   grafana:
-    image: localhost:5000/grafana:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/grafana:latest
     networks:
       - proxy
       - backend
       - monitoring
     dns_search:
-      - bojemoi.lab
-    # ports removed - access via Traefik (grafana.bojemoi.lab)
+      - ${LAB_DOMAIN:-bojemoi.lab}
+    # ports removed - access via Traefik (grafana.${LAB_DOMAIN:-bojemoi.lab})
     environment:
       GF_SERVER_ROOT_URL: http://localhost:3000
-      GF_SECURITY_ADMIN_PASSWORD: admin_password
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_DATABASE_TYPE: postgres
       GF_DATABASE_HOST: postgres:5432
-      GF_DATABASE_NAME: grafana
-      GF_DATABASE_USER: postgres
-      GF_DATABASE_PASSWORD: bojemoi 
+      GF_DATABASE_NAME: ${GRAFANA_DBNAME:-grafana}
+      GF_DATABASE_USER: ${POSTGRES_USER:-postgres}
+      GF_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       GF_DATABASE_SSL_MODE: disable
-      SENTINEL_PG_PASS: changeme   # password du user sentinel dans la DB sentinel
+      SENTINEL_PG_PASS: ${SENTINEL_PG_PASS:-changeme}
     configs:
       - source: grafana-ini_config
         target: /etc/grafana/grafana.ini
-      - source: grafana-datasources_v2
+      - source: grafana-datasources_v4
         target: /etc/grafana/provisioning/datasources/datasources.yml
-      - source: grafana-dashboards-provider_v2
+      - source: grafana-dashboards-provider_v4
         target: /etc/grafana/provisioning/dashboards/dashboards.yml
  
     volumes:
@@ -316,7 +318,7 @@ services:
       - grafana_data:/var/lib/grafana
       # Dashboards JSON provisionnés depuis le host
       - type: bind
-        source: /opt/bojemoi/volumes/grafana/dashboards
+        source: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/grafana/dashboards
         target: /var/lib/grafana/dashboards
         read_only: true
 
@@ -349,12 +351,12 @@ services:
         - traefik.enable=true
         - traefik.swarm.network=proxy
       # Définir le router HTTP (avec redirection HTTPS)
-        - traefik.http.routers.grafana.rule=Host(`grafana.bojemoi.lab`)
+        - traefik.http.routers.grafana.rule=Host(`grafana.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.grafana.entrypoints=web
         - traefik.http.routers.grafana.middlewares=redirect-to-https
 
       # Définir le router HTTPS
-        - traefik.http.routers.grafana-secure.rule=Host(`grafana.bojemoi.lab`)
+        - traefik.http.routers.grafana-secure.rule=Host(`grafana.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.grafana-secure.entrypoints=websecure
         - traefik.http.routers.grafana-secure.tls=true
 
@@ -370,14 +372,14 @@ services:
   #================================================
 
   tempo:
-    image: localhost:5000/grafana/tempo:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/grafana/tempo:latest
 
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
-      - /opt/bojemoi/volumes/tempo/config/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/tempo/config/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo
     ports:
-      # API port removed - access via Traefik (tempo.bojemoi.lab)
+      # API port removed - access via Traefik (tempo.${LAB_DOMAIN:-bojemoi.lab})
       - "4317:4317"   # OTLP gRPC - required for trace ingestion
       - "4318:4318"   # OTLP HTTP - required for trace ingestion
       - "9411:9411"   # Zipkin - required for trace ingestion
@@ -386,7 +388,7 @@ services:
       - monitoring
       - backend
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     logging:
       driver: json-file
       options:
@@ -413,7 +415,7 @@ services:
         - prometheus.label.tier=monitoring
         # Traefik - UI Web
         - traefik.enable=true
-        - traefik.http.routers.tempo.rule=Host(`tempo.bojemoi.lab`)
+        - traefik.http.routers.tempo.rule=Host(`tempo.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.tempo.entrypoints=websecure
         - traefik.http.routers.tempo.tls=true
         - traefik.http.services.tempo.loadbalancer.server.port=3200
@@ -437,15 +439,15 @@ services:
   # =========================================================================
   prometheus:
     user: "65534:1003" 
-    image: localhost:5000/prometheus:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/prometheus:latest
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     networks:
       - monitoring
       - rsync_network
       - proxy
       - backend  # Required for docker-socket-proxy access
-    # ports removed - access via Traefik (prometheus.bojemoi.lab)
+    # ports removed - access via Traefik (prometheus.${LAB_DOMAIN:-bojemoi.lab})
     command:
       - --log.level=debug
       - --config.file=/etc/prometheus/prometheus.yml
@@ -458,11 +460,11 @@ services:
       - --web.enable-lifecycle
       - --web.enable-remote-write-receiver
     configs:
-      - source: prometheus_config
+      - source: prometheus_config_v3
         target: /etc/prometheus/prometheus.yml
     volumes:
       - prometheus_data:/prometheus
-      - /opt/bojemoi/volumes/prometheus/rules:/etc/prometheus/rules:ro
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/prometheus/rules:/etc/prometheus/rules:ro
     # Note: Socket Docker retiré - utilise docker-socket-proxy via prometheus.yml si nécessaire
     logging:
       driver: json-file
@@ -495,7 +497,7 @@ services:
           - traefik.enable=true
           - traefik.swarm.network=proxy
   # Router Prometheus
-          - traefik.http.routers.prometheus.rule=Host(`prometheus.bojemoi.lab`)
+          - traefik.http.routers.prometheus.rule=Host(`prometheus.${LAB_DOMAIN:-bojemoi.lab}`)
           - traefik.http.routers.prometheus.entrypoints=websecure
           - traefik.http.routers.prometheus.tls=true
           - traefik.http.routers.prometheus.middlewares=prometheus-auth
@@ -510,12 +512,12 @@ services:
   # SERVICE: Loki (Agrégation et stockage de logs)
   # =========================================================================
   loki:
-    image: localhost:5000/loki:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/loki:latest
     networks:
       - monitoring
       - backend
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     ports:
       - target: 3100
         published: 3100
@@ -560,10 +562,10 @@ services:
   # =========================================================================
   # =========================================================================
   alloy:
-    image: localhost:5000/alloy:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/alloy:latest
     # ports removed - internal telemetry collector
     configs:
-      - source: alloy_config
+      - source: alloy_config_v2
         target: /etc/alloy/config.alloy
     environment:
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
@@ -578,7 +580,7 @@ services:
       - monitoring
       - backend
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     logging:
       driver: json-file
       options:
@@ -606,14 +608,14 @@ services:
   # =========================================================================
   # =========================================================================
   alertmanager:
-    image: localhost:5000/alertmanager:latest
-    # ports removed - access via Traefik (alertmanager.bojemoi.lab)
+    image: ${IMAGE_REGISTRY:-localhost:5000}/alertmanager:latest
+    # ports removed - access via Traefik (alertmanager.${LAB_DOMAIN:-bojemoi.lab})
     configs:
       - source: tls_alertmanager_config
         target: /etc/alertmanager/certs/protonmail-bridge.crt
     volumes:
-#      - /opt/bojemoi/volumes/alertmanager/templates/default.tmpl:/etc/alertmanager/templates/default.tmpl:ro
-      - /opt/bojemoi/volumes/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+#      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alertmanager/templates/default.tmpl:/etc/alertmanager/templates/default.tmpl:ro
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
     secrets:
       - telegram_bot_token
@@ -621,14 +623,14 @@ services:
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
       - '--storage.path=/alertmanager'
-      - '--web.external-url=http://alertmanager.bojemoi.lab:9093/'
+      - '--web.external-url=http://alertmanager.${LAB_DOMAIN:-bojemoi.lab}:9093/'
       - '--log.level=debug'
     networks:
       - monitoring
       - proxy
       - mail
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     logging:
       driver: json-file
       options:
@@ -658,11 +660,11 @@ services:
         - traefik.enable=true
         - traefik.swarm.network=proxy
         # Router HTTP
-        - traefik.http.routers.alertmanager.rule=Host(`alertmanager.bojemoi.lab`)
+        - traefik.http.routers.alertmanager.rule=Host(`alertmanager.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.alertmanager.entrypoints=web
         - traefik.http.routers.alertmanager.middlewares=redirect-to-https
         # Router HTTPS
-        - traefik.http.routers.alertmanager-secure.rule=Host(`alertmanager.bojemoi.lab`)
+        - traefik.http.routers.alertmanager-secure.rule=Host(`alertmanager.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.alertmanager-secure.entrypoints=websecure
         - traefik.http.routers.alertmanager-secure.tls=true
 #       - traefik.http.routers.alertmanager-secure.tls.certresolver=letsencrypt
@@ -672,7 +674,7 @@ services:
   # =========================================================================
 
   node-exporter:
-    image: localhost:5000/node-exporter:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/node-exporter:latest
     hostname: "{{.Node.Hostname}}"
     ports:
       - target: 9100
@@ -724,15 +726,15 @@ services:
   # SERVEUR SMTP PRODUCTION (Postfix)
   # =============================================================================
   postfix:
-    image: localhost:5000/postfix:latest
-    hostname: mail.bojemoi.lab
+    image: ${IMAGE_REGISTRY:-localhost:5000}/postfix:latest
+    hostname: mail.${LAB_DOMAIN:-bojemoi.lab}
     environment:
       # Configuration de base
-      - SMTP_SERVER=mail.bojemoi.lab
-      - SERVER_HOSTNAME=mail.bojemoi.lab
+      - SMTP_SERVER=mail.${LAB_DOMAIN:-bojemoi.lab}
+      - SERVER_HOSTNAME=mail.${LAB_DOMAIN:-bojemoi.lab}
       
       # Domaines autorisés
-      - ALLOWED_SENDER_DOMAINS=bojemoi.lab
+      - ALLOWED_SENDER_DOMAINS=${LAB_DOMAIN:-bojemoi.lab}
       
       # Réseaux autorisés (Docker networks + localhost)
       - SMTP_NETWORKS=127.0.0.0/8 10.0.0.0/8 172.16.0.0/12
@@ -747,7 +749,7 @@ services:
       # Options supplémentaires utiles
       - SMTP_PORT=25
       - MESSAGE_SIZE_LIMIT=10485760     # 10MB
-      - MASQUERADED_DOMAINS=bojemoi.lab
+      - MASQUERADED_DOMAINS=${LAB_DOMAIN:-bojemoi.lab}
       
       # Logging
       - LOG_SUBJECT=yes                 # Logger les sujets des emails
@@ -763,7 +765,7 @@ services:
      - proxy
      - mail
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
 
     volumes:
       - postfix_data:/var/spool/postfix
@@ -804,13 +806,13 @@ services:
 # POSTFIX EXPORTER (Métriques Prometheus)
 # =============================================================================
   postfix-exporter:
-    image: localhost:5000/postfix-exporter:latest
-    hostname: postfix-exporter.bojemoi.lab
+    image: ${IMAGE_REGISTRY:-localhost:5000}/postfix-exporter:latest
+    hostname: postfix-exporter.${LAB_DOMAIN:-bojemoi.lab}
     networks:
       - monitoring
       - backend
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     command:
       - --postfix.showq_path=/var/spool/postfix/public/showq
       - --postfix.logfile_path=/var/log/mail.log
@@ -857,8 +859,8 @@ services:
 # =========================================================================
 
   cadvisor:
-    image: localhost:5000/cadvisor:latest
-    # ports removed - access via Traefik (cadvisor.bojemoi.lab)
+    image: ${IMAGE_REGISTRY:-localhost:5000}/cadvisor:latest
+    # ports removed - access via Traefik (cadvisor.${LAB_DOMAIN:-bojemoi.lab})
     volumes:
       - /:/rootfs
       - /var/run:/var/run
@@ -894,11 +896,11 @@ services:
         - traefik.enable=true
         - traefik.swarm.network=proxy
         # Router HTTP
-        - traefik.http.routers.cadvisor.rule=Host(`cadvisor.bojemoi.lab`)
+        - traefik.http.routers.cadvisor.rule=Host(`cadvisor.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.cadvisor.entrypoints=web
         - traefik.http.routers.cadvisor.middlewares=redirect-to-https
         # Router HTTPS
-        - traefik.http.routers.cadvisor-secure.rule=Host(`cadvisor.bojemoi.lab`)
+        - traefik.http.routers.cadvisor-secure.rule=Host(`cadvisor.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.cadvisor-secure.entrypoints=websecure
         - traefik.http.routers.cadvisor-secure.tls=true
 #        - traefik.http.routers.cadvisor-secure.tls.certresolver=letsencrypt
@@ -916,7 +918,7 @@ services:
 
   rsync-master:
     <<: *mode-template  # H..rite du template de base
-    image: localhost:5000/koursk-2:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/koursk-2:latest
     hostname: rsync-master
     # ports removed - internal backup service
     logging:
@@ -943,8 +945,8 @@ services:
          target: /config/rsync_jobs.json
     volumes:
        - type: bind
-         source: /opt/bojemoi
-         target: /opt/bojemoi
+         source: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}
+         target: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}
        - type: bind
          source: /opt/bojemoi_boot
          target: /opt/bojemoi_boot
@@ -958,7 +960,7 @@ services:
        - shared_logs:/var/log/rsync
     environment:
        - MODULE=swarm_data
-       - DATA_PATH=/opt/bojemoi
+       - DATA_PATH=${BOJEMOI_BASE_PATH:-/opt/bojemoi}
        - RSYNC_MODE=master
        - SYNC_INTERVAL=300
        - REMOTE_HOSTS=rsync-slave
@@ -1024,9 +1026,9 @@ services:
 # for base  images
 # -------------------------------------------------------------------------------
   postgres-exporter:
-    image: localhost:5000/postgres-exporter:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/postgres-exporter:latest
     environment:
-      DATA_SOURCE_NAME: "postgresql://postgres:bojemoi@postgres:5432/postgres?sslmode=disable"
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/postgres?sslmode=disable"
     networks:
       - monitoring
       - backend
@@ -1065,10 +1067,10 @@ services:
   # SERVICE: Provisioning Orchestrator
   # =========================================================================
   orchestrator:
-    image: localhost:5000/provisioning:latest
-    hostname: orchestrator.bojemoi.lab
+    image: ${IMAGE_REGISTRY:-localhost:5000}/provisioning:latest
+    hostname: orchestrator.${LAB_DOMAIN:-bojemoi.lab}
     command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --app-dir /app
-    # ports removed - access via Traefik (provisioning.bojemoi.lab)
+    # ports removed - access via Traefik (provisioning.${LAB_DOMAIN:-bojemoi.lab})
     configs:
       - source: provisioning_env_v2
         target: /app/.env
@@ -1131,7 +1133,7 @@ services:
         - "traefik.docker.network=proxy"
 
         # Traefik - API HTTP (port 8080)
-        - "traefik.http.routers.orchestrator-api.rule=Host(`provisioning.bojemoi.lab`)"
+        - "traefik.http.routers.orchestrator-api.rule=Host(`provisioning.${LAB_DOMAIN:-bojemoi.lab}`)"
         - "traefik.http.routers.orchestrator-api.entrypoints=websecure"
         - "traefik.http.routers.orchestrator-api.tls=true"
         - "traefik.http.routers.orchestrator-api.tls.certresolver=letsencrypt"
@@ -1139,7 +1141,7 @@ services:
         - "traefik.http.services.orchestrator-api.loadbalancer.server.port=8080"
 
         # Traefik - Webhook endpoint avec rate limiting
-        - "traefik.http.routers.orchestrator-webhook.rule=Host(`provisioning.bojemoi.lab`) && PathPrefix(`/webhook`)"
+        - "traefik.http.routers.orchestrator-webhook.rule=Host(`provisioning.${LAB_DOMAIN:-bojemoi.lab}`) && PathPrefix(`/webhook`)"
         - "traefik.http.routers.orchestrator-webhook.entrypoints=websecure"
         - "traefik.http.routers.orchestrator-webhook.tls=true"
         - "traefik.http.routers.orchestrator-webhook.middlewares=orchestrator-ratelimit"
@@ -1147,14 +1149,14 @@ services:
         - "traefik.http.middlewares.orchestrator-ratelimit.ratelimit.burst=20"
 
         # Traefik - Metrics Prometheus
-        - "traefik.http.routers.orchestrator-metrics.rule=Host(`provisioning.bojemoi.lab`) && PathPrefix(`/metrics`)"
+        - "traefik.http.routers.orchestrator-metrics.rule=Host(`provisioning.${LAB_DOMAIN:-bojemoi.lab}`) && PathPrefix(`/metrics`)"
         - "traefik.http.routers.orchestrator-metrics.entrypoints=websecure"
         - "traefik.http.routers.orchestrator-metrics.tls=true"
         - "traefik.http.routers.orchestrator-metrics.service=orchestrator-metrics"
         - "traefik.http.services.orchestrator-metrics.loadbalancer.server.port=8080"
 
         # Traefik - Health check
-        - "traefik.http.routers.orchestrator-health.rule=Host(`provisioning.bojemoi.lab`) && PathPrefix(`/health`)"
+        - "traefik.http.routers.orchestrator-health.rule=Host(`provisioning.${LAB_DOMAIN:-bojemoi.lab}`) && PathPrefix(`/health`)"
         - "traefik.http.routers.orchestrator-health.entrypoints=websecure"
         - "traefik.http.routers.orchestrator-health.tls=true"
 
@@ -1163,7 +1165,7 @@ services:
   #8_qz7oZmQVBGhkvo-U64tA
 # =========================================================================
   protonmail-bridge:
-    image: localhost:5000/protonmail-bridge:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/protonmail-bridge:latest
     volumes:
       - protonmail_data:/root
     ports:

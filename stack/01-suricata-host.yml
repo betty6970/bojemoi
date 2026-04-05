@@ -4,7 +4,7 @@
 
 services:
   suricata:
-    image: localhost:5000/suricata:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/suricata:latest
     container_name: suricata
     network_mode: host
     cap_add:
@@ -14,9 +14,9 @@ services:
     environment:
       - SURICATA_OPTIONS=-i eth0 --set stream.reassembly.depth=0 --set detect.profile=low
     volumes:
-      - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata
-      - /opt/bojemoi/volumes/suricata:/etc/suricata
-      - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata:/etc/suricata
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/run:/var/run/suricata
     restart: unless-stopped
     logging:
       driver: json-file
@@ -25,9 +25,9 @@ services:
         max-file: "3"
 
   eve-cleaner:
-    image: localhost:5000/alpine:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/alpine:latest
     volumes:
-      - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata
     environment:
       KEEP_HOURS: "24"
     command: >
@@ -61,17 +61,17 @@ services:
           memory: 8M
 
   suricata-attack-enricher:
-    image: localhost:5000/suricata-attack-enricher:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/suricata-attack-enricher:latest
     container_name: suricata-attack-enricher
     network_mode: host
     networks:
       - backend
     volumes:
-      - /opt/bojemoi/volumes/suricata/logs:/var/log/suricata:ro
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata:ro
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_NAME=bojemoi_threat_intel
+      - DB_NAME=${ML_THREAT_DBNAME:-bojemoi_threat_intel}
       - DB_USER=postgres
       - DB_PASSWORD_FILE=/run/secrets/postgres_password
     secrets:

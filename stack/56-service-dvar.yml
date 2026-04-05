@@ -18,7 +18,7 @@ networks:
 services:
 
   dvar:
-    image: localhost:5000/dvar:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/dvar:latest
 
     environment:
       # IP du container pour auto-enregistrement dans msf DB
@@ -26,7 +26,7 @@ services:
       DVAR_IP: ""          # laissé vide → l'entrypoint résout via hostname -I
       MSF_PG_HOST: "postgres"
       MSF_PG_USER: "postgres"
-      MSF_PG_PASS: "bojemoi"
+      MSF_PG_PASS: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
       MSF_PG_DB:   "msf"
 
     networks:

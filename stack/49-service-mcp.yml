@@ -18,7 +18,7 @@ secrets:
 
 services:
   mcp-server:
-    image: localhost:5000/bojemoi-mcp:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/bojemoi-mcp:latest
     hostname: mcp-server
 
     environment:

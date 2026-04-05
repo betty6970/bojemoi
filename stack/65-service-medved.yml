@@ -15,7 +15,7 @@ secrets:
 
 services:
   medved-honeypot:
-    image: localhost:5000/medved:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/medved:latest
     hostname: medved-{{.Node.Hostname}}
     environment:
       PG_HOST: postgres

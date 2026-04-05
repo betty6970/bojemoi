@@ -34,13 +34,13 @@ volumes:
 services:
   # ML Threat Intelligence API
   ml-threat-intel-api:
-    image: localhost:5000/ml-threat-intel:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/ml-threat-intel:latest
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: bojemoi_threat_intel
+      DB_NAME: ${ML_THREAT_DBNAME:-bojemoi_threat_intel}
       DB_USER: postgres
-      DB_PASSWORD: bojemoi
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       VT_API_KEY_FILE: /run/secrets/vt_api_key
       ABUSEIPDB_API_KEY_FILE: /run/secrets/abuseipdb_api_key
       OTX_API_KEY_FILE: /run/secrets/otx_api_key
@@ -66,7 +66,7 @@ services:
       <<: *deploy-template
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.ml-threat-intel.rule=Host(`threat-intel.bojemoi.lab.local`)"
+        - "traefik.http.routers.ml-threat-intel.rule=Host(`threat-intel.${LAB_DOMAIN:-bojemoi.lab}.local`)"
         - "traefik.http.routers.ml-threat-intel.entrypoints=web"
         - "traefik.http.services.ml-threat-intel.loadbalancer.server.port=8001"
 

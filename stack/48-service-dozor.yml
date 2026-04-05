@@ -4,15 +4,15 @@ networks:
 
 services:
   dozor:
-    image: localhost:5000/dozor:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/dozor:latest
     environment:
       POLL_INTERVAL: "3600"
       RULES_OUTPUT_PATH: "/var/lib/suricata/rules/blocklist.rules"
       SURICATA_SOCKET_PATH: "/var/run/suricata/suricata-command.socket"
       METRICS_PORT: "9302"
     volumes:
-      - /opt/bojemoi/volumes/suricata/rules:/var/lib/suricata/rules
-      - /opt/bojemoi/volumes/suricata/run:/var/run/suricata
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/rules:/var/lib/suricata/rules
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/run:/var/run/suricata
     networks:
       - backend
     logging:

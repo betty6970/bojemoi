@@ -11,7 +11,7 @@ volumes:
 
 services:
   ollama:
-    image: localhost:5000/ollama:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/ollama:latest
     volumes:
       - ollama-models:/root/.ollama
       - type: bind
@@ -49,3 +49,41 @@ services:
         reservations:
           cpus: '1.0'
           memory: 2G
+
+  dcgm-exporter:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/dcgm-exporter:latest
+    volumes:
+      - type: bind
+        source: /opt/nvidia-drivers
+        target: /usr/local/nvidia/lib64
+        read_only: true
+    networks:
+      - backend
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+    cap_add:
+      - SYS_ADMIN
+    ports:
+      - target: 9400
+        published: 9400
+        protocol: tcp
+        mode: host
+    deploy:
+      placement:
+        constraints:
+          - node.labels.nvidia.vgpu == true
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+      labels:
+        prometheus.enable: "true"
+        prometheus.port: "9400"
+        prometheus.path: "/metrics"

@@ -35,7 +35,7 @@ services:
 
   # ─── MQTT Broker ─────────────────────────────────────────────────────────
   mosquitto:
-    image: localhost:5000/mosquitto:2.0
+    image: ${IMAGE_REGISTRY:-localhost:5000}/mosquitto:2.0
     hostname: mosquitto
 
     configs:
@@ -80,7 +80,7 @@ services:
 
   # ─── Collector MQTT → PostgreSQL + Prometheus ─────────────────────────────
   collector:
-    image: localhost:5000/sentinel-collector:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/sentinel-collector:latest
     hostname: sentinel-collector
     depends_on:
       - mosquitto

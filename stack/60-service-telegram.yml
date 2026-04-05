@@ -2,10 +2,10 @@ version: "3.8"
 
 services:
   telegram-bot:
-    image: localhost:5000/telegram-bot:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/telegram-bot:latest
     hostname: telegram-bot
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:bojemoi@postgres:5432/telegram_bot
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/telegram_bot
       # Redis configuration for pentest-orchestrator communication (borodino stack)
       - REDIS_HOST=redis
       - REDIS_PORT=6379

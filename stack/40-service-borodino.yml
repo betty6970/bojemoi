@@ -10,18 +10,18 @@
 
 # Template de base avec anchor (from 50-service-borodino.yml)
 x-arme-template: &arme-template
-  image: localhost:5000/borodino:latest
+  image: ${IMAGE_REGISTRY:-localhost:5000}/borodino:latest
   networks:
     - backend
-  environment:                                                                     
-    - PYTHONUNBUFFERED=1                                                           
-    - DEBUG_MODE=0                                                                 
-    - PG_HOST=postgres                                                             
-    - PG_PORT=5432                                                                 
-    - PG_USER=postgres                                                             
-    - PG_PASSWORD=bojemoi                                                          
-    - PG_DBNAME=msf                                                                
-    - IP2LOC_DBNAME=ip2location
+  environment:
+    - PYTHONUNBUFFERED=1
+    - DEBUG_MODE=0
+    - PG_HOST=postgres
+    - PG_PORT=5432
+    - PG_USER=${POSTGRES_USER:-postgres}
+    - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    - PG_DBNAME=${MSF_DBNAME:-msf}
+    - IP2LOC_DBNAME=${IP2LOC_DBNAME:-ip2location}
 
 # Template de deploiement separe
 x-deploy-template: &deploy-template
@@ -52,6 +52,8 @@ networks:
   backend:
     external: true
   proxy:
+    external: true
+  monitoring:
     external: true
   pentest:
     name: pentest
@@ -113,13 +115,13 @@ services:
   # FROM: 10-service-oblast.yml - ZAP Proxy
   # =========================================================================
   zaproxy:
-    image: localhost:5000/oblast:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/oblast:latest
     hostname: zaproxy
     # ports removed - internal pentest service, accessed via overlay network
     environment:
       - ZAP_HOST=0.0.0.0
       - ZAP_PORT=8090
-      - TARGET_URL=${TARGET_URL:-https://zap.bojemoi.lab}
+      - TARGET_URL=${TARGET_URL:-https://zap.${LAB_DOMAIN:-bojemoi.lab}}
       - REPORT_FORMAT=html
     volumes:
       - zap-data:/zap/wrk
@@ -130,7 +132,7 @@ services:
       - pentest
       - proxy
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/JSON/core/view/version/"]
       interval: 30s
@@ -157,7 +159,7 @@ services:
       labels:
         - traefik.enable=true
         - traefik.docker.network=proxy
-        - traefik.http.routers.zaproxy.rule=Host(`zap.bojemoi.lab`)
+        - traefik.http.routers.zaproxy.rule=Host(`zap.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.zaproxy.entrypoints=websecure
         - traefik.http.routers.zaproxy.tls=true
         - traefik.http.services.zaproxy.loadbalancer.server.port=8090
@@ -167,14 +169,14 @@ services:
 
   # ZAP Scanner application
   zap-scanner:
-    image: localhost:5000/oblast-1:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/oblast-1:latest
     hostname: zap_scanner
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: msf
       DB_USER: postgres
-      DB_PASSWORD: bojemoi
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       ZAP_HOST: zaproxy
@@ -185,7 +187,7 @@ services:
       BATCH_SIZE: 50
       FARADAY_URL: http://faraday:5985
       FARADAY_USER: faraday
-      FARADAY_PASSWORD: bojemoi2
+      FARADAY_PASSWORD: ${FARADAY_PASSWORD:?FARADAY_PASSWORD is required}
       FARADAY_WORKSPACE: zap
       PYTHONUNBUFFERED: 1
       LOG_LEVEL: INFO
@@ -195,7 +197,7 @@ services:
       - backend
       - pentest
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     logging:
       driver: json-file
       options:
@@ -220,7 +222,7 @@ services:
   # =========================================================================
 
   wg-gateway:
-    image: localhost:5000/wg-gateway:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/wg-gateway:latest
     networks:
       - scan_net
     cap_add:
@@ -263,7 +265,7 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
+      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       - IP2LOC_DBNAME=ip2location
       - ARME_TYPE=ak47
@@ -294,7 +296,7 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
+      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       - IP2LOC_DBNAME=ip2location
       - ARME_TYPE=bm12
@@ -316,12 +318,12 @@ services:
   #
   ########################################################
   msf-teamserver:
-    image: localhost:5000/borodino-msf:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/borodino-msf:latest
     environment:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
+      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
     networks:
       - backend
@@ -362,7 +364,7 @@ services:
 
   uzi-service:
     <<: *arme-template
-    image: localhost:5000/borodino-msf:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/borodino-msf:latest
     networks:
       - backend
       - pentest
@@ -375,22 +377,22 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
+      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       # MSF_HOST : hostname du service msf-teamserver (réseau pentest/backend)
       - MSF_HOST=msf-teamserver
       # C2_REDIRECTORS : IPs publiques des redirecteurs (virgule), ex: 1.2.3.4,5.6.7.8
       # Mettre à jour après fly ips allocate-v4 + provision-redirector.sh
-      - C2_REDIRECTORS=37.16.12.4
+      - C2_REDIRECTORS=${C2_REDIRECTORS:-}
       - LPORT=24444
       - LPORT_BIND=4444
       - BIND_PORT=5556
       - MODE_RUN=1
-      - TELEGRAM_ALERT_CHAT_ID=-5087117106
+      - TELEGRAM_ALERT_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - FARADAY_URL=http://faraday:5985
       - FARADAY_USER=faraday
-      - FARADAY_PASSWORD=bojemoi2
+      - FARADAY_PASSWORD=${FARADAY_PASSWORD:?FARADAY_PASSWORD is required}
       - FARADAY_WORKSPACE=uzi
       - SCAN_GATEWAY_HOST=wg-gateway
     secrets:
@@ -422,7 +424,7 @@ services:
     command: ["/usr/bin/route-setup.sh", "/usr/bin/start_uzi.sh"]
 
   karacho-blockchain:
-    image: localhost:5000/karacho:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/karacho:latest
     volumes:
       - karacho-logs:/var/log/karacho
       - karacho-run:/var/run/karacho
@@ -434,7 +436,7 @@ services:
       - SECRET_KEY=${KARACHO_SECRET_KEY}
       - POSTGRES_HOST=postgres
       - DB_USER=postgres
-      - DB_PASS=bojemoi
+      - DB_PASS=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - DB_NAME=karacho
       - MSF_DB_NAME=msf
     networks:
@@ -462,7 +464,7 @@ services:
       labels:
         - traefik.enable=true
         - traefik.docker.network=proxy
-        - traefik.http.routers.karacho.rule=Host(`karacho.bojemoi.lab`)
+        - traefik.http.routers.karacho.rule=Host(`karacho.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.karacho.entrypoints=websecure
         - traefik.http.routers.karacho.tls=true
         - traefik.http.services.karacho.loadbalancer.server.port=5100
@@ -471,7 +473,7 @@ services:
   # FROM: 50-service-tsushima.yml - Masscan Scanner
   # =========================================================================
   masscan-scanner:
-    image: localhost:5000/tsushima:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/tsushima:latest
     networks:
       - backend
     cap_add:
@@ -488,12 +490,12 @@ services:
       IP2LOCATION_DB_PORT: 5432
       IP2LOCATION_DB_NAME: ip2location
       IP2LOCATION_DB_USER: postgres
-      IP2LOCATION_DB_PASSWORD: bojemoi
+      IP2LOCATION_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       MSF_DB_HOST: postgres
       MSF_DB_PORT: 5432
       MSF_DB_NAME: msf
       MSF_DB_USER: postgres
-      MSF_DB_PASSWORD: bojemoi
+      MSF_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     logging:
       driver: json-file
       options:
@@ -513,7 +515,7 @@ services:
   # FROM: 55-service-nuclei.yml - Nuclei Scanner
   # =========================================================================
   nuclei:
-    image: localhost:5000/nuclei:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/nuclei:latest
     entrypoint: /bin/sh
     networks:
       - backend
@@ -521,7 +523,7 @@ services:
     volumes:
       - nuclei-templates:/root/nuclei-templates
       - nuclei-results:/results
-      - /opt/bojemoi/volumes/nuclei/config:/root/.config/nuclei
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/nuclei/config:/root/.config/nuclei
     environment:
       - NUCLEI_TEMPLATES=/root/nuclei-templates
     command:
@@ -551,22 +553,22 @@ services:
           memory: 512M
 
   logpull:
-    image: localhost:5000/borodino:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/borodino:latest
     networks:
       - backend
     volumes:
-      - /home/docker/.fly/bin/fly:/usr/local/bin/fly:ro
-      - /home/docker/LightsailDefaultKey-eu-central-1.pem:/root/.ssh/lightsail.pem:ro
+      - ${FLY_CLI_PATH:-/home/docker/.fly/bin/fly}:/usr/local/bin/fly:ro
+      - ${LIGHTSAIL_KEY_PATH:-/home/docker/LightsailDefaultKey-eu-central-1.pem}:/root/.ssh/lightsail.pem:ro
     environment:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
+      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       - FLY_APP=redirector-1
       - FLY_LOG_LINES=2000
-      - LIGHTSAIL_HOST=bojemoi.me
-      - LIGHTSAIL_USER=ec2-user
+      - LIGHTSAIL_HOST=${LIGHTSAIL_HOST:-${PUBLIC_DOMAIN:-bojemoi.me}}
+      - LIGHTSAIL_USER=${LIGHTSAIL_USER:-ec2-user}
       - LIGHTSAIL_KEY=/root/.ssh/lightsail.pem
       - LIGHTSAIL_LOG_LINES=5000
       - LOOP_INTERVAL=3600
@@ -582,7 +584,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.hostname == meta-76
+          - node.hostname == ${LOGPULL_NODE_HOSTNAME:-meta-76}
       restart_policy:
         condition: on-failure
         delay: 30s
@@ -594,7 +596,7 @@ services:
     command: ["python3", "/usr/bin/thearm_logpull"]
 
   nuclei-worker:
-    image: localhost:5000/borodino:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/borodino:latest
     networks:
       - backend
       - pentest
@@ -602,7 +604,7 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=bojemoi
+      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       - NUCLEI_API_URL=http://nuclei-api:8001
       - NUCLEI_SEVERITY=critical,high,medium
@@ -612,7 +614,7 @@ services:
       - REDIS_PORT=6379
       - FARADAY_URL=http://faraday:5985
       - FARADAY_USER=faraday
-      - FARADAY_PASSWORD=bojemoi2
+      - FARADAY_PASSWORD=${FARADAY_PASSWORD:?FARADAY_PASSWORD is required}
       - FARADAY_WORKSPACE=nuclei
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_ENABLED=true
@@ -643,7 +645,7 @@ services:
     command: ["python3", "/usr/bin/thearm_nuclei"]
 
   nuclei-api:
-    image: localhost:5000/nuclei:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/nuclei:latest
     entrypoint: /bin/sh
     networks:
       - backend
@@ -655,7 +657,7 @@ services:
     sysctls:
       net.ipv4.ip_forward: "1"
     volumes:
-      - /opt/bojemoi/samsonov/nuclei_api:/app
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/samsonov/nuclei_api:/app
       - nuclei-results:/results
       - nuclei-templates:/root/nuclei-templates
     working_dir: /app
@@ -667,7 +669,7 @@ services:
       - NUCLEI_TEMPLATES=/root/nuclei-templates
       - FARADAY_URL=http://faraday:5985
       - FARADAY_USER=faraday
-      - FARADAY_PASSWORD=bojemoi2
+      - FARADAY_PASSWORD=${FARADAY_PASSWORD:?FARADAY_PASSWORD is required}
       - FARADAY_WORKSPACE=nuclei
       - SCAN_GATEWAY_HOST=wg-gateway
       - OLLAMA_BASE_URL=http://ollama:11434
@@ -719,7 +721,7 @@ services:
       labels:
         - traefik.enable=true
         - traefik.docker.network=proxy
-        - traefik.http.routers.nuclei-api.rule=Host(`nuclei.bojemoi.lab`)
+        - traefik.http.routers.nuclei-api.rule=Host(`nuclei.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.nuclei-api.entrypoints=websecure
         - traefik.http.routers.nuclei-api.tls=true
         - traefik.http.services.nuclei-api.loadbalancer.server.port=8001
@@ -728,7 +730,7 @@ services:
   # FROM: 60-service-samsonov.yml - Faraday & Redis
   # =========================================================================
   redis:
-    image: localhost:5000/redis:alpine
+    image: ${IMAGE_REGISTRY:-localhost:5000}/redis:alpine
     command: redis-server --appendonly yes --protected-mode no
     networks:
       - pentest
@@ -755,9 +757,9 @@ services:
       retries: 3
 
   pentest-orchestrator:
-    image: localhost:5000/pentest-orchestrator:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/pentest-orchestrator:latest
     volumes:
-      - /opt/bojemoi/samsonov/pentest_orchestrator:/app
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/samsonov/pentest_orchestrator:/app
     working_dir: /app
     command: ["--daemon"]
     environment:
@@ -767,7 +769,7 @@ services:
       - pentest
       - backend
     dns_search:
-      - bojemoi.lab
+      - ${LAB_DOMAIN:-bojemoi.lab}
     logging:
       driver: json-file
       options:
@@ -783,10 +785,10 @@ services:
         max_attempts: 3
 
   faraday:
-    image: localhost:5000/faraday:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/faraday:latest
     environment:
       - PGSQL_USER=postgres
-      - PGSQL_PASSWD=bojemoi
+      - PGSQL_PASSWD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PGSQL_HOST=postgres
       - PGSQL_DBNAME=faraday
       - REDIS_SERVER=redis
@@ -802,12 +804,12 @@ services:
 
 
     dns_search:
-      - bojemoi.lab
-    # ports removed - access via Traefik (faraday.bojemoi.lab)
+      - ${LAB_DOMAIN:-bojemoi.lab}
+    # ports removed - access via Traefik (faraday.${LAB_DOMAIN:-bojemoi.lab})
     volumes:
       - faraday_data:/home/faraday/.faraday
       - faraday-storage:/home/faraday/.faraday/storage
-      - /opt/bojemoi/volumes/faraday/config/server.ini:/home/faraday/.faraday/config/server.ini
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/faraday/config/server.ini:/home/faraday/.faraday/config/server.ini
     entrypoint: "/entrypoint.sh"
     logging:
       driver: json-file
@@ -817,7 +819,7 @@ services:
     deploy:
       labels:
         - traefik.enable=true
-        - traefik.http.routers.faraday.rule=Host(`faraday.bojemoi.lab`)
+        - traefik.http.routers.faraday.rule=Host(`faraday.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.faraday.entrypoints=websecure
         - traefik.http.routers.faraday.tls=true
         - "traefik.docker.network=proxy"
@@ -840,12 +842,13 @@ services:
           memory: 256M
 
   redis-exporter:
-    image: localhost:5000/redis-exporter:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/redis-exporter:latest
     environment:
       REDIS_ADDR: "redis:6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     networks:
       - pentest
+      - monitoring
     logging:
       driver: json-file
       options:
@@ -866,14 +869,15 @@ services:
           - node.role == worker
 
   pentest-exporter:
-    image: localhost:5000/python:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/python:latest
     command: >
       sh -c "pip3 install prometheus_client requests redis &&
              python3 /app/metrics_exporter.py"
     volumes:
-      - /opt/bojemoi/samsonov/scripts/metrics_exporter.py:/app/metrics_exporter.py
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/samsonov/scripts/metrics_exporter.py:/app/metrics_exporter.py
     networks:
       - pentest
+      - monitoring
     logging:
       driver: json-file
       options:
@@ -882,7 +886,7 @@ services:
     deploy:
       labels:
         - "prometheus.enable=true"
-        - "prometheus.port=9090"
+        - "prometheus.port=9999"
         - "prometheus.path=/metrics"
       placement:
         constraints:
@@ -890,7 +894,7 @@ services:
 
 
   redis-commander:
-    image: localhost:5000/redis-commander:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/redis-commander:latest
     environment:
       - REDIS_HOSTS=local:redis:6379
     networks:
@@ -920,7 +924,7 @@ services:
       labels:
         - traefik.enable=true
         - traefik.docker.network=proxy
-        - traefik.http.routers.redis-commander.rule=Host(`redis.bojemoi.lab`)
+        - traefik.http.routers.redis-commander.rule=Host(`redis.${LAB_DOMAIN:-bojemoi.lab}`)
         - traefik.http.routers.redis-commander.entrypoints=websecure
         - traefik.http.routers.redis-commander.tls=true
         - traefik.http.services.redis-commander.loadbalancer.server.port=8081

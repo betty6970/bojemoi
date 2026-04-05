@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   trivy-scanner:
-    image: localhost:5000/trivy-scanner:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/trivy-scanner:latest
     deploy:
       mode: replicated
       replicas: 1

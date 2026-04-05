@@ -3,6 +3,8 @@ __pycache__/
 
 # Secrets & credentials
 .env
+.env.local
+.env.*.local
 *.key
 *.pem
 auth.txt
