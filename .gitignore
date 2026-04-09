@@ -43,6 +43,7 @@ toto/
 
 # Large tool binaries
 kyiv/
+SecLists/
 
 # Suricata rules (managed externally)
 volumes/suricata/rules/

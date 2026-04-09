@@ -394,50 +394,59 @@ services:
       - LPORT_BIND=4444
       - BIND_PORT=5556
       - MODE_RUN=1
-      # ── Brute-force wordlists par service (surchargeables) ──
-      - SSH_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - SSH_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      # ── Brute-force wordlists — SecLists Default-Credentials (user:pass) ──
+      - SSH_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/ssh-betterdefaultpasslist.txt
+      - SSH_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - SSH_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
       - SSH_BRUTE_TIMEOUT=300
       - SSH_THREADS=4
-      - FTP_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - FTP_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - FTP_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/ftp-betterdefaultpasslist.txt
+      - FTP_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - FTP_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
       - FTP_BRUTE_TIMEOUT=180
-      - TELNET_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - TELNET_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - TELNET_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/telnet-betterdefaultpasslist.txt
+      - TELNET_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - TELNET_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
       - TELNET_BRUTE_TIMEOUT=180
-      - SMB_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - SMB_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
-      - SMB_BRUTE_TIMEOUT=300
-      - MYSQL_USER_FILE=/usr/share/metasploit-framework/data/wordlists/mysql_default_user.txt
-      - MYSQL_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/mysql_default_pass.txt
+      - MYSQL_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/mysql-betterdefaultpasslist.txt
+      - MYSQL_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - MYSQL_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
       - MYSQL_BRUTE_TIMEOUT=180
-      - PGSQL_USER_FILE=/usr/share/metasploit-framework/data/wordlists/postgres_default_user.txt
-      - PGSQL_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/postgres_default_pass.txt
+      - PGSQL_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/postgres-betterdefaultpasslist.txt
+      - PGSQL_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - PGSQL_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
       - PGSQL_BRUTE_TIMEOUT=180
-      - MSSQL_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - MSSQL_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - MSSQL_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/mssql-betterdefaultpasslist.txt
+      - MSSQL_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - MSSQL_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
       - MSSQL_BRUTE_TIMEOUT=180
-      - VNC_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/vnc_passwords.txt
+      - TOMCAT_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/tomcat-betterdefaultpasslist.txt
+      - TOMCAT_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - TOMCAT_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
+      - TOMCAT_BRUTE_TIMEOUT=120
+      # ── Brute-force wordlists — SecLists génériques ──
+      - SMB_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - SMB_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
+      - SMB_BRUTE_TIMEOUT=300
+      - IMAP_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - IMAP_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
+      - IMAP_BRUTE_TIMEOUT=120
+      - POP3_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - POP3_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
+      - POP3_BRUTE_TIMEOUT=120
+      - SMTP_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - SMTP_ENUM_TIMEOUT=120
+      - HTTP_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - HTTP_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
+      - HTTP_BRUTE_TIMEOUT=120
+      - MONGO_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
+      - MONGO_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
+      - MONGO_BRUTE_TIMEOUT=120
+      # ── Pass-only ──
+      - VNC_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/vnc-betterdefaultpasslist.txt
       - VNC_BRUTE_TIMEOUT=120
       - SNMP_COMMUNITY_FILE=/usr/share/metasploit-framework/data/wordlists/snmp_default_pass.txt
       - SNMP_BRUTE_TIMEOUT=60
-      - IMAP_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - IMAP_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
-      - IMAP_BRUTE_TIMEOUT=120
-      - POP3_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - POP3_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
-      - POP3_BRUTE_TIMEOUT=120
-      - SMTP_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - SMTP_ENUM_TIMEOUT=120
-      - HTTP_USER_FILE=/usr/share/metasploit-framework/data/wordlists/http_default_users.txt
-      - HTTP_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/http_default_pass.txt
-      - HTTP_BRUTE_TIMEOUT=120
-      - TOMCAT_USER_FILE=/usr/share/metasploit-framework/data/wordlists/tomcat_mgr_default_users.txt
-      - TOMCAT_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/tomcat_mgr_default_pass.txt
-      - TOMCAT_BRUTE_TIMEOUT=120
-      - MONGO_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
-      - MONGO_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
-      - MONGO_BRUTE_TIMEOUT=120
       - FARADAY_URL=http://faraday:5985
       - FARADAY_USER=faraday
       - FARADAY_WORKSPACE=uzi
@@ -470,6 +479,11 @@ services:
         reservations:
           cpus: '0.2'
           memory: 512M
+    volumes:
+      - type: bind
+        source: /opt/bojemoi/SecLists
+        target: /opt/bojemoi/SecLists
+        read_only: true
     command: ["/usr/bin/route-setup.sh", "/usr/bin/start_uzi.sh"]
 
   karacho-blockchain:

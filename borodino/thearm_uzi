@@ -96,16 +96,25 @@ SSH_THREADS       = int(os.getenv("SSH_THREADS", "4"))
 
 # ─── Config brute-force par service ──────────────────────────────────────────
 _WL = "/usr/share/metasploit-framework/data/wordlists"
+_SL = "/opt/bojemoi/SecLists/Passwords"
+_SU = "/opt/bojemoi/SecLists/Usernames"
 
 def _wl(env_key, default):
     """Résout un chemin de wordlist depuis l'env ou la valeur par défaut."""
     return os.getenv(env_key, default)
 
+# Wordlists génériques SecLists (USER_FILE / PASS_FILE pour services sans liste dédiée)
+_SL_USERS = f'{_SU}/cirt-default-usernames.txt'
+_SL_PASS  = f'{_SL}/Common-Credentials/10k-most-common.txt'
+_SL_DC    = f'{_SL}/Default-Credentials'
+
 BRUTE_MODULES = {
+    # ── user:pass format (USERPASS_FILE) — listes dédiées SecLists ─────────────
     'ssh': {
         'module': 'scanner/ssh/ssh_login',
         'ports': {22}, 'services': {'ssh'},
-        'user_file': SSH_USER_FILE,
+        'userpass_file': _wl('SSH_USERPASS_FILE', f'{_SL_DC}/ssh-betterdefaultpasslist.txt'),
+        'user_file': SSH_USER_FILE,   # fallback si USERPASS_FILE absent
         'pass_file': SSH_PASS_FILE,
         'timeout': SSH_BRUTE_TIMEOUT, 'threads': SSH_THREADS,
         'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
@@ -113,8 +122,9 @@ BRUTE_MODULES = {
     'ftp': {
         'module': 'scanner/ftp/ftp_login',
         'ports': {21, 2121}, 'services': {'ftp'},
-        'user_file': _wl('FTP_USER_FILE',        f'{_WL}/unix_users.txt'),
-        'pass_file': _wl('FTP_PASS_FILE',        f'{_WL}/unix_passwords.txt'),
+        'userpass_file': _wl('FTP_USERPASS_FILE', f'{_SL_DC}/ftp-betterdefaultpasslist.txt'),
+        'user_file': _wl('FTP_USER_FILE',  _SL_USERS),
+        'pass_file': _wl('FTP_PASS_FILE',  _SL_PASS),
         'timeout': int(os.getenv('FTP_BRUTE_TIMEOUT', '180')),
         'threads': int(os.getenv('FTP_THREADS', '4')),
         'extra': {'ANONYMOUS_LOGIN': True, 'STOP_ON_SUCCESS': True, 'VERBOSE': False},
@@ -122,26 +132,19 @@ BRUTE_MODULES = {
     'telnet': {
         'module': 'scanner/telnet/telnet_login',
         'ports': {23}, 'services': {'telnet'},
-        'user_file': _wl('TELNET_USER_FILE',     f'{_WL}/unix_users.txt'),
-        'pass_file': _wl('TELNET_PASS_FILE',     f'{_WL}/unix_passwords.txt'),
+        'userpass_file': _wl('TELNET_USERPASS_FILE', f'{_SL_DC}/telnet-betterdefaultpasslist.txt'),
+        'user_file': _wl('TELNET_USER_FILE', _SL_USERS),
+        'pass_file': _wl('TELNET_PASS_FILE', _SL_PASS),
         'timeout': int(os.getenv('TELNET_BRUTE_TIMEOUT', '180')),
         'threads': int(os.getenv('TELNET_THREADS', '4')),
-        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
-    },
-    'smb': {
-        'module': 'scanner/smb/smb_login',
-        'ports': {139, 445}, 'services': {'netbios-ssn', 'microsoft-ds', 'smb'},
-        'user_file': _wl('SMB_USER_FILE',        f'{_WL}/unix_users.txt'),
-        'pass_file': _wl('SMB_PASS_FILE',        f'{_WL}/unix_passwords.txt'),
-        'timeout': int(os.getenv('SMB_BRUTE_TIMEOUT', '300')),
-        'threads': int(os.getenv('SMB_THREADS', '4')),
         'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
     },
     'mysql': {
         'module': 'scanner/mysql/mysql_login',
         'ports': {3306}, 'services': {'mysql'},
-        'user_file': _wl('MYSQL_USER_FILE',      f'{_WL}/mysql_default_user.txt'),
-        'pass_file': _wl('MYSQL_PASS_FILE',      f'{_WL}/mysql_default_pass.txt'),
+        'userpass_file': _wl('MYSQL_USERPASS_FILE', f'{_SL_DC}/mysql-betterdefaultpasslist.txt'),
+        'user_file': _wl('MYSQL_USER_FILE', _SL_USERS),
+        'pass_file': _wl('MYSQL_PASS_FILE', _SL_PASS),
         'timeout': int(os.getenv('MYSQL_BRUTE_TIMEOUT', '180')),
         'threads': int(os.getenv('MYSQL_THREADS', '4')),
         'extra': {'BLANK_PASSWORDS': True, 'STOP_ON_SUCCESS': True, 'VERBOSE': False},
@@ -149,8 +152,9 @@ BRUTE_MODULES = {
     'postgresql': {
         'module': 'scanner/postgres/postgres_login',
         'ports': {5432}, 'services': {'postgresql', 'postgres'},
-        'user_file': _wl('PGSQL_USER_FILE',      f'{_WL}/postgres_default_user.txt'),
-        'pass_file': _wl('PGSQL_PASS_FILE',      f'{_WL}/postgres_default_pass.txt'),
+        'userpass_file': _wl('PGSQL_USERPASS_FILE', f'{_SL_DC}/postgres-betterdefaultpasslist.txt'),
+        'user_file': _wl('PGSQL_USER_FILE', _SL_USERS),
+        'pass_file': _wl('PGSQL_PASS_FILE', _SL_PASS),
         'timeout': int(os.getenv('PGSQL_BRUTE_TIMEOUT', '180')),
         'threads': int(os.getenv('PGSQL_THREADS', '4')),
         'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
@@ -158,35 +162,39 @@ BRUTE_MODULES = {
     'mssql': {
         'module': 'scanner/mssql/mssql_login',
         'ports': {1433}, 'services': {'ms-sql', 'ms-sql-s', 'mssql'},
-        'user_file': _wl('MSSQL_USER_FILE',      f'{_WL}/unix_users.txt'),
-        'pass_file': _wl('MSSQL_PASS_FILE',      f'{_WL}/unix_passwords.txt'),
+        'userpass_file': _wl('MSSQL_USERPASS_FILE', f'{_SL_DC}/mssql-betterdefaultpasslist.txt'),
+        'user_file': _wl('MSSQL_USER_FILE', _SL_USERS),
+        'pass_file': _wl('MSSQL_PASS_FILE', _SL_PASS),
         'timeout': int(os.getenv('MSSQL_BRUTE_TIMEOUT', '180')),
         'threads': int(os.getenv('MSSQL_THREADS', '4')),
         'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
     },
-    'vnc': {
-        'module': 'scanner/vnc/vnc_login',
-        'ports': {5900, 5901, 5902}, 'services': {'vnc'},
-        'user_file': None,   # VNC : pas de username
-        'pass_file': _wl('VNC_PASS_FILE',        f'{_WL}/vnc_passwords.txt'),
-        'timeout': int(os.getenv('VNC_BRUTE_TIMEOUT', '120')),
-        'threads': int(os.getenv('VNC_THREADS', '4')),
+    'tomcat': {
+        'module': 'scanner/http/tomcat_mgr_login',
+        'ports': {8080, 8180, 8443}, 'services': {'http', 'https'},
+        'attack_surface_key': 'tomcat_manager',
+        'userpass_file': _wl('TOMCAT_USERPASS_FILE', f'{_SL_DC}/tomcat-betterdefaultpasslist.txt'),
+        'user_file': _wl('TOMCAT_USER_FILE', _SL_USERS),
+        'pass_file': _wl('TOMCAT_PASS_FILE', _SL_PASS),
+        'timeout': int(os.getenv('TOMCAT_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('TOMCAT_THREADS', '4')),
         'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
     },
-    'snmp': {
-        'module': 'scanner/snmp/snmp_login',
-        'ports': {161}, 'services': {'snmp'},
-        'user_file': None,   # SNMP : community strings via PASS_FILE uniquement
-        'pass_file': _wl('SNMP_COMMUNITY_FILE',  f'{_WL}/snmp_default_pass.txt'),
-        'timeout': int(os.getenv('SNMP_BRUTE_TIMEOUT', '60')),
-        'threads': int(os.getenv('SNMP_THREADS', '10')),
-        'extra': {'VERBOSE': False},
+    # ── USER_FILE + PASS_FILE — listes génériques SecLists ────────────────────
+    'smb': {
+        'module': 'scanner/smb/smb_login',
+        'ports': {139, 445}, 'services': {'netbios-ssn', 'microsoft-ds', 'smb'},
+        'user_file': _wl('SMB_USER_FILE',   _SL_USERS),
+        'pass_file': _wl('SMB_PASS_FILE',   _SL_PASS),
+        'timeout': int(os.getenv('SMB_BRUTE_TIMEOUT', '300')),
+        'threads': int(os.getenv('SMB_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
     },
     'imap': {
         'module': 'scanner/imap/imap_login',
         'ports': {143, 993}, 'services': {'imap', 'imap4', 'imap3'},
-        'user_file': _wl('IMAP_USER_FILE',       f'{_WL}/unix_users.txt'),
-        'pass_file': _wl('IMAP_PASS_FILE',       f'{_WL}/unix_passwords.txt'),
+        'user_file': _wl('IMAP_USER_FILE',  _SL_USERS),
+        'pass_file': _wl('IMAP_PASS_FILE',  _SL_PASS),
         'timeout': int(os.getenv('IMAP_BRUTE_TIMEOUT', '120')),
         'threads': int(os.getenv('IMAP_THREADS', '4')),
         'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
@@ -194,26 +202,17 @@ BRUTE_MODULES = {
     'pop3': {
         'module': 'scanner/pop3/pop3_login',
         'ports': {110, 995}, 'services': {'pop3'},
-        'user_file': _wl('POP3_USER_FILE',       f'{_WL}/unix_users.txt'),
-        'pass_file': _wl('POP3_PASS_FILE',       f'{_WL}/unix_passwords.txt'),
+        'user_file': _wl('POP3_USER_FILE',  _SL_USERS),
+        'pass_file': _wl('POP3_PASS_FILE',  _SL_PASS),
         'timeout': int(os.getenv('POP3_BRUTE_TIMEOUT', '120')),
         'threads': int(os.getenv('POP3_THREADS', '4')),
         'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
     },
-    'smtp': {
-        'module': 'scanner/smtp/smtp_enum',
-        'ports': {25, 465, 587}, 'services': {'smtp', 'submission', 'smtps'},
-        'user_file': _wl('SMTP_USER_FILE',       f'{_WL}/unix_users.txt'),
-        'pass_file': None,   # smtp_enum = énumération VRFY/EXPN uniquement, pas de password
-        'timeout': int(os.getenv('SMTP_ENUM_TIMEOUT', '120')),
-        'threads': int(os.getenv('SMTP_THREADS', '10')),
-        'extra': {'VERBOSE': False},
-    },
     'http': {
         'module': 'scanner/http/http_login',
         'ports': {80, 8080, 8000, 8888}, 'services': {'http', 'http-proxy', 'http-alt'},
-        'user_file': _wl('HTTP_USER_FILE',       f'{_WL}/http_default_users.txt'),
-        'pass_file': _wl('HTTP_PASS_FILE',       f'{_WL}/http_default_pass.txt'),
+        'user_file': _wl('HTTP_USER_FILE',  _SL_USERS),
+        'pass_file': _wl('HTTP_PASS_FILE',  _SL_PASS),
         'timeout': int(os.getenv('HTTP_BRUTE_TIMEOUT', '120')),
         'threads': int(os.getenv('HTTP_THREADS', '4')),
         'extra': {'AUTH_URI': '/', 'STOP_ON_SUCCESS': True, 'VERBOSE': False},
@@ -221,30 +220,48 @@ BRUTE_MODULES = {
     'https': {
         'module': 'scanner/http/http_login',
         'ports': {443, 8443}, 'services': {'https', 'ssl/http', 'ssl/https'},
-        'user_file': _wl('HTTP_USER_FILE',       f'{_WL}/http_default_users.txt'),
-        'pass_file': _wl('HTTP_PASS_FILE',       f'{_WL}/http_default_pass.txt'),
+        'user_file': _wl('HTTP_USER_FILE',  _SL_USERS),
+        'pass_file': _wl('HTTP_PASS_FILE',  _SL_PASS),
         'timeout': int(os.getenv('HTTP_BRUTE_TIMEOUT', '120')),
         'threads': int(os.getenv('HTTP_THREADS', '4')),
         'extra': {'AUTH_URI': '/', 'SSL': True, 'STOP_ON_SUCCESS': True, 'VERBOSE': False},
     },
-    'tomcat': {
-        'module': 'scanner/http/tomcat_mgr_login',
-        'ports': {8080, 8180, 8443}, 'services': {'http', 'https'},
-        'attack_surface_key': 'tomcat_manager',  # uniquement si bm12 l'a détecté
-        'user_file': _wl('TOMCAT_USER_FILE',     f'{_WL}/tomcat_mgr_default_users.txt'),
-        'pass_file': _wl('TOMCAT_PASS_FILE',     f'{_WL}/tomcat_mgr_default_pass.txt'),
-        'timeout': int(os.getenv('TOMCAT_BRUTE_TIMEOUT', '120')),
-        'threads': int(os.getenv('TOMCAT_THREADS', '4')),
-        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
-    },
     'mongodb': {
         'module': 'scanner/mongodb/mongodb_login',
         'ports': {27017}, 'services': {'mongodb'},
-        'user_file': _wl('MONGO_USER_FILE',      f'{_WL}/unix_users.txt'),
-        'pass_file': _wl('MONGO_PASS_FILE',      f'{_WL}/unix_passwords.txt'),
+        'user_file': _wl('MONGO_USER_FILE', _SL_USERS),
+        'pass_file': _wl('MONGO_PASS_FILE', _SL_PASS),
         'timeout': int(os.getenv('MONGO_BRUTE_TIMEOUT', '120')),
         'threads': int(os.getenv('MONGO_THREADS', '4')),
         'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'smtp': {
+        'module': 'scanner/smtp/smtp_enum',
+        'ports': {25, 465, 587}, 'services': {'smtp', 'submission', 'smtps'},
+        'user_file': _wl('SMTP_USER_FILE',  _SL_USERS),
+        'pass_file': None,   # smtp_enum = énumération VRFY/EXPN, pas de password
+        'timeout': int(os.getenv('SMTP_ENUM_TIMEOUT', '120')),
+        'threads': int(os.getenv('SMTP_THREADS', '10')),
+        'extra': {'VERBOSE': False},
+    },
+    # ── PASS_FILE seulement ───────────────────────────────────────────────────
+    'vnc': {
+        'module': 'scanner/vnc/vnc_login',
+        'ports': {5900, 5901, 5902}, 'services': {'vnc'},
+        'user_file': None,
+        'pass_file': _wl('VNC_PASS_FILE',   f'{_SL_DC}/vnc-betterdefaultpasslist.txt'),
+        'timeout': int(os.getenv('VNC_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('VNC_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'snmp': {
+        'module': 'scanner/snmp/snmp_login',
+        'ports': {161}, 'services': {'snmp'},
+        'user_file': None,
+        'pass_file': _wl('SNMP_COMMUNITY_FILE', f'{_WL}/snmp_default_pass.txt'),
+        'timeout': int(os.getenv('SNMP_BRUTE_TIMEOUT', '60')),
+        'threads': int(os.getenv('SNMP_THREADS', '10')),
+        'extra': {'VERBOSE': False},
     },
 }
 
@@ -972,26 +989,32 @@ def run_brute_force_service(client, host, port, cfg_name, cfg, upgraded_sessions
     Gère USER_FILE, PASS_FILE, THREADS, options extras et reporting Faraday.
     Retourne True si au moins une session a été ouverte.
     """
-    user_file = cfg.get('user_file')
-    pass_file = cfg.get('pass_file')
-    module    = cfg['module']
-    timeout   = cfg.get('timeout', 300)
-    threads   = cfg.get('threads', 4)
-    extra     = cfg.get('extra', {})
+    userpass_file = cfg.get('userpass_file')
+    user_file     = cfg.get('user_file')
+    pass_file     = cfg.get('pass_file')
+    module        = cfg['module']
+    timeout       = cfg.get('timeout', 300)
+    threads       = cfg.get('threads', 4)
+    extra         = cfg.get('extra', {})
 
-    if user_file and not os.path.exists(user_file):
-        print(f"[BRUTE:{cfg_name}] USER_FILE introuvable: {user_file} — skip")
-        return False
-    if pass_file and not os.path.exists(pass_file):
-        print(f"[BRUTE:{cfg_name}] PASS_FILE introuvable: {pass_file} — skip")
-        return False
-    if not user_file and not pass_file:
-        print(f"[BRUTE:{cfg_name}] Aucune wordlist configurée — skip")
-        return False
+    # USERPASS_FILE prioritaire si le fichier existe (format user:pass)
+    use_userpass = userpass_file and os.path.exists(userpass_file)
 
-    print(f"[BRUTE:{cfg_name.upper()}] {host}:{port} | module={module}"
-          + (f" | USER={user_file}" if user_file else "")
-          + (f" | PASS={pass_file}" if pass_file else ""))
+    if not use_userpass:
+        if user_file and not os.path.exists(user_file):
+            print(f"[BRUTE:{cfg_name}] USER_FILE introuvable: {user_file} — skip")
+            return False
+        if pass_file and not os.path.exists(pass_file):
+            print(f"[BRUTE:{cfg_name}] PASS_FILE introuvable: {pass_file} — skip")
+            return False
+        if not user_file and not pass_file:
+            print(f"[BRUTE:{cfg_name}] Aucune wordlist configurée — skip")
+            return False
+
+    wl_info = (f" | USERPASS={userpass_file}" if use_userpass
+               else (f" | USER={user_file}" if user_file else "")
+                    + (f" | PASS={pass_file}" if pass_file else ""))
+    print(f"[BRUTE:{cfg_name.upper()}] {host}:{port} | module={module}{wl_info}")
 
     console_brute = client.consoles.console()
     try:
@@ -1005,10 +1028,13 @@ def run_brute_force_service(client, host, port, cfg_name, cfg, upgraded_sessions
         aux['RHOSTS']  = rhosts_val
         aux['RPORT']   = port
         aux['THREADS'] = threads
-        if user_file:
-            aux['USER_FILE'] = user_file
-        if pass_file:
-            aux['PASS_FILE'] = pass_file
+        if use_userpass:
+            aux['USERPASS_FILE'] = userpass_file
+        else:
+            if user_file:
+                aux['USER_FILE'] = user_file
+            if pass_file:
+                aux['PASS_FILE'] = pass_file
         for opt, val in extra.items():
             try:
                 aux[opt] = val
