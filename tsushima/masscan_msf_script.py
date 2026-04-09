@@ -41,26 +41,44 @@ def get_host_ip( host):
 
 logger = logging.getLogger(__name__)
 
+
+def _read_secret(name, legacy_env=None):
+    """Read sensitive value: legacy env var → NAME env var → /run/secrets/name file."""
+    if legacy_env:
+        v = os.getenv(legacy_env, "")
+        if v:
+            return v
+    v = os.getenv(name.upper(), "")
+    if v:
+        return v
+    try:
+        with open(f"/run/secrets/{name}") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 class DatabaseConfig:
     """Configuration des bases de données"""
-    
+
     def __init__(self):
+        pg_pass = _read_secret("postgres_password", "IP2LOCATION_DB_PASSWORD")
         # Configuration PostgreSQL IP2Location (container distant)
         self.ip2location_config = {
             'host': get_host_ip ( os.getenv('IP2LOCATION_DB_HOST', 'postgres')),
             'port': int(os.getenv('IP2LOCATION_DB_PORT', 5432)),
             'database': os.getenv('IP2LOCATION_DB_NAME', 'ip2location_db1'),
             'user': os.getenv('IP2LOCATION_DB_USER', 'postgres'),
-            'password': os.getenv('IP2LOCATION_DB_PASSWORD', 'bojemoi')
+            'password': pg_pass
         }
-        
+
         # Configuration PostgreSQL Metasploit (container distant)
         self.msf_config = {
             'host': get_host_ip(os.getenv('MSF_DB_HOST', 'postgres')),
             'port': int(os.getenv('MSF_DB_PORT', 5432)),
             'database': os.getenv('MSF_DB_NAME', 'msf'),
             'user': os.getenv('MSF_DB_USER', 'postgres'),
-            'password': os.getenv('MSF_DB_PASSWORD', 'bojemoi')
+            'password': pg_pass
         }
                                                                                       
 class IP2LocationReader:

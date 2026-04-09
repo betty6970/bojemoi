@@ -24,12 +24,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def _read_secret(name, legacy_env=None):
+    """Read sensitive value: legacy env var → NAME env var → /run/secrets/name file."""
+    if legacy_env:
+        v = os.getenv(legacy_env, "")
+        if v:
+            return v
+    v = os.getenv(name.upper(), "")
+    if v:
+        return v
+    try:
+        with open(f"/run/secrets/{name}") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 PG_HOST     = os.getenv('DB_HOST', 'postgres')
 PG_PORT     = os.getenv('DB_PORT', '5432')
 PG_USER     = os.getenv('DB_USER', 'postgres')
-PG_PASSWORD = os.getenv('DB_PASSWORD', '')
+PG_PASSWORD = _read_secret("postgres_password", "DB_PASSWORD")
 PG_DBNAME   = os.getenv('DB_NAME', 'msf')
 
 REDIS_HOST  = os.getenv('REDIS_HOST', 'redis')
@@ -44,7 +61,7 @@ ZAP_BASE        = f"http://{ZAP_HOST}:{ZAP_PORT}"
 
 FARADAY_URL      = os.getenv('FARADAY_URL', '').rstrip('/')
 FARADAY_USER     = os.getenv('FARADAY_USER', 'faraday')
-FARADAY_PASSWORD = os.getenv('FARADAY_PASSWORD', '')
+FARADAY_PASSWORD = _read_secret("faraday_password", "FARADAY_PASSWORD")
 FARADAY_WS       = os.getenv('FARADAY_WORKSPACE', 'default')
 
 FEED_INTERVAL = int(os.getenv('FEED_INTERVAL_SECONDS', '300'))
@@ -105,7 +122,7 @@ def fetch_unscanned_hosts(batch: int) -> List[Dict]:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
                 SELECT DISTINCT ON (h.id)
-                    h.id, h.address::text,
+                    h.id, host(h.address::inet) AS address,
                     s.port, s.name AS svc_name
                 FROM hosts h
                 JOIN services s ON s.host_id = h.id
@@ -457,8 +474,9 @@ def run_scanner(rdb: redis.Redis):
                         alerts = zap_alerts(url)
                         bd = severity_breakdown(alerts)
                         faraday_ok = faraday_post_vulns(scan.address, alerts) > 0
+                        significant = bd['critical'] + bd['high'] + bd['medium'] + bd['low']
                         status = 'done' if alerts else 'no_findings'
-                        mark_scanned(scan.host_id, scan.address, len(alerts), status,
+                        mark_scanned(scan.host_id, scan.address, significant, status,
                                      breakdown=bd, faraday_ok=faraday_ok)
                         logger.info(f"[DONE] {url} — {len(alerts)} alertes "
                                     f"(h={bd['high']} m={bd['medium']} l={bd['low']}) "

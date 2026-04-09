@@ -55,7 +55,7 @@ prometheus.scrape "cadvisor" {
 }
 
 prometheus.scrape "traefik" {
-  targets = [{"__address__" = "base_traefik:8080"}]
+  targets = [{"__address__" = "base_traefik:8085", "__metrics_path__" = "/metrics"}]
   forward_to = [prometheus.remote_write.default.receiver]
   scrape_interval = "15s"
 }

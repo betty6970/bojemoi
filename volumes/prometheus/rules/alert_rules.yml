@@ -193,10 +193,7 @@ groups:
           description: "Service {{ $labels.service }} has no running replicas!"
 
       - alert: ServiceTaskRestarting
-        expr: |
-          rate(
-            (time() - container_start_time_seconds{name!~".*POD.*"})[5m:]
-          ) > 0.01
+        expr: increase(container_restart_count{name!="",name!~".*POD.*"}[15m]) > 3
         for: 5m
         labels:
           severity: warning
@@ -277,15 +274,7 @@ groups:
           summary: "Faraday is down"
           description: "Faraday vulnerability management platform has been down for more than 5 minutes"
 
-      - alert: SuricataDown
-        expr: up{service="suricata"} == 0
-        for: 3m
-        labels:
-          severity: critical
-          component: security
-        annotations:
-          summary: "Suricata IDS/IPS is down"
-          description: "Suricata has been down for more than 3 minutes. Network monitoring is impaired!"
+      # SuricataDown is defined in alerts.yml (up{job="suricata"} == 0)
 
   # ---------------------------------------------------------------------------
   # Monitoring Stack Alerts

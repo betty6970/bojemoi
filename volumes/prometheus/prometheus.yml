@@ -233,3 +233,20 @@ scrape_configs:
       - targets: ['sentinel_collector:9101']
         labels:
           service: 'sentinel'
+
+  # NVIDIA GPU metrics via DCGM Exporter — nodes labelled nvidia.vgpu=true
+  - job_name: 'dcgm-exporter'
+    dockerswarm_sd_configs:
+      - host: http://docker-socket-proxy:2375
+        role: nodes
+    relabel_configs:
+      - source_labels: [__meta_dockerswarm_node_label_nvidia_vgpu]
+        regex: 'true'
+        action: keep
+      - source_labels: [__meta_dockerswarm_node_address]
+        replacement: '${1}:9400'
+        target_label: __address__
+      - source_labels: [__meta_dockerswarm_node_hostname]
+        target_label: instance
+      - target_label: service
+        replacement: 'nvidia-gpu'

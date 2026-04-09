@@ -24,11 +24,28 @@ logging.basicConfig(
 )
 log = logging.getLogger('nuclei-worker')
 
+
+def _read_secret(name, legacy_env=None):
+    """Read sensitive value: legacy env var → NAME env var → /run/secrets/name file."""
+    if legacy_env:
+        v = os.getenv(legacy_env, "")
+        if v:
+            return v
+    v = os.getenv(name.upper(), "")
+    if v:
+        return v
+    try:
+        with open(f"/run/secrets/{name}") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 # PostgreSQL
 PG_HOST     = os.getenv('PG_HOST', 'postgres')
 PG_PORT     = int(os.getenv('PG_PORT', '5432'))
 PG_USER     = os.getenv('PG_USER', 'postgres')
-PG_PASSWORD = os.getenv('PG_PASSWORD', '')
+PG_PASSWORD = _read_secret("postgres_password", "PG_PASSWORD")
 PG_DBNAME   = os.getenv('PG_DBNAME', 'msf')
 
 # Nuclei API

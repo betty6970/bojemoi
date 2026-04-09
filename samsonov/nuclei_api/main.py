@@ -26,16 +26,36 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = FastAPI(title="Nuclei API", version="1.0.0")
 
+
+def _read_secret(name, legacy_env=None):
+    """Read sensitive value: legacy env var → NAME env var → /run/secrets/name file."""
+    if legacy_env:
+        v = os.environ.get(legacy_env, "")
+        if v:
+            return v
+    v = os.environ.get(name.upper(), "")
+    if v:
+        return v
+    try:
+        with open(f"/run/secrets/{name}") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 # Configuration
 REDIS_HOST = os.environ.get('REDIS_HOST', 'redis')
 REDIS_PORT = int(os.environ.get('REDIS_PORT', 6379))
 RESULTS_DIR = Path(os.environ.get('RESULTS_DIR', '/results'))
 RESULTS_DIR.mkdir(exist_ok=True)
 
+# Nym Mixnet proxy (SOCKS5) — optionnel, activé via NYM_PROXY env var
+NUCLEI_PROXY = os.environ.get('NUCLEI_PROXY', '') or os.environ.get('NYM_PROXY', '')
+
 # Faraday configuration
 FARADAY_URL = os.environ.get('FARADAY_URL', 'https://faraday.bojemoi.lab').rstrip('/')
 FARADAY_USER = os.environ.get('FARADAY_USER', 'faraday')
-FARADAY_PASSWORD = os.environ.get('FARADAY_PASSWORD', 'bojemoi2')
+FARADAY_PASSWORD = _read_secret("faraday_password", "FARADAY_PASSWORD")
 FARADAY_WORKSPACE = os.environ.get('FARADAY_WORKSPACE', 'default')
 
 # Redis client
@@ -58,6 +78,7 @@ class ScanResult(BaseModel):
     target: str
     status: str
     findings_count: int = 0
+    faraday_imported: int = 0
     output_file: Optional[str] = None
 
 
@@ -205,6 +226,9 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, 
         '-nc'
     ]
 
+    if NUCLEI_PROXY:
+        cmd.extend(['-proxy', NUCLEI_PROXY])
+
     if tags:
         cmd.extend(['-tags', tags])
 
@@ -227,9 +251,12 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, 
         if tmpl_dir:
             try:
                 ai_out = RESULTS_DIR / f"{scan_id}-ai.json"
+                ai_cmd = ['nuclei', '-u', target, '-t', str(tmpl_dir),
+                          '-json-export', str(ai_out), '-silent', '-nc']
+                if NUCLEI_PROXY:
+                    ai_cmd.extend(['-proxy', NUCLEI_PROXY])
                 subprocess.run(
-                    ['nuclei', '-u', target, '-t', str(tmpl_dir),
-                     '-json-export', str(ai_out), '-silent', '-nc'],
+                    ai_cmd,
                     capture_output=True, text=True, timeout=300
                 )
                 if ai_out.exists():
@@ -372,6 +399,7 @@ async def get_scan_status(scan_id: str):
         target=scan_data.get('target', ''),
         status=scan_data.get('status', 'unknown'),
         findings_count=int(scan_data.get('findings_count', 0)),
+        faraday_imported=int(scan_data.get('faraday_imported', 0)),
         output_file=scan_data.get('output_file')
     )
 

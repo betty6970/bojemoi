@@ -401,7 +401,7 @@ groups:
           description: "Lag de réplication de {{ $value }}s détecté sur {{ $labels.instance }}"
 
       - alert: PostgresDatabaseSize
-        expr: pg_database_size_bytes{datname!~"template.*|postgres"} > 10737418240
+        expr: pg_database_size_bytes{datname!~"template.*|postgres"} > 21474836480
         for: 10m
         labels:
           severity: warning
@@ -411,7 +411,7 @@ groups:
           description: "La base {{ $labels.datname }} fait {{ $value | humanize }}B sur {{ $labels.instance }}"
 
       - alert: PostgresHighRollbackRate
-        expr: rate(pg_stat_database_xact_rollback[5m]) / rate(pg_stat_database_xact_commit[5m]) > 0.1
+        expr: rate(pg_stat_database_xact_rollback[5m]) / rate(pg_stat_database_xact_commit[5m]) > 5.0
         for: 10m
         labels:
           severity: warning
@@ -452,7 +452,7 @@ groups:
           description: "Redis a {{ $value | humanizePercentage }} de connexions utilisées"
 
       - alert: RedisMemoryHigh
-        expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 90
+        expr: (redis_memory_used_bytes / redis_memory_max_bytes * 100 > 90) and redis_memory_max_bytes > 0
         for: 5m
         labels:
           severity: warning
@@ -738,14 +738,14 @@ groups:
 
       # Métriques générales conteneurs pentest
       - alert: PentestContainerRestarting
-        expr: rate(container_last_seen{name=~".*faraday.*|.*zap.*"}[5m]) > 0.1
+        expr: increase(container_restart_count{name=~".*faraday.*|.*zap.*"}[15m]) > 2
         for: 5m
         labels:
           severity: warning
           component: pentest
         annotations:
           summary: "Redémarrages fréquents conteneur pentest"
-          description: "Le conteneur {{ $labels.name }} redémarre fréquemment"
+          description: "Le conteneur {{ $labels.name }} a redémarré {{ $value }} fois en 15min"
 
       - alert: PentestContainerOOMKilled
         expr: container_memory_failcnt{name=~".*faraday.*|.*zap.*"} > 0
@@ -807,16 +807,6 @@ groups:
           description: "cAdvisor ne répond plus sur {{ $labels.instance }}"
 
       # Conteneurs généraux
-      - alert: ContainerKilled
-        expr: time() - container_last_seen < 60
-        for: 1m
-        labels:
-          severity: warning
-          component: docker
-        annotations:
-          summary: "Conteneur {{ $labels.name }} tué"
-          description: "Le conteneur {{ $labels.name }} vient d'être arrêté sur {{ $labels.instance }}"
-
       - alert: ContainerHighCPU
         expr: sum by (name, instance) (rate(container_cpu_usage_seconds_total{name!=""}[5m])) * 100 > 80
         for: 10m
@@ -868,14 +858,14 @@ groups:
           description: "Le conteneur {{ $labels.name }} a été tué par l'OOM killer"
 
       - alert: ContainerFrequentRestarts
-        expr: rate(container_last_seen[10m]) > 0.01
-        for: 10m
+        expr: increase(container_restart_count{name!="",name!~".*POD.*"}[15m]) > 3
+        for: 5m
         labels:
           severity: warning
           component: docker
         annotations:
           summary: "Redémarrages fréquents de {{ $labels.name }}"
-          description: "Le conteneur {{ $labels.name }} redémarre fréquemment"
+          description: "Le conteneur {{ $labels.name }} a redémarré {{ $value }} fois en 15min sur {{ $labels.instance }}"
 
       - alert: ContainerHighNetworkIO
         expr: sum by (name, instance) (rate(container_network_receive_bytes_total[5m]) + rate(container_network_transmit_bytes_total[5m])) > 100000000
@@ -888,7 +878,7 @@ groups:
           description: "Le conteneur {{ $labels.name }} génère {{ $value | humanize }}B/s de trafic réseau"
 
       - alert: ContainerHighDiskIO
-        expr: sum by (name, instance) (rate(container_fs_reads_bytes_total[5m]) + rate(container_fs_writes_bytes_total[5m])) > 100000000
+        expr: sum by (name, instance) (rate(container_fs_reads_bytes_total{name!=""}[5m]) + rate(container_fs_writes_bytes_total{name!=""}[5m])) > 100000000
         for: 15m
         labels:
           severity: warning

@@ -9,7 +9,6 @@ LABEL version="1.0"
 # Variables d'environnement par défaut
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
 
 # Variables de configuration de la base de données
 ENV DB_HOST=postgres
@@ -68,14 +67,13 @@ RUN mkdir -p /app /logs && \
 WORKDIR /app
 
 
-# Copier le script principal
+# Copier le script principal et compiler en .pyc
 COPY zap_scanner.py .
+RUN python3 -m compileall -b /app && find /app -name "*.py" -delete
 
 # Copier le script d'entrée
 COPY entrypoint.sh .
-
-# Rendre les scripts exécutables
-RUN chmod +x zap_scanner.py entrypoint.sh
+RUN chmod +x entrypoint.sh
 
 # Changer les permissions pour l'utilisateur scanner
 RUN chown -R scanner:scanner /app
@@ -94,4 +92,4 @@ VOLUME ["/results", "/logs"]
 #ENTRYPOINT ["./entrypoint.sh"]
 
 # Commande par défaut
-CMD ["python3", "zap_scanner.py"]
+CMD ["python3", "zap_scanner.pyc"]

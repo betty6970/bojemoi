@@ -23,9 +23,26 @@ from datetime import datetime
 
 TIMEOUT = 10  # seconds per request
 
-ABUSEIPDB_KEY   = os.getenv("ABUSEIPDB_API_KEY")
-VIRUSTOTAL_KEY  = os.getenv("VIRUSTOTAL_API_KEY")
-SHODAN_KEY      = os.getenv("SHODAN_API_KEY")
+
+def _read_secret(name, legacy_env=None):
+    """Read sensitive value: legacy env var → NAME env var → /run/secrets/name file."""
+    if legacy_env:
+        v = os.getenv(legacy_env, "")
+        if v:
+            return v
+    v = os.getenv(name.upper(), "")
+    if v:
+        return v
+    try:
+        with open(f"/run/secrets/{name}") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+ABUSEIPDB_KEY   = _read_secret("abuseipdb_api_key", "ABUSEIPDB_API_KEY") or None
+VIRUSTOTAL_KEY  = _read_secret("virustotal_api_key", "VIRUSTOTAL_API_KEY") or None
+SHODAN_KEY      = _read_secret("shodan_api_key", "SHODAN_API_KEY") or None
 
 
 def _is_private(ip_str: str) -> bool:

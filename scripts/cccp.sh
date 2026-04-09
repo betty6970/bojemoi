@@ -1,247 +1,293 @@
-#!/bin/ash
+#!/bin/sh
+# cccp.sh — Build & push custom images vers la registry locale
+# Balaie les stacks, identifie les images custom, build les manquantes
+#
+# Usage:
+#   cccp.sh                  — build toutes les images custom manquantes
+#   cccp.sh <image>          — build une image spécifique
+#   cccp.sh --force          — rebuild tout même si déjà présent
+#   cccp.sh --list           — lister les mappings connus
+#   cccp.sh --missing        — lister les images manquantes sans builder
 
-# Script pour créer et pousser une image Docker vers un registry local
-# Usage: ./build_and_push.sh <nom_du_service>
-# Compatible avec Alpine Linux (ash shell)
+set -e
 
-set -e  # Arrêter le script en cas d'erreur
+REGISTRY="${REGISTRY:-localhost:5000}"
+BOJEMOI_ROOT="${BOJEMOI_ROOT:-/opt/bojemoi}"
+STACK_DIRS="${STACK_DIRS:-$BOJEMOI_ROOT/stack /opt/bojemoi_boot/stack}"
 
-# Configuration
-REGISTRY_HOST="${REGISTRY_HOST:-localhost:5000}"
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-VERSION="${VERSION:-latest}"
+# ─── Mapping image → dockerfile|contexte ─────────────────────────────────────
+# Retourne "DOCKERFILE|CONTEXT_DIR" (chemins relatifs à BOJEMOI_ROOT)
+# ou "EXTERNAL|<root>|<dockerfile>|<context>" pour les repos hors bojemoi
+# Retourne "" si image inconnue (officielle ou non gérée)
+get_build_info() {
+    local image="$1"
+    local base="${image%%:*}"   # strip tag
 
-# Fonction d'aide
-show_help() {
-    cat << EOF
-Usage: $0 <repertoire> <nom_du_service>
+    case "$base" in
+        # ── Borodino / C2 ────────────────────────────────────────────────────
+        borodino)
+            echo "borodino/Dockerfile.borodino|borodino" ;;
+        borodino-msf)
+            echo "borodino/Dockerfile.borodino-msf|borodino" ;;
+        wg-gateway)
+            echo "borodino/Dockerfile.wg-gateway|borodino" ;;
 
-Ce script construit une image Docker et la pousse vers le registry local.
+        # ── ZAP / Scanners web ───────────────────────────────────────────────
+        oblast)
+            echo "oblast/Dockerfile.oblast|oblast" ;;
+        oblast-1)
+            echo "oblast-1/Dockerfile.oblast-1|oblast-1" ;;
 
-Arguments:
-  nom_du_service    Nom du service/image à créer
+        # ── Nuclei / Samsonov ────────────────────────────────────────────────
+        nuclei)
+            echo "samsonov/Dockerfile.nuclei|samsonov" ;;
+        nuclei-api)
+            echo "samsonov/nuclei_api/Dockerfile|samsonov/nuclei_api" ;;
+        pentest-orchestrator)
+            echo "samsonov/pentest_orchestrator/Dockerfile|samsonov/pentest_orchestrator" ;;
 
-Variables d'environnement optionnelles:
-  REGISTRY_HOST     Registry de destination (défaut: localhost:5000)
-  VERSION           Version du tag (défaut: latest)
+        # ── Services de surveillance ─────────────────────────────────────────
+        medved)
+            echo "medved/Dockerfile.medved|medved" ;;
+        dozor)
+            echo "dozor/Dockerfile.dozor|dozor" ;;
+        dvar)
+            echo "dvar/Dockerfile.dvar|dvar" ;;
+        vigie)
+            echo "vigie/Dockerfile.vigie|vigie" ;;
+        sentinel-collector)
+            echo "sentinel/collector/Dockerfile|sentinel/collector" ;;
 
-Exemple:
-  $0 mon-api
-  VERSION=v1.0.0 $0 mon-api
-EOF
+        # ── Blockchain / Misc ────────────────────────────────────────────────
+        karacho)
+            echo "karacho/Dockerfile.karacho|karacho" ;;
+        koursk)
+            echo "koursk/Dockerfile.koursk|koursk" ;;
+        koursk-1)
+            echo "koursk-1/Dockerfile.koursk-1|koursk-1" ;;
+        koursk-2)
+            echo "koursk-2/Dockerfile.koursk-2|koursk-2" ;;
+        tsushima)
+            echo "tsushima/Dockerfile.tsushima|tsushima" ;;
+        razvedka)
+            echo "razvedka/Dockerfile.razvedka|razvedka" ;;
+
+        # ── MCP / Outils ─────────────────────────────────────────────────────
+        bojemoi-mcp)
+            echo "mcp-server/Dockerfile|mcp-server" ;;
+        suricata-attack-enricher)
+            echo "suricata-attack-enricher/Dockerfile|suricata-attack-enricher" ;;
+        trivy-scanner)
+            echo "trivy-scanner/Dockerfile|trivy-scanner" ;;
+        protonmail-bridge)
+            echo "Dockerfile.protonmail-bridge|." ;;
+        provisioning)
+            echo "provisioning/Dockerfile.provisioning|provisioning" ;;
+
+        # ── Repos externes (hors /opt/bojemoi) ───────────────────────────────
+        ml-threat-intel)
+            echo "EXTERNAL|/opt/bojemoi-ml-threat|Dockerfile.ml-threat|." ;;
+        telegram-bot)
+            echo "EXTERNAL|/opt/bojemoi-telegram/telegram-bot|Dockerfile.telegram-bot|." ;;
+
+        # ── Inconnue / officielle ─────────────────────────────────────────────
+        *)
+            echo "" ;;
+    esac
 }
 
-# Fonction de validation du nom de service
-validate_service_name() {
-    local service_name="$1"
-    
-    # Vérifier que le nom n'est pas vide
-    if [ -z "$service_name" ]; then
-        echo "❌ Erreur: Le nom du service ne peut pas etre vide"
-        return 1
+# ─── Extraction des images custom depuis les stacks ───────────────────────────
+get_custom_images_from_stacks() {
+    for dir in $STACK_DIRS; do
+        find "$dir" -name '*.yml' -type f 2>/dev/null
+    done | xargs grep -h "image:" 2>/dev/null | \
+        sed 's/.*image:[[:space:]]*//' | \
+        sed 's/\${IMAGE_REGISTRY:-localhost:5000}/localhost:5000/g' | \
+        sed 's/["'"'"']//g' | sed 's/#.*//' | tr -d ' ' | \
+        grep "^localhost:5000/" | grep -v '\*' | grep -v '^\$' | \
+        sed 's|^localhost:5000/||' | \
+        sort -u | while read -r img; do
+            info=$(get_build_info "$img")
+            [ -n "$info" ] && echo "$img"
+        done
+}
+
+# ─── Check si une image existe dans la registry ───────────────────────────────
+image_in_registry() {
+    local img="$1"
+    local base="${img%%:*}"
+    local tag="${img#*:}"
+    [ "$tag" = "$base" ] && tag="latest"
+    curl -4 -sf "http://$REGISTRY/v2/$base/manifests/$tag" \
+        -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+        -o /dev/null 2>/dev/null
+}
+
+# ─── Build d'une image ────────────────────────────────────────────────────────
+build_image() {
+    local image="$1"   # ex: borodino:latest
+    local info
+    info=$(get_build_info "$image")
+
+    if [ -z "$info" ]; then
+        echo "  [SKIP] $image — pas de mapping Dockerfile"
+        return 0
     fi
-    
-    # Vérifier le format (compatible avec ash)
-    case "$service_name" in
-        *[!a-zA-Z0-9_./-]*)
-            echo "❌ Erreur: Le nom du service doit contenir uniquement des lettres, chiffres, tirets, points et underscores"
-            return 1
-            ;;
-        [!a-zA-Z0-9]*) 
-            echo "❌ Erreur: Le nom du service doit commencer par une lettre ou un chiffre"
-            return 1
+
+    local registry_tag="$REGISTRY/$image"
+    local dockerfile context_dir build_root
+
+    case "$info" in
+        EXTERNAL|*)
+            if echo "$info" | grep -q "^EXTERNAL|"; then
+                build_root=$(echo "$info" | cut -d'|' -f2)
+                dockerfile=$(echo "$info" | cut -d'|' -f3)
+                context_dir=$(echo "$info" | cut -d'|' -f4)
+                context_dir="$build_root/$context_dir"
+            else
+                dockerfile="$BOJEMOI_ROOT/$(echo "$info" | cut -d'|' -f1)"
+                local rel_ctx
+                rel_ctx=$(echo "$info" | cut -d'|' -f2)
+                context_dir="$BOJEMOI_ROOT/$rel_ctx"
+            fi
             ;;
     esac
-    
-    return 0
-}
 
-# Fonction pour vérifier les dépendances
-check_dependencies() {
-    local missing_deps=""
-    
-    # Vérifier Docker
-    if ! command -v docker >/dev/null 2>&1; then
-        missing_deps="$missing_deps docker"
-    fi
-    
-    # Vérifier curl pour les tests de registry
-    if ! command -v curl >/dev/null 2>&1; then
-        missing_deps="$missing_deps curl"
-    fi
-    
-    if [ -n "$missing_deps" ]; then
-        echo "❌ Erreur: Dépendances manquantes:$missing_deps"
-        echo "Sur Alpine Linux, installez avec: apk add$missing_deps"
-        return 1
-    fi
-    
-    return 0
-}
-
-# Fonction pour vérifier les fichiers requis
-check_required_files() {
-    local repertoire="$1"
-    local service_name="$2"
-    
-    # Vérifier si le répertoire existe
-    if [ ! -d "$repertoire" ]; then
-        echo "❌ Erreur: Le repertoire '$repertoire' n'existe pas"
-        echo "Assurez-vous d'être dans le répertoire parent contenant ./$repertoire"
-#        return 1
-    fi
-    
-    # Vérifier si le Dockerfile existe
-    if [ ! -f "$repertoire/Dockerfile.$service_name" ]; then
-        echo "❌ Erreur: Dockerfile.$service_name non trouve dans le repertoire $repertoire"
-        echo "Fichiers trouvés dans $repertoire:"
-        ls -la "$repertoire/$service_name/" 2>/dev/null || echo "  (impossible de lister le contenu)"
-        return 1
-    fi
-    
-    return 0
-}
-
-# Fonction pour tester l'accessibilité du registry
-test_registry_connectivity() {
-    local registry_host="$1"
-    if curl -4 -s --connect-timeout 5 "http://$registry_host/v2/" >/dev/null 2>&1; then
+    if [ ! -f "$dockerfile" ]; then
+        echo "  [WARN] $image — Dockerfile introuvable: $dockerfile"
         return 0
     fi
-    return 1
-}
-
-# Fonction pour s'assurer que la registry est disponible (déploie boot si nécessaire)
-ensure_registry() {
-    local registry_host="$1"
-    local boot_stack_file="/opt/bojemoi_boot/stack/01-boot-service.yml"
-    local max_wait=60
-
-    echo "🔍 Vérification du registry $registry_host..."
-
-    if test_registry_connectivity "$registry_host"; then
-        echo "✅ Registry accessible"
+    if [ ! -d "$context_dir" ]; then
+        echo "  [WARN] $image — contexte introuvable: $context_dir"
         return 0
     fi
 
-    echo "⚠️  Registry non accessible — vérification de la stack boot..."
+    echo "  [BUILD] $registry_tag"
+    echo "          Dockerfile: $dockerfile"
+    echo "          Contexte:   $context_dir"
 
-    # Vérifier si le service boot_registry existe déjà
-    if docker service ls --format "{{.Name}}" 2>/dev/null | grep -q "^boot_registry$"; then
-        echo "   Service boot_registry présent mais non répondant, attente..."
+    if docker build \
+        -f "$dockerfile" \
+        -t "$registry_tag" \
+        "$context_dir"; then
+        docker push "$registry_tag"
+        echo "  [OK]   $registry_tag poussé"
     else
-        echo "🚀 Déploiement de la stack boot ($boot_stack_file)..."
-        if [ ! -f "$boot_stack_file" ]; then
-            echo "❌ Fichier stack introuvable: $boot_stack_file"
-            return 1
+        echo "  [ERR]  Build échoué pour $image"
+        return 1
+    fi
+}
+
+# ─── Commande --list ──────────────────────────────────────────────────────────
+cmd_list() {
+    echo "=== Images custom connues ==="
+    printf "%-35s %s\n" "IMAGE" "DOCKERFILE"
+    printf "%-35s %s\n" "─────────────────────────────────" "──────────────────────────────"
+    for img in \
+        borodino borodino-msf wg-gateway \
+        oblast oblast-1 \
+        nuclei nuclei-api pentest-orchestrator \
+        medved dozor dvar vigie sentinel-collector \
+        karacho koursk koursk-1 koursk-2 tsushima razvedka \
+        bojemoi-mcp suricata-attack-enricher trivy-scanner \
+        protonmail-bridge provisioning \
+        ml-threat-intel telegram-bot; do
+        info=$(get_build_info "$img")
+        if [ -n "$info" ]; then
+            case "$info" in
+                EXTERNAL*)
+                    df=$(echo "$info" | cut -d'|' -f2,3 | tr '|' '/')
+                    ;;
+                *)
+                    df=$(echo "$info" | cut -d'|' -f1)
+                    ;;
+            esac
+            printf "%-35s %s\n" "$img" "$df"
         fi
-        docker stack deploy -c "$boot_stack_file" boot --resolve-image always || {
-            echo "❌ Echec du déploiement de la stack boot"
-            return 1
-        }
+    done
+}
+
+# ─── Commande --missing ───────────────────────────────────────────────────────
+cmd_missing() {
+    echo "=== Images custom manquantes dans la registry ==="
+    local found=0
+    get_custom_images_from_stacks | while read -r img; do
+        if ! image_in_registry "$img"; then
+            echo "  MISSING: localhost:5000/$img"
+            found=1
+        fi
+    done
+    [ $found -eq 0 ] && echo "  Toutes les images sont présentes"
+}
+
+# ─── Build principal ──────────────────────────────────────────────────────────
+cmd_build() {
+    local force="$1"
+    local target="$2"
+    local built=0 skipped=0 errors=0
+
+    echo "=== Build images custom ==="
+    echo "Registry: $REGISTRY"
+    echo ""
+
+    local images
+    if [ -n "$target" ]; then
+        images="$target"
+    else
+        images=$(get_custom_images_from_stacks)
     fi
 
-    # Attendre que la registry réponde (max $max_wait secondes)
-    echo "   Attente du registry (max ${max_wait}s)..."
-    local elapsed=0
-    while [ $elapsed -lt $max_wait ]; do
-        if test_registry_connectivity "$registry_host"; then
-            echo "✅ Registry disponible (${elapsed}s)"
-            return 0
+    for img in $images; do
+        info=$(get_build_info "$img")
+        if [ -z "$info" ]; then
+            echo "  [SKIP] $img — aucun mapping"
+            skipped=$((skipped + 1))
+            continue
         fi
-        sleep 3
-        elapsed=$((elapsed + 3))
-        printf "."
+
+        if [ "$force" != "yes" ] && image_in_registry "$img"; then
+            echo "  [OK]   localhost:5000/$img — déjà dans la registry"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        echo ""
+        if build_image "$img"; then
+            built=$((built + 1))
+        else
+            errors=$((errors + 1))
+        fi
     done
 
     echo ""
-    echo "❌ Registry toujours inaccessible après ${max_wait}s"
-    return 1
+    echo "=== Résumé ==="
+    echo "  Built:   $built"
+    echo "  Skipped: $skipped"
+    echo "  Errors:  $errors"
+    [ $errors -gt 0 ] && return 1
+    return 0
 }
 
-
-# Fonction principale de construction + push direct vers registry (sans stockage local)
-build_and_push() {
-    local service_name="$1"
-    local registry_tag="$2"
-    local timestamp_tag="$3"
-
-    echo "📦 Build + push direct vers registry (sans stockage local)..."
-
-    cd "$service_name" || {
-        echo "❌ Erreur: Impossible de changer vers le répertoire $service_name"
-        return 1
-    }
-
-    if docker buildx build \
-        --no-cache \
-        --push \
-        -f "Dockerfile.$service_name" \
-        -t "$registry_tag" \
-        -t "$timestamp_tag" \
-        .; then
-        echo "✅ Build + push réussis"
-        cd ..
-        return 0
-    else
-        echo "❌ Erreur lors du build/push"
-        cd ..
-        return 1
-    fi
-}
-
-# Fonction principale
-main() {
-    # Vérifier les arguments
-    if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
-        show_help
-        exit 0
-    fi
-    
-    local service_name="$2"
-    local repertoire="$1"
- 
-    # Validation et vérifications
-    validate_service_name "$service_name" || exit 1
-    check_dependencies || exit 1
-    check_required_files "$repertoire" "$service_name" || exit 1
-    # Définir les tags (registry uniquement, pas de tag local)
-    local registry_tag="${REGISTRY_HOST}/${service_name}:${VERSION}"
-    local timestamp_tag="${REGISTRY_HOST}/${service_name}:${TIMESTAMP}"
-
-    # Afficher les informations
-    echo "🔨 Build direct vers registry (sans stockage local)..."
-    echo "   Service: $service_name"
-    echo "   Tag registry: $registry_tag"
-    echo "   Tag timestamp: $timestamp_tag"
-    echo ""
-
-    # S'assurer que la registry est disponible (déploie boot si nécessaire)
-    ensure_registry "$REGISTRY_HOST" || exit 1
-
-    # Build + push direct (pas de stockage local, pas de docker tag)
-    build_and_push "$service_name" "$registry_tag" "$timestamp_tag" || exit 1
-
-    # Résumé
-    cat << EOF
-
-🎉 Opération terminée avec succès!
-
-📋 Résumé (aucune image stockée localement):
-   Images dans le registry:
-     - $registry_tag
-     - $timestamp_tag
-
-💡 Pour utiliser l'image:
-   docker pull $registry_tag
-   docker run $registry_tag
-
-🔍 Pour voir les images dans le registry:
-   curl -4 http://$REGISTRY_HOST/v2/_catalog
-   curl -4 http://$REGISTRY_HOST/v2/$service_name/tags/list
-EOF
-}
-
-# Exécuter la fonction principale avec tous les arguments
-main "$@"
-
+# ─── Main ─────────────────────────────────────────────────────────────────────
+case "${1:-}" in
+    --list)
+        cmd_list ;;
+    --missing)
+        cmd_missing ;;
+    --force)
+        cmd_build yes "${2:-}" ;;
+    -h|--help)
+        echo "Usage: $0 [--list|--missing|--force|<image>]"
+        echo "  (sans args) — build les images custom manquantes depuis les stacks" ;;
+    "")
+        cmd_build no "" ;;
+    *)
+        # Image spécifique
+        info=$(get_build_info "$1")
+        if [ -z "$info" ]; then
+            echo "Image inconnue: $1"
+            echo "Utilisez --list pour voir les mappings disponibles"
+            exit 1
+        fi
+        cmd_build no "$1" ;;
+esac

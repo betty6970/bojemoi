@@ -1,0 +1,239 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Loki — Ingestion",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Streams en mémoire",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "id": 2,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "max(loki_ingester_memory_streams{job=\"loki\"})", "legendFormat": "Streams", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 500 }, { "color": "red", "value": 2000 }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Lignes reçues (total)",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "id": 3,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "max(loki_distributor_lines_received_total{job=\"loki\"})", "legendFormat": "Lignes", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Lignes ignorées (total)",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "id": 4,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "max(loki_discarded_samples_total{job=\"loki\"})", "legendFormat": "Ignorées", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 100 }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Chunks stockés (total)",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "id": 5,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "max(loki_ingester_chunks_stored_total{job=\"loki\"})", "legendFormat": "Chunks", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "File flush ingester",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "id": 6,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "max(loki_ingester_flush_queue_length{job=\"loki\"})", "legendFormat": "Queue", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 50 }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Clients ingesters",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "id": 7,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "max(loki_distributor_ingester_clients{job=\"loki\"})", "legendFormat": "Clients", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Lignes reçues / sec",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 5 },
+      "id": 8,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "sum(rate(loki_distributor_lines_received_total{job=\"loki\"}[5m]))", "legendFormat": "lines/s", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 20 }, "color": { "fixedColor": "blue", "mode": "fixed" } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Bytes reçus / sec",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 5 },
+      "id": 9,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "sum(rate(loki_distributor_bytes_received_total{job=\"loki\"}[5m]))", "legendFormat": "bytes/s", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "fillOpacity": 20 }, "color": { "fixedColor": "green", "mode": "fixed" } } }
+    },
+    {
+      "type": "row",
+      "title": "Loki — Santé & Erreurs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 },
+      "id": 10,
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages internes Loki (erreurs/avertissements)",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "id": 11,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [
+        { "expr": "sum(rate(loki_internal_log_messages_total{job=\"loki\", level=\"error\"}[5m]))", "legendFormat": "error", "refId": "A" },
+        { "expr": "sum(rate(loki_internal_log_messages_total{job=\"loki\", level=\"warn\"}[5m]))", "legendFormat": "warn", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "error" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "warn" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requêtes Loki / sec (durée)",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "id": 12,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [
+        { "expr": "sum(rate(loki_request_duration_seconds_count{job=\"loki\", status_code=~\"2..\"}[5m]))", "legendFormat": "2xx", "refId": "A" },
+        { "expr": "sum(rate(loki_request_duration_seconds_count{job=\"loki\", status_code=~\"[45]..\"}[5m]))", "legendFormat": "4xx/5xx", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "2xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "4xx/5xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "title": "Alloy — Collecteur de logs",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "id": 13,
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Composants actifs",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 21 },
+      "id": 14,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "sum(alloy_component_controller_running_components{job=\"alloy\"})", "legendFormat": "Composants", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Config chargée",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 21 },
+      "id": 15,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "alloy_config_last_load_successful{job=\"alloy\"}", "legendFormat": "OK", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "FAIL", "color": "red" } } },
+            { "type": "value", "options": { "1": { "text": "OK", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Mémoire Alloy",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 21 },
+      "id": 16,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "max(alloy_resources_process_resident_memory_bytes{job=\"alloy\"})", "legendFormat": "RSS", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "bytes", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 500000000 }, { "color": "red", "value": 1000000000 }] } } }
+    },
+    {
+      "type": "stat",
+      "title": "Fichiers suivis",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 21 },
+      "id": 17,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "max(loki_source_file_files_active_total)", "legendFormat": "Fichiers", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Alloy — CPU",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 25 },
+      "id": 18,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "rate(alloy_resources_process_cpu_seconds_total{job=\"alloy\"}[5m])", "legendFormat": "CPU", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "custom": { "drawStyle": "line", "fillOpacity": 20 }, "color": { "fixedColor": "yellow", "mode": "fixed" } } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Alloy — Évaluation composants (p99)",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 25 },
+      "id": 19,
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "targets": [{ "expr": "histogram_quantile(0.99, sum(rate(alloy_component_evaluation_seconds_bucket{job=\"alloy\"}[5m])) by (le))", "legendFormat": "p99", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 }, "color": { "fixedColor": "purple", "mode": "fixed" } } }
+    },
+    {
+      "type": "row",
+      "title": "Logs en direct",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "id": 20,
+      "collapsed": false
+    },
+    {
+      "type": "logs",
+      "title": "Erreurs Loki",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 33 },
+      "id": 21,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [{ "expr": "{job=\"loki\"} |= \"level=error\"", "refId": "A" }],
+      "options": { "showTime": true, "sortOrder": "Descending", "dedupStrategy": "none", "wrapLogMessage": true }
+    },
+    {
+      "type": "logs",
+      "title": "Logs Alloy",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+      "id": 22,
+      "datasource": { "type": "loki", "uid": "P8E80F9AEF21F6940" },
+      "targets": [{ "expr": "{job=\"alloy\"}", "refId": "A" }],
+      "options": { "showTime": true, "sortOrder": "Descending", "dedupStrategy": "none", "wrapLogMessage": true }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["loki", "alloy", "logging", "monitoring"],
+  "templating": { "list": [] },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Loki Stack Monitoring",
+  "uid": "loki_stack_monitoring_quortex",
+  "version": 1,
+  "weekStart": ""
+}

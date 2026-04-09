@@ -1,0 +1,1 @@
+FROM projectdiscovery/nuclei:latest
