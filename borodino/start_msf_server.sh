@@ -4,7 +4,8 @@
 set -e
 
 PG_USER="${PG_USER:-postgres}"
-PG_PASSWORD="${PG_PASSWORD:-bojemoi}"
+PG_PASSWORD="${PG_PASSWORD:-${POSTGRES_PASSWORD:-}}"
+[ -z "$PG_PASSWORD" ] && [ -f /run/secrets/postgres_password ] && PG_PASSWORD=$(cat /run/secrets/postgres_password)
 PG_HOST="${PG_HOST:-postgres}"
 PG_DBNAME="${PG_DBNAME:-msf}"
 MSF_PASS="totototo"
@@ -66,9 +67,33 @@ $([ -n "$C2_REDIRECTORS" ] && echo "set OverrideRequestTimeout 5")
 run -j
 RCEOF
 
-./msfconsole -q -r /tmp/c2_handler.rc 2>&1 &
-sleep 10
-echo "[INFO] C2 listener started. Teamserver running."
+# tail -f /dev/null pipe keeps stdin open → msfconsole ne quitte pas après le fichier rc
+tail -f /dev/null | ./msfconsole -q -r /tmp/c2_handler.rc 2>&1 &
+MSF_PID=$!
 
-# Garder le container vivant (msfrpcd tourne en arrière-plan)
-tail -f /dev/null
+# Attendre que le handler soit réellement en écoute sur C2_LPORT
+i=0
+while [ $i -lt 120 ]; do
+    if nc -z 127.0.0.1 ${C2_LPORT} 2>/dev/null; then
+        echo "[INFO] C2 listener ready on :${C2_LPORT} after ${i}s"
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+if ! nc -z 127.0.0.1 ${C2_LPORT} 2>/dev/null; then
+    echo "[WARN] C2 listener not detected on :${C2_LPORT} after 120s — handler may still be loading"
+fi
+
+echo "[INFO] Teamserver running. msfrpcd=:${MSF_PORT} handler=:${C2_LPORT}"
+
+# Garder le container vivant ; surveiller que msfconsole reste en vie
+while true; do
+    if ! kill -0 $MSF_PID 2>/dev/null; then
+        echo "[WARN] msfconsole exited — restarting handler..."
+        tail -f /dev/null | ./msfconsole -q -r /tmp/c2_handler.rc 2>&1 &
+        MSF_PID=$!
+    fi
+    sleep 30
+done
