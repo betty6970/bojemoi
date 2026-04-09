@@ -19,7 +19,6 @@ x-arme-template: &arme-template
     - PG_HOST=postgres
     - PG_PORT=5432
     - PG_USER=${POSTGRES_USER:-postgres}
-    - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     - PG_DBNAME=${MSF_DBNAME:-msf}
     - IP2LOC_DBNAME=${IP2LOC_DBNAME:-ip2location}
 
@@ -176,7 +175,6 @@ services:
       DB_PORT: 5432
       DB_NAME: msf
       DB_USER: postgres
-      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       ZAP_HOST: zaproxy
@@ -187,10 +185,12 @@ services:
       BATCH_SIZE: 50
       FARADAY_URL: http://faraday:5985
       FARADAY_USER: faraday
-      FARADAY_PASSWORD: ${FARADAY_PASSWORD:?FARADAY_PASSWORD is required}
       FARADAY_WORKSPACE: zap
       PYTHONUNBUFFERED: 1
       LOG_LEVEL: INFO
+    secrets:
+      - postgres_password
+      - faraday_password
     volumes:
       - scan_logs:/logs
     networks:
@@ -265,7 +265,6 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       - IP2LOC_DBNAME=ip2location
       - ARME_TYPE=ak47
@@ -273,6 +272,8 @@ services:
       - SCAN_GATEWAY_HOST=wg-gateway
       - MSF_HOST=msf-teamserver
       - MSF_PORT=55553
+    secrets:
+      - postgres_password
     logging:
       driver: json-file
       options:
@@ -296,15 +297,20 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       - IP2LOC_DBNAME=ip2location
       - ARME_TYPE=bm12
       - TARGET=container1
+      - SCAN_GATEWAY_HOST=wg-gateway
+      # Nym Mixnet: anonymise les appels HTTP OSINT (AbuseIPDB, VT, Shodan)
+      # Requiert requests[socks] (PySocks) dans l'image borodino
+      - ALL_PROXY=${NYM_PROXY_ENABLED:+socks5h://nym-proxy:1080}
+      # API keys OSINT optionnelles (laisser vide si non disponibles)
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - SHODAN_API_KEY=${SHODAN_API_KEY:-}
-      - SCAN_GATEWAY_HOST=wg-gateway
+    secrets:
+      - postgres_password
     logging:
       driver: json-file
       options:
@@ -323,8 +329,9 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
+    secrets:
+      - postgres_password
     networks:
       - backend
       - pentest
@@ -377,7 +384,6 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       # MSF_HOST : hostname du service msf-teamserver (réseau pentest/backend)
       - MSF_HOST=msf-teamserver
@@ -388,14 +394,57 @@ services:
       - LPORT_BIND=4444
       - BIND_PORT=5556
       - MODE_RUN=1
-      - TELEGRAM_ALERT_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # ── Brute-force wordlists par service (surchargeables) ──
+      - SSH_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - SSH_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - SSH_BRUTE_TIMEOUT=300
+      - SSH_THREADS=4
+      - FTP_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - FTP_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - FTP_BRUTE_TIMEOUT=180
+      - TELNET_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - TELNET_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - TELNET_BRUTE_TIMEOUT=180
+      - SMB_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - SMB_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - SMB_BRUTE_TIMEOUT=300
+      - MYSQL_USER_FILE=/usr/share/metasploit-framework/data/wordlists/mysql_default_user.txt
+      - MYSQL_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/mysql_default_pass.txt
+      - MYSQL_BRUTE_TIMEOUT=180
+      - PGSQL_USER_FILE=/usr/share/metasploit-framework/data/wordlists/postgres_default_user.txt
+      - PGSQL_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/postgres_default_pass.txt
+      - PGSQL_BRUTE_TIMEOUT=180
+      - MSSQL_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - MSSQL_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - MSSQL_BRUTE_TIMEOUT=180
+      - VNC_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/vnc_passwords.txt
+      - VNC_BRUTE_TIMEOUT=120
+      - SNMP_COMMUNITY_FILE=/usr/share/metasploit-framework/data/wordlists/snmp_default_pass.txt
+      - SNMP_BRUTE_TIMEOUT=60
+      - IMAP_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - IMAP_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - IMAP_BRUTE_TIMEOUT=120
+      - POP3_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - POP3_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - POP3_BRUTE_TIMEOUT=120
+      - SMTP_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - SMTP_ENUM_TIMEOUT=120
+      - HTTP_USER_FILE=/usr/share/metasploit-framework/data/wordlists/http_default_users.txt
+      - HTTP_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/http_default_pass.txt
+      - HTTP_BRUTE_TIMEOUT=120
+      - TOMCAT_USER_FILE=/usr/share/metasploit-framework/data/wordlists/tomcat_mgr_default_users.txt
+      - TOMCAT_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/tomcat_mgr_default_pass.txt
+      - TOMCAT_BRUTE_TIMEOUT=120
+      - MONGO_USER_FILE=/usr/share/metasploit-framework/data/wordlists/unix_users.txt
+      - MONGO_PASS_FILE=/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt
+      - MONGO_BRUTE_TIMEOUT=120
       - FARADAY_URL=http://faraday:5985
       - FARADAY_USER=faraday
-      - FARADAY_PASSWORD=${FARADAY_PASSWORD:?FARADAY_PASSWORD is required}
       - FARADAY_WORKSPACE=uzi
       - SCAN_GATEWAY_HOST=wg-gateway
     secrets:
+      - postgres_password
+      - faraday_password
       - telegram_bot_token
       - telegram_alert_chat_id
       - anthropic_api_key
@@ -429,16 +478,24 @@ services:
       - karacho-logs:/var/log/karacho
       - karacho-run:/var/run/karacho
     # ports removed - internal blockchain service
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        export DB_PASS=$$(cat /run/secrets/postgres_password 2>/dev/null)
+        export SECRET_KEY=$$(cat /run/secrets/karacho_secret_key 2>/dev/null)
+        exec python3 /usr/local/karacho/blockchain_postgres_api.pyc
     environment:
       - DEBUG=false
       - TOKEN_EXPIRY=3600
       - PORT=5100
-      - SECRET_KEY=${KARACHO_SECRET_KEY}
       - POSTGRES_HOST=postgres
       - DB_USER=postgres
-      - DB_PASS=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - DB_NAME=karacho
       - MSF_DB_NAME=msf
+    secrets:
+      - postgres_password
+      - karacho_secret_key
     networks:
       - backend
       - proxy
@@ -490,12 +547,12 @@ services:
       IP2LOCATION_DB_PORT: 5432
       IP2LOCATION_DB_NAME: ip2location
       IP2LOCATION_DB_USER: postgres
-      IP2LOCATION_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       MSF_DB_HOST: postgres
       MSF_DB_PORT: 5432
       MSF_DB_NAME: msf
       MSF_DB_USER: postgres
-      MSF_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    secrets:
+      - postgres_password
     logging:
       driver: json-file
       options:
@@ -563,7 +620,6 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       - FLY_APP=redirector-1
       - FLY_LOG_LINES=2000
@@ -573,6 +629,7 @@ services:
       - LIGHTSAIL_LOG_LINES=5000
       - LOOP_INTERVAL=3600
     secrets:
+      - postgres_password
       - fly_api_token
     logging:
       driver: json-file
@@ -604,7 +661,6 @@ services:
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
-      - PG_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PG_DBNAME=msf
       - NUCLEI_API_URL=http://nuclei-api:8001
       - NUCLEI_SEVERITY=critical,high,medium
@@ -614,12 +670,13 @@ services:
       - REDIS_PORT=6379
       - FARADAY_URL=http://faraday:5985
       - FARADAY_USER=faraday
-      - FARADAY_PASSWORD=${FARADAY_PASSWORD:?FARADAY_PASSWORD is required}
       - FARADAY_WORKSPACE=nuclei
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_ENABLED=true
       - OLLAMA_MODEL=mistral:7b-instruct
       - OLLAMA_TIMEOUT=30
+    secrets:
+      - postgres_password
     logging:
       driver: json-file
       options:
@@ -645,8 +702,7 @@ services:
     command: ["python3", "/usr/bin/thearm_nuclei"]
 
   nuclei-api:
-    image: ${IMAGE_REGISTRY:-localhost:5000}/nuclei:latest
-    entrypoint: /bin/sh
+    image: ${IMAGE_REGISTRY:-localhost:5000}/nuclei-api:latest
     networks:
       - backend
       - pentest
@@ -657,10 +713,8 @@ services:
     sysctls:
       net.ipv4.ip_forward: "1"
     volumes:
-      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/samsonov/nuclei_api:/app
       - nuclei-results:/results
       - nuclei-templates:/root/nuclei-templates
-    working_dir: /app
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -669,33 +723,16 @@ services:
       - NUCLEI_TEMPLATES=/root/nuclei-templates
       - FARADAY_URL=http://faraday:5985
       - FARADAY_USER=faraday
-      - FARADAY_PASSWORD=${FARADAY_PASSWORD:?FARADAY_PASSWORD is required}
       - FARADAY_WORKSPACE=nuclei
       - SCAN_GATEWAY_HOST=wg-gateway
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_ENABLED=true
       - OLLAMA_MODEL=mistral:7b-instruct
       - OLLAMA_TIMEOUT=120
-    command:
-      - -c
-      - |
-        apk add --no-cache python3 py3-pip iproute2
-        pip install fastapi uvicorn redis httpx requests pyyaml --break-system-packages
-        nuclei -update-templates
-        ORIG_GW=$$(ip route show default 2>/dev/null | head -1 | cut -d' ' -f3)
-        WG_GW=$${SCAN_GATEWAY_HOST:-wg-gateway}
-        WG_IP=$$(getent hosts "$$WG_GW" 2>/dev/null | head -1 | cut -d' ' -f1)
-        if [ -n "$$ORIG_GW" ] && [ -n "$$WG_IP" ]; then
-          ip route add 10.0.0.0/8     via "$$ORIG_GW" 2>/dev/null || true
-          ip route add 172.16.0.0/12  via "$$ORIG_GW" 2>/dev/null || true
-          ip route add 192.168.0.0/16 via "$$ORIG_GW" 2>/dev/null || true
-          ip route del default 2>/dev/null || true
-          ip route add default via "$$WG_IP"
-          echo "[INFO] Nuclei scan via ProtonVPN: $$WG_IP"
-        else
-          echo "[WARN] VPN gateway introuvable (ORIG_GW=$$ORIG_GW WG_IP=$$WG_IP) — scan sans VPN"
-        fi
-        python -m uvicorn main:app --host 0.0.0.0 --port 8001
+      # Nym Mixnet: proxy SOCKS5 pour les scans nuclei HTTP
+      - NYM_PROXY=${NYM_PROXY_ENABLED:+socks5h://nym-proxy:1080}
+    secrets:
+      - faraday_password
     logging:
       driver: json-file
       options:
@@ -788,7 +825,6 @@ services:
     image: ${IMAGE_REGISTRY:-localhost:5000}/faraday:latest
     environment:
       - PGSQL_USER=postgres
-      - PGSQL_PASSWD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - PGSQL_HOST=postgres
       - PGSQL_DBNAME=faraday
       - REDIS_SERVER=redis
@@ -799,10 +835,8 @@ services:
       - proxy
       - backend
       - pentest
-
-
-
-
+    secrets:
+      - postgres_password
     dns_search:
       - ${LAB_DOMAIN:-bojemoi.lab}
     # ports removed - access via Traefik (faraday.${LAB_DOMAIN:-bojemoi.lab})
@@ -810,7 +844,12 @@ services:
       - faraday_data:/home/faraday/.faraday
       - faraday-storage:/home/faraday/.faraday/storage
       - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/faraday/config/server.ini:/home/faraday/.faraday/config/server.ini
-    entrypoint: "/entrypoint.sh"
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        export PGSQL_PASSWD=$$(cat /run/secrets/postgres_password 2>/dev/null)
+        exec /entrypoint.sh
     logging:
       driver: json-file
       options:
@@ -931,6 +970,12 @@ services:
 
 
 secrets:
+  postgres_password:
+    external: true
+  faraday_password:
+    external: true
+  karacho_secret_key:
+    external: true
   telegram_bot_token:
     external: true
   telegram_alert_chat_id:

