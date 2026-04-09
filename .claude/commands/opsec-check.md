@@ -1,6 +1,6 @@
 # Red Team OPSEC Check
 
-Vérifie l'étanchéité de la plateforme C2 : redirecteurs, VPN, exit IP scan, headers, ports exposés, certificats.
+Vérifie l'étanchéité de la plateforme C2 : redirecteurs, VPN, exit IP scan, headers, ports exposés, certificats, empreinte DNS/CT, segmentation réseau, iptables.
 
 ## Arguments
 
@@ -11,6 +11,9 @@ Vérifie l'étanchéité de la plateforme C2 : redirecteurs, VPN, exit IP scan, 
 - `headers` — Headers serveur / fuite d'infra
 - `ports` — Surface d'attaque publique
 - `tls` — Fingerprinting certificats
+- `dns` — Empreinte DNS : PTR inverse, crt.sh Certificate Transparency, WHOIS privacy
+- `segmentation` — Pivot latéral depuis un conteneur Swarm compromis
+- `iptables` — Règles FORWARD/DOCKER-USER sur les nœuds Swarm
 
 ## Variables de référence
 
@@ -108,10 +111,11 @@ echo -n "  IP hôte meta-76 (référence) : "
 HOST_IP=$(curl -4 -s --max-time 5 https://ipinfo.io/ip 2>/dev/null || echo "N/A")
 echo "$HOST_IP"
 
-echo "  IP de sortie via borodino_scan_net :"
-docker run --rm --network borodino_scan_net \
-  curlimages/curl:latest \
-  curl -4 -s --max-time 10 https://ipinfo.io/json 2>/dev/null | python3 -c "
+echo "  IP de sortie via ak47 (scan_net — borodino_scan_net non attachable directement) :"
+AK47_NODE=$(docker service ps borodino_ak47-service --filter desired-state=running --format "{{.Node}}" 2>/dev/null | head -1)
+AK47_NODE_IP=$(docker node inspect "$AK47_NODE" --format '{{.Status.Addr}}' 2>/dev/null)
+ssh -p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no docker@"$AK47_NODE_IP" \
+  "CNAME=\$(docker ps --format '{{.Names}}' | grep ak47 | head -1); docker exec \$CNAME curl -4 -s --max-time 8 http://ipinfo.io/json" 2>/dev/null | python3 -c "
 import sys, json
 try:
   d = json.load(sys.stdin)
@@ -122,13 +126,13 @@ try:
   print(f'  IP     : {ip}')
   print(f'  Org    : {org}')
   print(f'  Loc    : {city}, {country}')
-  if '149.102' in ip or 'Proton' in org or 'proton' in org.lower():
+  if 'proton' in org.lower() or 'anapaya' in org.lower() or '10.96' in ip:
     print('  Résultat : ✅ ProtonVPN confirmé')
   else:
-    print('  Résultat : ⚠️  IP inattendue — vérifier wg-gateway')
-except:
-  print('  ❌ Impossible de récupérer l IP (wg-gateway down ?)')
-" 2>/dev/null || echo "  ❌ Réseau borodino_scan_net non joignable"
+    print('  Résultat : ⚠️  IP inattendue — vérifier wg-gateway (exit IP actuelle)')
+except Exception as e:
+  print(f'  ❌ Impossible de récupérer l IP ({e})')
+" 2>/dev/null || echo "  ❌ Container ak47 non joignable"
 
 echo ""
 echo -n "  Service wg-gateway : "
@@ -227,7 +231,135 @@ for target in "37.16.12.4:443" "bojemoi.me:443"; do
 done
 ```
 
-### Pour `all` (défaut) : exécuter les 6 phases dans l'ordre.
+### Pour `dns` ou phase 7 de `all` :
+
+Vérifier l'empreinte DNS : PTR inverse, Certificate Transparency (crt.sh), WHOIS privacy :
+
+```bash
+echo "=== DNS — EMPREINTE DOMAINE ==="
+
+REDIR_IP="37.16.12.4"
+
+echo "--- PTR (DNS inverse) ---"
+echo -n "  $REDIR_IP PTR : "
+PTR=$(dig -x $REDIR_IP +short 2>/dev/null | head -1)
+[ -n "$PTR" ] && echo "$PTR (attendu: Fly.io infra)" || echo "(aucun enregistrement)"
+
+echo -n "  bojemoi.me A   : "
+dig A bojemoi.me +short 2>/dev/null
+
+echo ""
+echo "--- Certificate Transparency (crt.sh) ---"
+echo "  Certs CT pour *.bojemoi.me :"
+curl -4 -s --max-time 15 "https://crt.sh/?q=%.bojemoi.me&output=json" 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    seen = {}
+    for c in data:
+        name = c.get('name_value','').replace('\n', ' | ')
+        date = c.get('not_after','?')[:10]
+        issuer = c.get('issuer_ca_id','?')
+        key = name
+        if key not in seen:
+            seen[key] = (date, issuer)
+    for name, (date, ca) in sorted(seen.items(), key=lambda x: x[1][0], reverse=True)[:10]:
+        marker = '⚠️ ' if 'bojemoi' in name.lower() and 'fly' not in name.lower() and 'gitea' not in name.lower() else '  '
+        print(f'{marker} {date} : {name}')
+    print(f'  Total : {len(seen)} SAN(s) dans CT logs')
+    print('  ⚠️  Vérifier que aucun cert ne relie C2 et infra labo' if len(seen) > 0 else '')
+except Exception as e:
+    print(f'  ❌ crt.sh non joignable ({e})')
+" 2>/dev/null || echo "  ❌ crt.sh timeout"
+
+echo ""
+echo "--- WHOIS privacy ---"
+echo "  bojemoi.me :"
+whois bojemoi.me 2>/dev/null | grep -iE "registrant|privacy|redacted|protect|organi|email|name" \
+  | grep -v "^%" | head -5 | while read l; do echo "    $l"; done \
+  || echo "    (whois indisponible)"
+```
+
+### Pour `segmentation` ou phase 8 de `all` :
+
+Tester le pivot latéral depuis un conteneur Swarm compromis (borodino/ak47 sur réseau backend) :
+
+```bash
+echo "=== SEGMENTATION — PIVOT LATÉRAL DEPUIS SWARM ==="
+
+AK47_NODE=$(docker service ps borodino_ak47-service --filter desired-state=running --format "{{.Node}}" 2>/dev/null | head -1)
+AK47_NODE_IP=$(docker node inspect "$AK47_NODE" --format '{{.Status.Addr}}' 2>/dev/null)
+
+if [ -z "$AK47_NODE_IP" ]; then
+    echo "  ❌ Container ak47 non trouvé"
+else
+    echo "  Test depuis borodino_ak47 (réseaux: backend + scan_net) :"
+    ssh -p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no docker@"$AK47_NODE_IP" "
+CNAME=\$(docker ps --format '{{.Names}}' | grep ak47 | head -1)
+echo '  Container: '\$CNAME
+# Services qui ne devraient PAS être joignables depuis borodino
+for target in 'grafana:3000' 'gitea:3000' 'traefik:8080' 'prometheus:9090' 'alertmanager:9093'; do
+  host=\$(echo \$target | cut -d: -f1)
+  port=\$(echo \$target | cut -d: -f2)
+  docker exec \$CNAME nc -z -w2 \$host \$port 2>/dev/null \
+    && echo '  ❌ '\$target' joignable ! (pivot possible)' \
+    || echo '  ✅ '\$target' non joignable'
+done
+# Services qui DOIVENT être joignables (attendus)
+echo '  --- Services attendus ---'
+for target in 'postgres:5432' 'redis:6379' 'faraday:5985'; do
+  host=\$(echo \$target | cut -d: -f1)
+  port=\$(echo \$target | cut -d: -f2)
+  docker exec \$CNAME nc -z -w2 \$host \$port 2>/dev/null \
+    && echo '  ✅ '\$target' joignable (attendu)' \
+    || echo '  ⚠️  '\$target' non joignable (dépendance KO)'
+done
+" 2>/dev/null
+fi
+
+echo ""
+echo "  Réseaux overlay de borodino_ak47 :"
+docker service inspect borodino_ak47-service \
+  --format '{{range .Spec.TaskTemplate.Networks}}  • {{.Target}}{{"\n"}}{{end}}' 2>/dev/null
+```
+
+### Pour `iptables` ou phase 9 de `all` :
+
+Vérifier les règles FORWARD et DOCKER-USER sur les nœuds Swarm :
+
+```bash
+echo "=== IPTABLES — RÈGLES PARE-FEU NŒUDS SWARM ==="
+
+_check_node_iptables() {
+    local node=$1
+    local node_ip=$2
+    local cmd
+
+    if [ "$node" = "meta-76" ]; then
+        cmd="iptables -L DOCKER-USER -n 2>/dev/null | head -8; echo '---'; iptables -L FORWARD -n --line-numbers 2>/dev/null | head -6"
+        eval "$cmd" 2>/dev/null | while read l; do echo "    $l"; done
+    else
+        ssh -p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no docker@"$node_ip" \
+            "iptables -L DOCKER-USER -n 2>/dev/null | head -8; echo '---'; iptables -L FORWARD -n --line-numbers 2>/dev/null | head -6" 2>/dev/null \
+            | while read l; do echo "    $l"; done
+    fi
+}
+
+for node in meta-76 meta-68 meta-69 meta-70; do
+    NODE_IP=$(docker node inspect "$node" --format '{{.Status.Addr}}' 2>/dev/null)
+    [ -z "$NODE_IP" ] && continue
+    echo ""
+    echo "  $node ($NODE_IP) — DOCKER-USER + FORWARD :"
+    _check_node_iptables "$node" "$NODE_IP"
+done
+
+echo ""
+echo "  Analyse :"
+echo "  ✅ attendu : DOCKER-USER avec DROP explicites inter-réseau"
+echo "  ❌ risque  : DOCKER-USER vide = tous les conteneurs se voient"
+```
+
+### Pour `all` (défaut) : exécuter les 9 phases dans l'ordre.
 
 ## Output Format
 
@@ -238,5 +370,8 @@ Présenter les résultats en sections :
 4. **Headers** — Fuites d'infra interne
 5. **Ports publics** — Surface d'attaque
 6. **TLS** — Fingerprinting certificats
+7. **DNS & empreinte** — PTR inverse, crt.sh CT logs, WHOIS privacy
+8. **Segmentation** — Pivot latéral depuis container Swarm
+9. **Iptables** — Règles FORWARD/DOCKER-USER sur nœuds
 
 Conclure avec un **bilan OPSEC** : `✅ OK` / `⚠️ avertissements` / `❌ fuites détectées` avec priorités de correction.
