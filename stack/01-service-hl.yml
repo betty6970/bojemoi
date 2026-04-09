@@ -182,8 +182,7 @@ services:
         - prometheus.label.component=database
         - prometheus.label.stack=base
         - prometheus.label.tier=data
-    ports:
-      - 5432:5432
+    # ports removed - postgres accessible via overlay network only (no public exposure)
     networks:
       -  backend
     stop_grace_period: 30s
