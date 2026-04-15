@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bojemoi Lab MCP Server
-Expose les outils du lab (DB msf, Faraday, nmap, OSINT) via le protocole MCP.
+Expose les outils du lab (DB msf, DefectDojo, nmap, OSINT) via le protocole MCP.
 Transport : HTTP/SSE sur le port 8001.
 """
 
@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
-from tools import database, faraday, nmap, osint
+from tools import database, defectdojo, nmap, osint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -158,52 +158,51 @@ TOOLS = [
         },
     ),
     types.Tool(
-        name="list_workspaces",
-        description="Liste les workspaces Faraday avec leur nombre d'hôtes et de vulnérabilités.",
+        name="list_products",
+        description="Liste les products DefectDojo avec leur nombre de findings.",
         inputSchema={"type": "object", "properties": {}},
     ),
     types.Tool(
-        name="get_vulns",
-        description="Récupère les vulnérabilités d'un workspace Faraday.",
+        name="get_findings",
+        description="Récupère les findings actifs dans DefectDojo. Filtres optionnels: product_id, severity.",
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace": {
-                    "type": "string",
-                    "description": "Nom du workspace Faraday",
+                "product_id": {
+                    "type": "integer",
+                    "description": "ID du product DefectDojo (optionnel)",
                 },
                 "severity": {
                     "type": "string",
-                    "enum": ["critical", "high", "medium", "low", "info"],
+                    "enum": ["Critical", "High", "Medium", "Low", "Info"],
                     "description": "Filtrer par sévérité (optionnel)",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Nombre max de vulnérabilités (défaut 50)",
+                    "description": "Nombre max de findings (défaut 50)",
                     "default": 50,
                 },
             },
-            "required": ["workspace"],
         },
     ),
     types.Tool(
-        name="add_vuln",
-        description="Ajoute une vulnérabilité dans un workspace Faraday.",
+        name="add_finding",
+        description="Ajoute un finding dans DefectDojo. Crée le product/engagement/test si nécessaire.",
         inputSchema={
             "type": "object",
             "properties": {
-                "workspace": {"type": "string", "description": "Nom du workspace"},
+                "product_name": {"type": "string", "description": "Nom du product DefectDojo"},
                 "host": {"type": "string", "description": "IP de l'hôte cible"},
                 "port": {"type": "integer", "description": "Port concerné"},
-                "name": {"type": "string", "description": "Nom de la vulnérabilité"},
+                "name": {"type": "string", "description": "Titre du finding"},
                 "description": {"type": "string", "description": "Description détaillée"},
                 "severity": {
                     "type": "string",
-                    "enum": ["critical", "high", "medium", "low", "info"],
-                    "default": "medium",
+                    "enum": ["Critical", "High", "Medium", "Low", "Info"],
+                    "default": "Medium",
                 },
             },
-            "required": ["workspace", "host", "port", "name", "description"],
+            "required": ["product_name", "host", "port", "name", "description"],
         },
     ),
 ]
@@ -230,12 +229,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
             result = await nmap.run_nmap(**arguments)
         elif name == "lookup_ip":
             result = await osint.lookup_ip(**arguments)
-        elif name == "list_workspaces":
-            result = await faraday.list_workspaces()
-        elif name == "get_vulns":
-            result = await faraday.get_vulns(**arguments)
-        elif name == "add_vuln":
-            result = await faraday.add_vuln(**arguments)
+        elif name == "list_products":
+            result = await defectdojo.list_products()
+        elif name == "get_findings":
+            result = await defectdojo.get_findings(**arguments)
+        elif name == "add_finding":
+            result = await defectdojo.add_finding(**arguments)
         else:
             result = {"error": f"Outil inconnu: {name}"}
     except Exception as e:

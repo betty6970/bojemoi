@@ -97,12 +97,8 @@ volumes:
   nuclei-results:
     driver: local
 
-  # Faraday/Redis volumes
-  faraday_data:
-    driver: local
+  # Redis volume
   redis_data:
-    driver: local
-  faraday-storage:
     driver: local
 
 #--------------------------------------------------------------------------------
@@ -183,14 +179,13 @@ services:
       ZAP_CONCURRENCY: 1
       FEED_INTERVAL_SECONDS: 300
       BATCH_SIZE: 50
-      FARADAY_URL: http://faraday:5985
-      FARADAY_USER: faraday
-      FARADAY_WORKSPACE: zap
+      DEFECTDOJO_URL: http://defectdojo-nginx:8080
+      DEFECTDOJO_PRODUCT: zap
       PYTHONUNBUFFERED: 1
       LOG_LEVEL: INFO
     secrets:
       - postgres_password
-      - faraday_password
+      - dojo_api_token
     volumes:
       - scan_logs:/logs
     networks:
@@ -304,7 +299,7 @@ services:
       - SCAN_GATEWAY_HOST=wg-gateway
       # Nym Mixnet: anonymise les appels HTTP OSINT (AbuseIPDB, VT, Shodan)
       # Requiert requests[socks] (PySocks) dans l'image borodino
-      - ALL_PROXY=${NYM_PROXY_ENABLED:+socks5h://nym-proxy:1080}
+      - ALL_PROXY=${NYM_PROXY:-}
       # API keys OSINT optionnelles (laisser vide si non disponibles)
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
@@ -447,13 +442,12 @@ services:
       - VNC_BRUTE_TIMEOUT=120
       - SNMP_COMMUNITY_FILE=/usr/share/metasploit-framework/data/wordlists/snmp_default_pass.txt
       - SNMP_BRUTE_TIMEOUT=60
-      - FARADAY_URL=http://faraday:5985
-      - FARADAY_USER=faraday
-      - FARADAY_WORKSPACE=uzi
+      - DEFECTDOJO_URL=http://defectdojo-nginx:8080
+      - DEFECTDOJO_PRODUCT=uzi
       - SCAN_GATEWAY_HOST=wg-gateway
     secrets:
       - postgres_password
-      - faraday_password
+      - dojo_api_token
       - telegram_bot_token
       - telegram_alert_chat_id
       - anthropic_api_key
@@ -682,9 +676,8 @@ services:
       - NUCLEI_SCAN_TIMEOUT=1200
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - FARADAY_URL=http://faraday:5985
-      - FARADAY_USER=faraday
-      - FARADAY_WORKSPACE=nuclei
+      - DEFECTDOJO_URL=http://defectdojo-nginx:8080
+      - DEFECTDOJO_PRODUCT=nuclei
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_ENABLED=true
       - OLLAMA_MODEL=mistral:7b-instruct
@@ -735,18 +728,17 @@ services:
       - NUCLEI_HOST=nuclei
       - RESULTS_DIR=/results
       - NUCLEI_TEMPLATES=/root/nuclei-templates
-      - FARADAY_URL=http://faraday:5985
-      - FARADAY_USER=faraday
-      - FARADAY_WORKSPACE=nuclei
+      - DEFECTDOJO_URL=http://defectdojo-nginx:8080
+      - DEFECTDOJO_PRODUCT=nuclei
       - SCAN_GATEWAY_HOST=wg-gateway
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_ENABLED=true
       - OLLAMA_MODEL=mistral:7b-instruct
       - OLLAMA_TIMEOUT=120
       # Nym Mixnet: proxy SOCKS5 pour les scans nuclei HTTP
-      - NYM_PROXY=${NYM_PROXY_ENABLED:+socks5h://nym-proxy:1080}
+      - NYM_PROXY=${NYM_PROXY:-}
     secrets:
-      - faraday_password
+      - dojo_api_token
     logging:
       driver: json-file
       options:
@@ -778,7 +770,7 @@ services:
         - traefik.http.services.nuclei-api.loadbalancer.server.port=8001
 
   # =========================================================================
-  # FROM: 60-service-samsonov.yml - Faraday & Redis
+  # FROM: 60-service-samsonov.yml - Redis
   # =========================================================================
   redis:
     image: ${IMAGE_REGISTRY:-localhost:5000}/redis:alpine
@@ -834,65 +826,6 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
-
-  faraday:
-    image: ${IMAGE_REGISTRY:-localhost:5000}/faraday:latest
-    environment:
-      - PGSQL_USER=postgres
-      - PGSQL_HOST=postgres
-      - PGSQL_DBNAME=faraday
-      - REDIS_SERVER=redis
-      - REDIS_PORT=6379
-      - REDIS_HOST=redis
-      - REDIS_DB=0
-    networks:
-      - proxy
-      - backend
-      - pentest
-    secrets:
-      - postgres_password
-    dns_search:
-      - ${LAB_DOMAIN:-bojemoi.lab}
-    # ports removed - access via Traefik (faraday.${LAB_DOMAIN:-bojemoi.lab})
-    volumes:
-      - faraday_data:/home/faraday/.faraday
-      - faraday-storage:/home/faraday/.faraday/storage
-      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/faraday/config/server.ini:/home/faraday/.faraday/config/server.ini
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        export PGSQL_PASSWD=$$(cat /run/secrets/postgres_password 2>/dev/null)
-        exec /entrypoint.sh
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    deploy:
-      labels:
-        - traefik.enable=true
-        - traefik.http.routers.faraday.rule=Host(`faraday.${LAB_DOMAIN:-bojemoi.lab}`)
-        - traefik.http.routers.faraday.entrypoints=websecure
-        - traefik.http.routers.faraday.tls=true
-        - "traefik.docker.network=proxy"
-        - "traefik.http.routers.faraday.tls.certresolver=letsencrypt"
-        - "traefik.http.services.faraday.loadbalancer.server.port=5985"
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == worker
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-      resources:
-        limits:
-          cpus: '1.5'
-          memory: 2G
-        reservations:
-          cpus: '0.2'
-          memory: 256M
 
   redis-exporter:
     image: ${IMAGE_REGISTRY:-localhost:5000}/redis-exporter:latest
@@ -986,7 +919,7 @@ services:
 secrets:
   postgres_password:
     external: true
-  faraday_password:
+  dojo_api_token:
     external: true
   karacho_secret_key:
     external: true

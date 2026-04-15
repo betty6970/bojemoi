@@ -52,11 +52,10 @@ RESULTS_DIR.mkdir(exist_ok=True)
 # Nym Mixnet proxy (SOCKS5) — optionnel, activé via NYM_PROXY env var
 NUCLEI_PROXY = os.environ.get('NUCLEI_PROXY', '') or os.environ.get('NYM_PROXY', '')
 
-# Faraday configuration
-FARADAY_URL = os.environ.get('FARADAY_URL', 'https://faraday.bojemoi.lab').rstrip('/')
-FARADAY_USER = os.environ.get('FARADAY_USER', 'faraday')
-FARADAY_PASSWORD = _read_secret("faraday_password", "FARADAY_PASSWORD")
-FARADAY_WORKSPACE = os.environ.get('FARADAY_WORKSPACE', 'default')
+# DefectDojo configuration
+DEFECTDOJO_URL = os.environ.get('DEFECTDOJO_URL', 'http://defectdojo-nginx:8080').rstrip('/')
+DEFECTDOJO_TOKEN = _read_secret("dojo_api_token", "DEFECTDOJO_TOKEN")
+DEFECTDOJO_PRODUCT = os.environ.get('DEFECTDOJO_PRODUCT', 'nuclei')
 
 # Redis client
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
@@ -78,7 +77,7 @@ class ScanResult(BaseModel):
     target: str
     status: str
     findings_count: int = 0
-    faraday_imported: int = 0
+    dojo_imported: int = 0
     output_file: Optional[str] = None
 
 
@@ -97,104 +96,135 @@ _SEVERITY_MAP = {
 _CVE_RE = re.compile(r'CVE-\d{4}-\d+', re.I)
 
 
-def push_to_faraday(findings: list, target: str) -> int:
-    """Pousse les findings Nuclei vers Faraday. Retourne le nombre importé."""
-    if not findings:
+def _dojo_headers() -> dict:
+    if DEFECTDOJO_TOKEN:
+        return {"Authorization": f"Token {DEFECTDOJO_TOKEN}"}
+    return {}
+
+
+def _dojo_get_or_create_test(session: http_requests.Session) -> int | None:
+    """Retourne l'ID du test DefectDojo pour le product nuclei. Crée la hiérarchie si nécessaire."""
+    base = DEFECTDOJO_URL
+    headers = _dojo_headers()
+
+    try:
+        # Product
+        r = session.get(f"{base}/api/v2/products/", headers=headers, params={"name": DEFECTDOJO_PRODUCT}, timeout=10)
+        r.raise_for_status()
+        products = r.json().get("results", [])
+        if products:
+            product_id = products[0]["id"]
+        else:
+            r2 = session.get(f"{base}/api/v2/product_types/", headers=headers, params={"limit": 1}, timeout=10)
+            r2.raise_for_status()
+            types = r2.json().get("results", [])
+            prod_type_id = types[0]["id"] if types else 1
+            r3 = session.post(f"{base}/api/v2/products/", headers=headers, json={
+                "name": DEFECTDOJO_PRODUCT, "description": "Nuclei scans", "prod_type": prod_type_id,
+            }, timeout=10)
+            r3.raise_for_status()
+            product_id = r3.json()["id"]
+
+        # Engagement
+        import datetime
+        r = session.get(f"{base}/api/v2/engagements/", headers=headers,
+                        params={"product": product_id, "name": "nuclei"}, timeout=10)
+        r.raise_for_status()
+        engagements = r.json().get("results", [])
+        if engagements:
+            engagement_id = engagements[0]["id"]
+        else:
+            today = str(datetime.date.today())
+            r2 = session.post(f"{base}/api/v2/engagements/", headers=headers, json={
+                "name": "nuclei", "product": product_id,
+                "target_start": today, "target_end": today,
+                "status": "In Progress", "engagement_type": "Interactive",
+            }, timeout=10)
+            r2.raise_for_status()
+            engagement_id = r2.json()["id"]
+
+        # Test
+        r = session.get(f"{base}/api/v2/tests/", headers=headers,
+                        params={"engagement": engagement_id, "title": "nuclei"}, timeout=10)
+        r.raise_for_status()
+        tests = r.json().get("results", [])
+        if tests:
+            return tests[0]["id"]
+        r2 = session.get(f"{base}/api/v2/test_types/", headers=headers, params={"name": "Manual"}, timeout=10)
+        r2.raise_for_status()
+        types = r2.json().get("results", [])
+        test_type_id = types[0]["id"] if types else 1
+        today = str(datetime.date.today())
+        r3 = session.post(f"{base}/api/v2/tests/", headers=headers, json={
+            "title": "nuclei", "engagement": engagement_id, "test_type": test_type_id,
+            "target_start": today, "target_end": today,
+        }, timeout=10)
+        r3.raise_for_status()
+        return r3.json()["id"]
+
+    except Exception:
+        return None
+
+
+def push_to_defectdojo(findings: list, target: str) -> int:
+    """Pousse les findings Nuclei vers DefectDojo. Retourne le nombre importé."""
+    if not findings or not DEFECTDOJO_TOKEN:
         return 0
 
     try:
         session = http_requests.Session()
         session.verify = False
+        headers = _dojo_headers()
 
-        # Authentification
-        resp = session.post(
-            f"{FARADAY_URL}/_api/login",
-            json={"email": FARADAY_USER, "password": FARADAY_PASSWORD},
-            timeout=10
-        )
-        if resp.status_code != 200:
+        test_id = _dojo_get_or_create_test(session)
+        if not test_id:
             return 0
 
         ip = _extract_ip(target)
-
-        # Créer ou récupérer le host
-        resp = session.post(
-            f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WORKSPACE}/hosts",
-            json={"ip": ip, "hostnames": [], "description": "Nuclei scan"},
-            timeout=10
-        )
-        host_id = None
-        if resp.status_code in (200, 201):
-            host_id = resp.json().get('id')
-        else:
-            resp = session.get(
-                f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WORKSPACE}/hosts",
-                params={"search": ip}, timeout=10
-            )
-            if resp.status_code == 200:
-                for row in resp.json().get('rows', []):
-                    if row.get('value', {}).get('ip') == ip:
-                        host_id = row.get('id')
-                        break
-
-        if not host_id:
-            return 0
-
         imported = 0
+
         for finding in findings:
             info = finding.get('info', {})
             severity = info.get('severity', 'info').lower()
 
-            # Extract CVE refs; fall back to URL refs
-            raw_refs = info.get('reference', [])
-            if isinstance(raw_refs, str):
-                raw_refs = [raw_refs]
-            refs = []
-            for ref in raw_refs:
-                cves = _CVE_RE.findall(ref)
-                for cve in cves:
-                    refs.append({'name': cve.upper(), 'type': 'CVE'})
-                if not cves and ref.strip():
-                    refs.append({'name': ref.strip(), 'type': 'other'})
-
-            # HTTP evidence
-            data_parts = []
-            req = finding.get('request', '')
-            resp_raw = finding.get('response', '')
-            if req:
-                data_parts.append(f"Request:\n{req[:2000]}")
-            if resp_raw:
-                data_parts.append(f"Response:\n{resp_raw[:1000]}")
-
-            # Description + remediation
             desc = info.get('description', '')
             remediation = info.get('remediation', '')
             if remediation:
                 desc = f"{desc}\n\nRemediation: {remediation}".strip()
 
-            # Tags: keep template tags + add 'nuclei'
-            tmpl_tags = list(info.get('tags', [])) if isinstance(info.get('tags'), list) else []
-            if 'nuclei' not in tmpl_tags:
-                tmpl_tags.append('nuclei')
+            req = finding.get('request', '')
+            resp_raw = finding.get('response', '')
+            evidence_parts = []
+            if req:
+                evidence_parts.append(f"Request:\n{req[:2000]}")
+            if resp_raw:
+                evidence_parts.append(f"Response:\n{resp_raw[:1000]}")
+            if evidence_parts:
+                desc = f"{desc}\n\n{'---'.join(evidence_parts)}"
 
-            vuln = {
-                'name': info.get('name', finding.get('template-id', 'Nuclei Finding')),
-                'desc': desc,
-                'severity': _SEVERITY_MAP.get(severity, 'info'),
-                'type': 'Vulnerability',
-                'parent': host_id,
-                'parent_type': 'Host',
-                'path': finding.get('matched-at', ''),
-                'refs': refs,
-                'tags': tmpl_tags,
-                'external_id': finding.get('template-id', ''),
-                'data': '\n\n'.join(data_parts),
-                'status': 'open',
-                'confirmed': False,
+            raw_refs = info.get('reference', [])
+            if isinstance(raw_refs, str):
+                raw_refs = [raw_refs]
+            cve_ids = [m for ref in raw_refs for m in _CVE_RE.findall(ref)]
+            cve_str = ", ".join(cve_ids) if cve_ids else ""
+
+            vuln_data = {
+                'title': info.get('name', finding.get('template-id', 'Nuclei Finding')),
+                'description': desc or "No description",
+                'severity': _SEVERITY_MAP.get(severity, 'info').capitalize(),
+                'active': True,
+                'verified': False,
+                'false_p': False,
+                'risk_accepted': False,
+                'test': test_id,
+                'endpoints': [{"host": ip}],
             }
+            if cve_str:
+                vuln_data['cve'] = cve_ids[0]
+
             resp = session.post(
-                f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WORKSPACE}/vulns",
-                json=vuln, timeout=10
+                f"{DEFECTDOJO_URL}/api/v2/findings/",
+                headers=headers, json=vuln_data, timeout=10
             )
             if resp.status_code in (200, 201):
                 imported += 1
@@ -296,8 +326,8 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, 
                                 except json.JSONDecodeError:
                                     pass
 
-        # Import vers Faraday
-        faraday_imported = 0
+        # Import vers DefectDojo
+        dojo_imported = 0
         ai_json = ''
         if findings_count > 0:
             all_findings = []
@@ -309,8 +339,8 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, 
                                 all_findings.append(json.loads(line))
                             except json.JSONDecodeError:
                                 pass
-            faraday_imported = push_to_faraday(all_findings, target)
-            # AI triage (fire-and-forget, does not block Faraday import)
+            dojo_imported = push_to_defectdojo(all_findings, target)
+            # AI triage (fire-and-forget, does not block import)
             severity_counts = {}
             for f in all_findings:
                 sev = f.get('info', {}).get('severity', 'info').lower()
@@ -324,8 +354,8 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, 
             'findings_count': findings_count,
             'output_file': str(output_file),
             'completed_at': datetime.now().isoformat(),
-            'faraday_imported': faraday_imported,
-            'faraday_workspace': FARADAY_WORKSPACE,
+            'dojo_imported': dojo_imported,
+            'dojo_product': DEFECTDOJO_PRODUCT,
             'ai_analysis': ai_json
         })
 
@@ -336,7 +366,7 @@ def run_nuclei_scan(scan_id: str, target: str, severity: str, tags: str = None, 
             'target': target,
             'status': 'completed',
             'findings_count': findings_count,
-            'faraday_imported': faraday_imported
+            'dojo_imported': dojo_imported
         }))
 
     except subprocess.TimeoutExpired:
@@ -399,7 +429,7 @@ async def get_scan_status(scan_id: str):
         target=scan_data.get('target', ''),
         status=scan_data.get('status', 'unknown'),
         findings_count=int(scan_data.get('findings_count', 0)),
-        faraday_imported=int(scan_data.get('faraday_imported', 0)),
+        dojo_imported=int(scan_data.get('dojo_imported', 0)),
         output_file=scan_data.get('output_file')
     )
 

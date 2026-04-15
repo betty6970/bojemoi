@@ -23,16 +23,36 @@ CREATE TABLE IF NOT EXISTS honeypot_events (
     user_agent TEXT,
     session_id VARCHAR(64),
     geo_country VARCHAR(4),
-    reported_to_faraday BOOLEAN DEFAULT FALSE,
-    faraday_vuln_id INTEGER,
+    reported_to_dojo BOOLEAN DEFAULT FALSE,
+    dojo_finding_id INTEGER,
     raw_data JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_honeypot_source_ip ON honeypot_events (source_ip);
 CREATE INDEX IF NOT EXISTS idx_honeypot_timestamp ON honeypot_events (timestamp);
 CREATE INDEX IF NOT EXISTS idx_honeypot_protocol ON honeypot_events (protocol);
-CREATE INDEX IF NOT EXISTS idx_honeypot_reported ON honeypot_events (reported_to_faraday)
-    WHERE reported_to_faraday = FALSE;
+CREATE INDEX IF NOT EXISTS idx_honeypot_reported ON honeypot_events (reported_to_dojo)
+    WHERE reported_to_dojo = FALSE;
+"""
+
+# Migration idempotente: renomme les colonnes faraday_* → dojo_* si elles existent encore
+MIGRATE_COLUMNS = """
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'honeypot_events' AND column_name = 'reported_to_faraday'
+    ) THEN
+        ALTER TABLE honeypot_events RENAME COLUMN reported_to_faraday TO reported_to_dojo;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'honeypot_events' AND column_name = 'faraday_vuln_id'
+    ) THEN
+        ALTER TABLE honeypot_events RENAME COLUMN faraday_vuln_id TO dojo_finding_id;
+    END IF;
+END
+$$;
 """
 
 INSERT_EVENT = """
@@ -58,6 +78,7 @@ async def init_db():
     )
     async with pool.acquire() as conn:
         await conn.execute(CREATE_TABLE)
+        await conn.execute(MIGRATE_COLUMNS)
     logger.info("Database initialized")
 
 

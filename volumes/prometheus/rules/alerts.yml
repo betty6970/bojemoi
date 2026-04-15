@@ -430,7 +430,7 @@ groups:
           summary: "Erreurs de scrape postgres_exporter"
           description: "Le postgres_exporter rencontre des erreurs sur {{ $labels.instance }}"
 
-      # Redis (pour Faraday)
+      # Redis (pour DefectDojo celery + ZAP queue)
       - alert: RedisDown
         expr: up{job="redis"} == 0
         for: 2m
@@ -664,36 +664,36 @@ groups:
   - name: pentest_tools
     interval: 30s
     rules:
-      # Faraday
-      - alert: FaradayDown
-        expr: up{job="faraday"} == 0
+      # DefectDojo
+      - alert: DefectDojoDown
+        expr: up{job="defectdojo"} == 0
         for: 3m
         labels:
           severity: warning
           component: pentest
         annotations:
-          summary: "Faraday DOWN"
-          description: "La plateforme Faraday ne répond plus depuis 3 minutes"
+          summary: "DefectDojo DOWN"
+          description: "La plateforme DefectDojo ne répond plus depuis 3 minutes"
 
-      - alert: FaradayHighResponseTime
-        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="faraday"}[5m])) > 5
+      - alert: DefectDojoHighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="defectdojo"}[5m])) > 5
         for: 10m
         labels:
           severity: warning
           component: pentest
         annotations:
-          summary: "Temps de réponse Faraday élevé"
-          description: "Faraday a un temps de réponse P95 de {{ $value }}s"
+          summary: "Temps de réponse DefectDojo élevé"
+          description: "DefectDojo a un temps de réponse P95 de {{ $value }}s"
 
-      - alert: FaradayHighMemory
-        expr: container_memory_usage_bytes{name=~".*faraday.*"} / container_spec_memory_limit_bytes{name=~".*faraday.*"} * 100 > 85
+      - alert: DefectDojoHighMemory
+        expr: container_memory_usage_bytes{name=~".*defectdojo.*"} / container_spec_memory_limit_bytes{name=~".*defectdojo.*"} * 100 > 85
         for: 10m
         labels:
           severity: warning
           component: pentest
         annotations:
-          summary: "Utilisation mémoire Faraday élevée"
-          description: "Faraday utilise {{ $value | humanizePercentage }} de sa limite mémoire"
+          summary: "Utilisation mémoire DefectDojo élevée"
+          description: "DefectDojo utilise {{ $value | humanizePercentage }} de sa limite mémoire"
 
       # OWASP ZAP
       - alert: ZAPDown
@@ -738,7 +738,7 @@ groups:
 
       # Métriques générales conteneurs pentest
       - alert: PentestContainerRestarting
-        expr: increase(container_restart_count{name=~".*faraday.*|.*zap.*"}[15m]) > 2
+        expr: increase(container_restart_count{name=~".*defectdojo.*|.*zap.*"}[15m]) > 2
         for: 5m
         labels:
           severity: warning
@@ -748,7 +748,7 @@ groups:
           description: "Le conteneur {{ $labels.name }} a redémarré {{ $value }} fois en 15min"
 
       - alert: PentestContainerOOMKilled
-        expr: container_memory_failcnt{name=~".*faraday.*|.*zap.*"} > 0
+        expr: container_memory_failcnt{name=~".*defectdojo.*|.*zap.*"} > 0
         for: 1m
         labels:
           severity: critical
@@ -762,7 +762,7 @@ groups:
     rules:
       # Détection de scans actifs
       - alert: HighScanActivity
-        expr: sum(rate(container_cpu_usage_seconds_total{name=~".*zap.*|.*faraday.*"}[5m])) > 3
+        expr: sum(rate(container_cpu_usage_seconds_total{name=~".*zap.*|.*defectdojo.*"}[5m])) > 3
         for: 30m
         labels:
           severity: info
@@ -771,26 +771,26 @@ groups:
           summary: "Activité de scan élevée détectée"
           description: "Une activité de scan importante est en cours (CPU cumulé {{ $value }})"
 
-      # Surveillance des vulnérabilités découvertes (si métriques custom disponibles)
-      - alert: HighSeverityVulnerabilitiesFound
-        expr: faraday_vulnerabilities{severity="critical"} > 10
+      # Surveillance des findings découverts (métriques triage agent)
+      - alert: HighSeverityFindingsFound
+        expr: triage_findings_pending{severity="critical"} > 10
         for: 5m
         labels:
           severity: warning
           component: pentest
         annotations:
-          summary: "Vulnérabilités critiques détectées"
-          description: "{{ $value }} vulnérabilités critiques trouvées dans le workspace {{ $labels.workspace }}"
+          summary: "Findings critiques en attente de triage"
+          description: "{{ $value }} findings critiques en attente dans DefectDojo"
 
-      - alert: NewCriticalVulnerability
-        expr: increase(faraday_vulnerabilities{severity="critical"}[10m]) > 0
+      - alert: NewCriticalFinding
+        expr: increase(triage_findings_processed_total[10m]) > 0 and triage_findings_pending{severity="critical"} > 0
         for: 1m
         labels:
           severity: info
           component: pentest
         annotations:
-          summary: "Nouvelle vulnérabilité critique"
-          description: "Une nouvelle vulnérabilité critique a été détectée dans {{ $labels.workspace }}"
+          summary: "Nouveaux findings critiques détectés"
+          description: "Des findings critiques ont été traités par le triage agent"
 
   - name: docker_containers
     interval: 30s

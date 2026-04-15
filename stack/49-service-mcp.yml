@@ -13,7 +13,7 @@ networks:
 secrets:
   mcp_pg_password:
     external: true
-  mcp_faraday_password:
+  mcp_dojo_token:
     external: true
 
 services:
@@ -26,13 +26,12 @@ services:
       PG_PORT: "5432"
       PG_USER: postgres
       PG_DATABASE: msf
-      FARADAY_URL: "http://faraday:5985"
-      FARADAY_USERNAME: faraday
+      DEFECTDOJO_URL: "http://defectdojo-nginx:8080"
       MCP_PORT: "8001"
       PYTHONUNBUFFERED: "1"
     secrets:
       - mcp_pg_password
-      - mcp_faraday_password
+      - mcp_dojo_token
 
     ports:
       - "8001:8001"

@@ -6,11 +6,13 @@
 networks:
   backend:
     external: true
+  monitoring:
+    external: true
 
 secrets:
   medved_pg_password:
     external: true
-  medved_faraday_password:
+  medved_dojo_token:
     external: true
 
 services:
@@ -22,16 +24,16 @@ services:
       PG_PORT: 5432
       PG_USER: postgres
       PG_DATABASE: msf
-      FARADAY_URL: http://faraday:5985
-      FARADAY_USER: faraday
-      FARADAY_WORKSPACE: honeypot
-      FARADAY_REPORT_INTERVAL: "60"
+      DEFECTDOJO_URL: http://defectdojo-nginx:8080
+      DEFECTDOJO_PRODUCT: honeypot
+      DEFECTDOJO_REPORT_INTERVAL: "60"
       IGNORE_NETWORKS: "10.0.0.0/8,172.16.0.0/12"
     secrets:
       - medved_pg_password
-      - medved_faraday_password
+      - medved_dojo_token
     networks:
       - backend
+      - monitoring
     ports:
       - target: 2222
         published: 22

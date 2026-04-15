@@ -264,15 +264,15 @@ groups:
           summary: "Security stack is degraded"
           description: "Less than 80% of security tools are operational. Current ratio: {{ $value | humanize }}"
 
-      - alert: FaradayDown
-        expr: up{service="faraday"} == 0
+      - alert: DefectDojoDown
+        expr: up{service="defectdojo"} == 0
         for: 5m
         labels:
           severity: critical
           component: security
         annotations:
-          summary: "Faraday is down"
-          description: "Faraday vulnerability management platform has been down for more than 5 minutes"
+          summary: "DefectDojo is down"
+          description: "DefectDojo vulnerability management platform has been down for more than 5 minutes"
 
       # SuricataDown is defined in alerts.yml (up{job="suricata"} == 0)
 

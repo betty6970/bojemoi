@@ -5,7 +5,7 @@ import signal
 from .config import settings
 from .db import init_db, close_db
 from .metrics import start_metrics_server
-from .faraday_reporter import faraday_reporter_loop
+from .defectdojo_reporter import defectdojo_reporter_loop
 from .protocols.ssh_handler import start_ssh_server
 from .protocols.http_handler import start_http_server
 from .protocols.rdp_handler import start_rdp_server
@@ -50,8 +50,8 @@ async def main():
         except Exception:
             logger.exception("Failed to start %s handler", name)
 
-    # Start Faraday reporter
-    reporter_task = asyncio.create_task(faraday_reporter_loop())
+    # Start DefectDojo reporter
+    reporter_task = asyncio.create_task(defectdojo_reporter_loop())
 
     logger.info("Medved honeypot ready - all protocols listening")
 

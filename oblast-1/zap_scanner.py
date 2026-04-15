@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 ZAP Scanner v2
-Architecture: Redis queue + zap_scan_log + Faraday export
+Architecture: Redis queue + zap_scan_log + DefectDojo export
 - DbFeeder thread: charge les hosts web non scannés → Redis queue
 - ScanWorker: dépile la queue, soumet à ZAP (N scans concurrents),
-  enregistre dans zap_scan_log, exporte vers Faraday
+  enregistre dans zap_scan_log, exporte vers DefectDojo
 """
 import os
 import sys
@@ -59,10 +59,9 @@ ZAP_API_KEY     = os.getenv('ZAP_API_KEY', '')
 ZAP_CONCURRENCY = int(os.getenv('ZAP_CONCURRENCY', '3'))
 ZAP_BASE        = f"http://{ZAP_HOST}:{ZAP_PORT}"
 
-FARADAY_URL      = os.getenv('FARADAY_URL', '').rstrip('/')
-FARADAY_USER     = os.getenv('FARADAY_USER', 'faraday')
-FARADAY_PASSWORD = _read_secret("faraday_password", "FARADAY_PASSWORD")
-FARADAY_WS       = os.getenv('FARADAY_WORKSPACE', 'default')
+DEFECTDOJO_URL      = os.getenv('DEFECTDOJO_URL', '').rstrip('/')
+DEFECTDOJO_TOKEN    = _read_secret("dojo_api_token", "DEFECTDOJO_TOKEN")
+DEFECTDOJO_PRODUCT  = os.getenv('DEFECTDOJO_PRODUCT', 'zap')
 
 FEED_INTERVAL = int(os.getenv('FEED_INTERVAL_SECONDS', '300'))
 BATCH_SIZE    = int(os.getenv('BATCH_SIZE', '50'))
@@ -96,17 +95,17 @@ def ensure_zap_scan_log():
                     medium     INT DEFAULT 0,
                     low        INT DEFAULT 0,
                     info       INT DEFAULT 0,
-                    faraday_ok BOOLEAN DEFAULT FALSE
+                    dojo_ok    BOOLEAN DEFAULT FALSE
                 )
             """)
             # Migration idempotente pour tables existantes
             for col, definition in [
-                ('critical',   'INT DEFAULT 0'),
-                ('high',       'INT DEFAULT 0'),
-                ('medium',     'INT DEFAULT 0'),
-                ('low',        'INT DEFAULT 0'),
-                ('info',       'INT DEFAULT 0'),
-                ('faraday_ok', 'BOOLEAN DEFAULT FALSE'),
+                ('critical', 'INT DEFAULT 0'),
+                ('high',     'INT DEFAULT 0'),
+                ('medium',   'INT DEFAULT 0'),
+                ('low',      'INT DEFAULT 0'),
+                ('info',     'INT DEFAULT 0'),
+                ('dojo_ok',  'BOOLEAN DEFAULT FALSE'),
             ]:
                 cur.execute(f"""
                     ALTER TABLE zap_scan_log
@@ -152,23 +151,23 @@ def severity_breakdown(alerts: List[Dict]) -> Dict:
 
 
 def mark_scanned(host_id: int, address: str, alerts: int, status: str = 'done',
-                 breakdown: Dict = None, faraday_ok: bool = False):
+                 breakdown: Dict = None, dojo_ok: bool = False):
     bd = breakdown or {'critical': 0, 'high': 0, 'medium': 0, 'low': 0, 'info': 0}
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO zap_scan_log
                     (host_id, address, scanned_at, alerts, status,
-                     critical, high, medium, low, info, faraday_ok)
+                     critical, high, medium, low, info, dojo_ok)
                 VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (host_id) DO UPDATE SET
                     scanned_at = NOW(), alerts = EXCLUDED.alerts, status = EXCLUDED.status,
                     critical = EXCLUDED.critical, high = EXCLUDED.high,
                     medium = EXCLUDED.medium, low = EXCLUDED.low,
-                    info = EXCLUDED.info, faraday_ok = EXCLUDED.faraday_ok
+                    info = EXCLUDED.info, dojo_ok = EXCLUDED.dojo_ok
             """, (host_id, address, alerts, status,
                   bd['critical'], bd['high'], bd['medium'], bd['low'], bd['info'],
-                  faraday_ok))
+                  dojo_ok))
         conn.commit()
 
 
@@ -258,43 +257,108 @@ def zap_alerts(url: str) -> List[Dict]:
     return []
 
 
-# ── Faraday client ────────────────────────────────────────────────────────────
+# ── DefectDojo client ─────────────────────────────────────────────────────────
 
-def faraday_get_or_create_host(ip: str, auth: tuple) -> Optional[int]:
-    """Crée le host dans Faraday si nécessaire, retourne son ID."""
-    base = f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WS}"
-    # Créer (ignore 409 si déjà existant)
-    requests.post(f"{base}/hosts", auth=auth, json={"ip": ip, "description": "ZAP scan target"}, timeout=10)
-    # Récupérer l'ID
+_ZAP_SEV = {3: 'High', 2: 'Medium', 1: 'Low', 0: 'Info'}
+
+_dojo_test_cache: Dict[str, int] = {}  # product_name → test_id
+
+
+def _dojo_headers() -> Dict:
+    if DEFECTDOJO_TOKEN:
+        return {"Authorization": f"Token {DEFECTDOJO_TOKEN}"}
+    return {}
+
+
+def _dojo_get_or_create_test(product_name: str) -> Optional[int]:
+    """Retourne l'ID du test DefectDojo pour le product ZAP. Cache en mémoire."""
+    if product_name in _dojo_test_cache:
+        return _dojo_test_cache[product_name]
+
+    base = DEFECTDOJO_URL
+    headers = _dojo_headers()
+    import datetime
+
     try:
-        r = requests.get(f"{base}/hosts", auth=auth, params={"search": ip}, timeout=10)
-        if r.status_code == 200:
-            rows = r.json().get("rows", [])
-            if rows:
-                return rows[0]["id"]
+        # Product
+        r = requests.get(f"{base}/api/v2/products/", headers=headers, params={"name": product_name}, timeout=10)
+        r.raise_for_status()
+        products = r.json().get("results", [])
+        if products:
+            product_id = products[0]["id"]
+        else:
+            r2 = requests.get(f"{base}/api/v2/product_types/", headers=headers, params={"limit": 1}, timeout=10)
+            r2.raise_for_status()
+            types = r2.json().get("results", [])
+            prod_type_id = types[0]["id"] if types else 1
+            r3 = requests.post(f"{base}/api/v2/products/", headers=headers, json={
+                "name": product_name, "description": "ZAP scans", "prod_type": prod_type_id,
+            }, timeout=10)
+            r3.raise_for_status()
+            product_id = r3.json()["id"]
+
+        # Engagement
+        r = requests.get(f"{base}/api/v2/engagements/", headers=headers,
+                         params={"product": product_id, "name": "zap"}, timeout=10)
+        r.raise_for_status()
+        engagements = r.json().get("results", [])
+        if engagements:
+            engagement_id = engagements[0]["id"]
+        else:
+            today = str(datetime.date.today())
+            r2 = requests.post(f"{base}/api/v2/engagements/", headers=headers, json={
+                "name": "zap", "product": product_id,
+                "target_start": today, "target_end": today,
+                "status": "In Progress", "engagement_type": "Interactive",
+            }, timeout=10)
+            r2.raise_for_status()
+            engagement_id = r2.json()["id"]
+
+        # Test
+        r = requests.get(f"{base}/api/v2/tests/", headers=headers,
+                         params={"engagement": engagement_id, "title": "zap"}, timeout=10)
+        r.raise_for_status()
+        tests = r.json().get("results", [])
+        if tests:
+            test_id = tests[0]["id"]
+        else:
+            r2 = requests.get(f"{base}/api/v2/test_types/", headers=headers, params={"name": "Manual"}, timeout=10)
+            r2.raise_for_status()
+            types = r2.json().get("results", [])
+            test_type_id = types[0]["id"] if types else 1
+            today = str(datetime.date.today())
+            r3 = requests.post(f"{base}/api/v2/tests/", headers=headers, json={
+                "title": "zap", "engagement": engagement_id, "test_type": test_type_id,
+                "target_start": today, "target_end": today,
+            }, timeout=10)
+            r3.raise_for_status()
+            test_id = r3.json()["id"]
+
+        _dojo_test_cache[product_name] = test_id
+        return test_id
+
     except Exception as e:
-        logger.debug(f"Faraday host lookup failed for {ip}: {e}")
-    return None
+        logger.debug(f"DefectDojo setup failed: {e}")
+        return None
 
 
-_ZAP_SEV = {3: 'high', 2: 'medium', 1: 'low', 0: 'info'}
-
-
-def faraday_post_vulns(address: str, alerts: List[Dict]) -> int:
-    if not FARADAY_URL or not FARADAY_PASSWORD or not alerts:
+def dojo_post_vulns(address: str, alerts: List[Dict]) -> int:
+    if not DEFECTDOJO_URL or not DEFECTDOJO_TOKEN or not alerts:
         return 0
-    auth = (FARADAY_USER, FARADAY_PASSWORD)
+
     ip = address.split('/')[0]
-    host_id = faraday_get_or_create_host(ip, auth)
-    if not host_id:
-        logger.debug(f"Faraday: impossible de récupérer host_id pour {ip}")
-        return
+    test_id = _dojo_get_or_create_test(DEFECTDOJO_PRODUCT)
+    if not test_id:
+        logger.debug(f"DefectDojo: cannot get test_id for {ip}")
+        return 0
+
+    headers = _dojo_headers()
     posted = 0
+
     for alert in alerts:
         riskcode = int(alert.get('riskcode', 0))
-        severity = _ZAP_SEV.get(riskcode, 'info')
+        severity = _ZAP_SEV.get(riskcode, 'Info')
 
-        # HTTP evidence from first instance
         instances = alert.get('instances', [])
         first_inst = instances[0] if instances else {}
         evidence_parts = []
@@ -306,45 +370,38 @@ def faraday_post_vulns(address: str, alerts: List[Dict]) -> int:
             evidence_parts.append(f"Evidence: {first_inst['evidence']}")
 
         solution = alert.get('solution', '')
-        data_parts = []
+        desc_parts = [alert.get('description', '')]
         if solution:
-            data_parts.append(f"Solution: {solution}")
+            desc_parts.append(f"\nSolution: {solution}")
         if evidence_parts:
-            data_parts.append('\n'.join(evidence_parts))
+            desc_parts.append('\n'.join(evidence_parts))
 
-        # Refs: split multi-line reference field
-        ref_str = alert.get('reference', '')
-        refs = [{'name': r.strip(), 'type': 'other'} for r in ref_str.split('\n') if r.strip()]
-
-        vuln = {
-            'name': alert.get('name', 'ZAP finding'),
-            'desc': alert.get('description', ''),
+        finding = {
+            'title': alert.get('name', 'ZAP finding'),
+            'description': '\n\n'.join(filter(None, desc_parts)) or "No description",
             'severity': severity,
-            'refs': refs,
-            'data': '\n\n'.join(data_parts),
-            'type': 'Vulnerability',
-            'parent': host_id,
-            'parent_type': 'Host',
-            'status': 'open',
-            'confirmed': False,
-            'tags': ['zap'],
+            'active': True,
+            'verified': False,
+            'false_p': False,
+            'risk_accepted': False,
+            'test': test_id,
+            'endpoints': [{"host": ip}],
         }
         try:
             r = requests.post(
-                f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WS}/vulns",
-                auth=auth, json=vuln, timeout=10
+                f"{DEFECTDOJO_URL}/api/v2/findings/",
+                headers=headers, json=finding, timeout=10,
             )
             if r.status_code in (200, 201):
                 posted += 1
-            elif r.status_code == 409:
-                posted += 1  # déjà existant = OK
             else:
-                logger.debug(f"Faraday POST {r.status_code} for {ip}: {r.text[:100]}")
+                logger.debug(f"DefectDojo POST {r.status_code} for {ip}: {r.text[:100]}")
         except Exception as e:
-            logger.debug(f"Faraday POST failed for {ip}: {e}")
-        time.sleep(0.15)  # throttle: max ~6 req/s pour ne pas saturer Faraday
+            logger.debug(f"DefectDojo POST failed for {ip}: {e}")
+        time.sleep(0.15)
+
     if posted:
-        logger.info(f"[FARADAY] {ip} → {posted}/{len(alerts)} vulns postées")
+        logger.info(f"[DEFECTDOJO] {ip} → {posted}/{len(alerts)} findings posted")
     return posted
 
 
@@ -473,14 +530,14 @@ def run_scanner(rdb: redis.Redis):
                         logger.info(f"[ASCAN] {url} terminé — récupération alertes")
                         alerts = zap_alerts(url)
                         bd = severity_breakdown(alerts)
-                        faraday_ok = faraday_post_vulns(scan.address, alerts) > 0
+                        dojo_ok = dojo_post_vulns(scan.address, alerts) > 0
                         significant = bd['critical'] + bd['high'] + bd['medium'] + bd['low']
                         status = 'done' if alerts else 'no_findings'
                         mark_scanned(scan.host_id, scan.address, significant, status,
-                                     breakdown=bd, faraday_ok=faraday_ok)
+                                     breakdown=bd, dojo_ok=dojo_ok)
                         logger.info(f"[DONE] {url} — {len(alerts)} alertes "
                                     f"(h={bd['high']} m={bd['medium']} l={bd['low']}) "
-                                    f"faraday={'ok' if faraday_ok else 'no'}")
+                                    f"dojo={'ok' if dojo_ok else 'no'}")
                         del active[url]
                     else:
                         logger.debug(f"[ASCAN] {url} {pct}%")
@@ -520,7 +577,16 @@ def run_scanner(rdb: redis.Redis):
 def main():
     logger.info("ZAP Scanner v2 démarrage")
 
-    ensure_zap_scan_log()
+    for attempt in range(1, 11):
+        try:
+            ensure_zap_scan_log()
+            break
+        except psycopg2.OperationalError as e:
+            logger.warning(f"Postgres indisponible (tentative {attempt}/10): {e}")
+            if attempt == 10:
+                logger.error("Postgres inaccessible après 10 tentatives — abandon")
+                sys.exit(1)
+            time.sleep(10)
 
     if not zap_ready():
         sys.exit(1)

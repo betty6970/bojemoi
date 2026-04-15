@@ -20,9 +20,9 @@ events_total = Counter(
     ["protocol", "event_type"],
 )
 
-faraday_reports_total = Counter(
-    "medved_faraday_reports_total",
-    "Events reported to Faraday",
+dojo_reports_total = Counter(
+    "medved_dojo_reports_total",
+    "Events reported to DefectDojo",
     ["status"],
 )
 

@@ -19,13 +19,11 @@ class Settings(BaseSettings):
     pg_password: str = "postgres"
     pg_database: str = "msf"
 
-    # Faraday
-    faraday_url: str = "http://faraday:5985"
-    faraday_token: str = ""
-    faraday_user: str = "faraday"
-    faraday_password: str = ""
-    faraday_workspace: str = "honeypot"
-    faraday_report_interval: int = 60
+    # DefectDojo
+    defectdojo_url: str = "http://defectdojo-nginx:8080"
+    defectdojo_token: str = ""
+    defectdojo_product: str = "honeypot"
+    defectdojo_report_interval: int = 60
 
     # Honeypot
     ssh_port: int = 2222
@@ -45,8 +43,8 @@ class Settings(BaseSettings):
     def _load_secrets(self):
         if (v := _read_secret("medved_pg_password")) is not None:
             self.pg_password = v
-        if (v := _read_secret("medved_faraday_password")) is not None:
-            self.faraday_password = v
+        if (v := _read_secret("medved_dojo_token")) is not None:
+            self.defectdojo_token = v
         return self
 
     def is_ignored(self, ip: str) -> bool:
