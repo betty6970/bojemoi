@@ -258,7 +258,7 @@ services:
       DEFECTDOJO_URL: http://defectdojo-nginx:8080
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: mistral:7b-instruct
-      DRY_RUN: "true"
+      DRY_RUN: "false"
       SCHEDULE_HOURS: "6"
       BATCH_SIZE: "100"
       METRICS_PORT: "9303"
