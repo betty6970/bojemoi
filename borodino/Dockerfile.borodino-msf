@@ -21,7 +21,10 @@ RUN apk add --no-cache --virtual .build-deps \
 # Install Python dependencies for pymetasploit3
 RUN pip3 install --no-cache-dir --break-system-packages msgpack retry && \
     pip3 install --no-cache-dir --break-system-packages pymetasploit3 && \
-    pip3 install --no-cache-dir --break-system-packages anthropic
+    pip3 install --no-cache-dir --break-system-packages anthropic && \
+    # Fix pymetasploit3 compatibility with msgpack>=1.0 (bytes keys vs str keys)
+    find /usr -name "msfrpc.py" -path "*/pymetasploit3/*" -exec \
+        sed -i 's/msgpack\.unpackb(\(.*\))/msgpack.unpackb(\1, raw=False)/g' {} \;
 
 # Set the working directory
 WORKDIR /opt/metasploit

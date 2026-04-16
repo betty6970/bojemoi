@@ -13,6 +13,7 @@ import subprocess
 import psycopg2
 import requests
 from pathlib import Path
+from typing import Optional
 from pymetasploit3.msfrpc import MsfRpcClient
 
 try:
