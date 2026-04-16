@@ -102,9 +102,6 @@ services:
         - traefik.http.routers.defectdojo.entrypoints=websecure
         - traefik.http.routers.defectdojo.tls=true
         - traefik.http.services.defectdojo.loadbalancer.server.port=8080
-        - "prometheus.enable=true"
-        - "prometheus.port=9113"
-        - "prometheus.path=/metrics"
 
   # ─── Django uWSGI application ─────────────────────────────────────────────────
   defectdojo-uwsgi:

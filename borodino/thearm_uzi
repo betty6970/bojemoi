@@ -45,10 +45,9 @@ PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 
 MODE_RUN = int(os.getenv("MODE_RUN", "1"))
 
-FARADAY_URL      = os.getenv('FARADAY_URL', '').rstrip('/')
-FARADAY_USER     = os.getenv('FARADAY_USER', 'faraday')
-FARADAY_PASSWORD = _read_secret("faraday_password", "FARADAY_PASSWORD")
-FARADAY_WS       = os.getenv('FARADAY_WORKSPACE', 'default')
+DEFECTDOJO_URL     = 'http://defectdojo-nginx:8080'
+DEFECTDOJO_TOKEN   = _read_secret("dojo_api_token")
+DEFECTDOJO_PRODUCT = 'uzi'
 
 def _detect_local_ip() -> str:
     for url in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"):
@@ -610,57 +609,106 @@ def report_note(address, enriched_info):
         print(f"[DB] Erreur report_note: {e}")
 
 
-def faraday_get_or_create_host(ip: str):
-    """Crée le host dans Faraday si nécessaire, retourne son ID."""
-    if not FARADAY_URL or not FARADAY_PASSWORD:
-        return None
-    auth = (FARADAY_USER, FARADAY_PASSWORD)
-    base = f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WS}"
-    try:
-        requests.post(f"{base}/hosts", auth=auth,
-                      json={"ip": ip, "description": "UZI exploit target"}, timeout=10)
-        r = requests.get(f"{base}/hosts", auth=auth, params={"search": ip}, timeout=10)
-        if r.status_code == 200:
-            rows = r.json().get("rows", [])
-            if rows:
-                return rows[0]["id"]
-    except Exception as e:
-        print(f"[FARADAY] host lookup failed for {ip}: {e}")
-    return None
-
-
 _MSF_RANK_SEV = {
-    600: 'critical', 500: 'critical',   # Excellent, Great → confirmed RCE
-    400: 'high',                         # Good
-    300: 'high', 200: 'medium',          # Normal, Average
-    100: 'low',  0: 'low',              # Low, Manual
+    600: 'Critical', 500: 'Critical',
+    400: 'High',
+    300: 'High', 200: 'Medium',
+    100: 'Low',  0: 'Low',
+}
+_MSF_RANK_NUM = {
+    600: 'S0', 500: 'S0',
+    400: 'S1',
+    300: 'S1', 200: 'S2',
+    100: 'S3',  0: 'S3',
 }
 
+_dojo_uzi_test_id: Optional[int] = None
 
-def faraday_report_pwn(address: str, exploit_name: str, payload_name: str,
-                       session_info: dict = None, mod_info: dict = None) -> bool:
-    """Enregistre un exploit confirmé dans Faraday comme vuln critique."""
-    if not FARADAY_URL or not FARADAY_PASSWORD:
+def _dojo_headers() -> dict:
+    return {"Authorization": f"Token {DEFECTDOJO_TOKEN}"}
+
+def _dojo_get_or_create_test() -> Optional[int]:
+    global _dojo_uzi_test_id
+    if _dojo_uzi_test_id:
+        return _dojo_uzi_test_id
+    if not DEFECTDOJO_TOKEN:
+        return None
+    import datetime
+    base = DEFECTDOJO_URL
+    h = _dojo_headers()
+    try:
+        # Product
+        r = requests.get(f"{base}/api/v2/products/", headers=h, params={"name": DEFECTDOJO_PRODUCT}, timeout=10)
+        r.raise_for_status()
+        products = r.json().get("results", [])
+        if products:
+            product_id = products[0]["id"]
+        else:
+            r2 = requests.get(f"{base}/api/v2/product_types/", headers=h, params={"limit": 1}, timeout=10)
+            r2.raise_for_status()
+            pt = r2.json().get("results", [{}])
+            prod_type_id = pt[0].get("id", 1) if pt else 1
+            r3 = requests.post(f"{base}/api/v2/products/", headers=h, json={
+                "name": DEFECTDOJO_PRODUCT, "description": "Metasploit exploits (uzi)",
+                "prod_type": prod_type_id,
+            }, timeout=10)
+            r3.raise_for_status()
+            product_id = r3.json()["id"]
+        # Engagement
+        today = str(datetime.date.today())
+        r = requests.get(f"{base}/api/v2/engagements/", headers=h,
+                         params={"product": product_id, "name": "uzi"}, timeout=10)
+        r.raise_for_status()
+        engs = r.json().get("results", [])
+        if engs:
+            engagement_id = engs[0]["id"]
+        else:
+            r2 = requests.post(f"{base}/api/v2/engagements/", headers=h, json={
+                "name": "uzi", "product": product_id,
+                "target_start": today, "target_end": today,
+                "status": "In Progress", "engagement_type": "Interactive",
+            }, timeout=10)
+            r2.raise_for_status()
+            engagement_id = r2.json()["id"]
+        # Test type
+        r = requests.get(f"{base}/api/v2/test_types/", headers=h, params={"name": "Manual"}, timeout=10)
+        r.raise_for_status()
+        tts = r.json().get("results", [])
+        tt_id = tts[0]["id"] if tts else 1
+        # Test
+        r = requests.get(f"{base}/api/v2/tests/", headers=h,
+                         params={"engagement": engagement_id, "title": "uzi"}, timeout=10)
+        r.raise_for_status()
+        tests = r.json().get("results", [])
+        if tests:
+            test_id = tests[0]["id"]
+        else:
+            r2 = requests.post(f"{base}/api/v2/tests/", headers=h, json={
+                "title": "uzi", "engagement": engagement_id, "test_type": tt_id,
+                "target_start": today, "target_end": today,
+            }, timeout=10)
+            r2.raise_for_status()
+            test_id = r2.json()["id"]
+        _dojo_uzi_test_id = test_id
+        return test_id
+    except Exception as e:
+        print(f"[DOJO] setup failed: {e}")
+        return None
+
+
+def dojo_report_pwn(address: str, exploit_name: str, payload_name: str,
+                    session_info: dict = None, mod_info: dict = None) -> bool:
+    """Enregistre un exploit confirmé dans DefectDojo comme finding critique."""
+    if not DEFECTDOJO_TOKEN:
         return False
     ip = str(address).split('/')[0]
-    host_id = faraday_get_or_create_host(ip)
-    if not host_id:
+    test_id = _dojo_get_or_create_test()
+    if not test_id:
         return False
-    auth = (FARADAY_USER, FARADAY_PASSWORD)
 
-    # Severity from MSF module rank
     rank = int((mod_info or {}).get('rank', 600))
-    severity = _MSF_RANK_SEV.get(rank, 'critical')
-
-    # CVE refs from module metadata
-    refs = [{'name': 'Metasploit', 'type': 'other'}]
-    for ref_pair in (mod_info or {}).get('references', []):
-        if isinstance(ref_pair, (list, tuple)) and len(ref_pair) == 2:
-            ref_type, ref_val = ref_pair
-            if str(ref_type).upper() == 'CVE':
-                refs.append({'name': f"CVE-{ref_val}", 'type': 'CVE'})
-            elif str(ref_type).upper() in ('BID', 'URL', 'EDB'):
-                refs.append({'name': str(ref_val), 'type': 'other'})
+    severity = _MSF_RANK_SEV.get(rank, 'Critical')
+    num_sev = _MSF_RANK_NUM.get(rank, 'S0')
 
     desc_parts = [f"Exploit: {exploit_name}", f"Payload: {payload_name}"]
     if session_info:
@@ -668,33 +716,40 @@ def faraday_report_pwn(address: str, exploit_name: str, payload_name: str,
             v = (session_info.get(k) or '').strip()
             if v:
                 desc_parts.append(f"{k}: {v}")
+    refs = []
+    for ref_pair in (mod_info or {}).get('references', []):
+        if isinstance(ref_pair, (list, tuple)) and len(ref_pair) == 2:
+            ref_type, ref_val = ref_pair
+            if str(ref_type).upper() == 'CVE':
+                refs.append(f"CVE-{ref_val}")
 
-    vuln = {
-        'name': exploit_name,
-        'desc': '\n'.join(desc_parts),
+    finding = {
+        'title': exploit_name,
+        'description': '\n'.join(desc_parts),
         'severity': severity,
-        'refs': refs,
-        'data': f"payload: {payload_name}",
-        'type': 'Vulnerability',
-        'parent': host_id,
-        'parent_type': 'Host',
-        'status': 'open',
-        'confirmed': True,
-        'tags': ['metasploit'],
+        'numerical_severity': num_sev,
+        'found_by': [1],
+        'test': test_id,
+        'active': True,
+        'verified': True,
+        'false_p': False,
+        'risk_accepted': False,
+        'endpoints': [{"host": ip}],
+        'tags': ['metasploit', 'rce'],
     }
+    if refs:
+        finding['cve'] = refs[0]
     try:
-        r = requests.post(
-            f"{FARADAY_URL}/_api/v3/ws/{FARADAY_WS}/vulns",
-            auth=auth, json=vuln, timeout=10
-        )
-        if r.status_code in (200, 201, 409):
-            print(f"[FARADAY] {ip} — {exploit_name} → vuln {severity} postée")
+        r = requests.post(f"{DEFECTDOJO_URL}/api/v2/findings/", headers=_dojo_headers(),
+                          json=finding, timeout=10)
+        if r.status_code in (200, 201):
+            print(f"[DOJO] {ip} — {exploit_name} → finding {severity} créé")
             return True
         else:
-            print(f"[FARADAY] POST {r.status_code}: {r.text[:100]}")
+            print(f"[DOJO] POST {r.status_code}: {r.text[:100]}")
             return False
     except Exception as e:
-        print(f"[FARADAY] POST failed: {e}")
+        print(f"[DOJO] POST failed: {e}")
         return False
 
 
@@ -1052,8 +1107,9 @@ def run_brute_force_service(client, host, port, cfg_name, cfg, upgraded_sessions
             print(f"[BRUTE:{cfg_name.upper()}] {len(cred_lines)} credential(s) trouvé(s):")
             for line in cred_lines[:5]:
                 print(f"  {line.strip()}")
-            faraday_report_pwn(str(host), f'auxiliary/{module}',
-                               f'credential bruteforce port {port}')
+            if dojo_report_pwn(str(host), f'auxiliary/{module}',
+                               f'credential bruteforce port {port}'):
+                stats['faraday_ok'] = True
 
         # Vérifier nouvelles sessions (SSH, FTP, Telnet, SMB, VNC peuvent en ouvrir)
         sessions_now = client.sessions.list
@@ -1209,7 +1265,7 @@ def upgrade_to_meterpreter(client, sid, host, bind_port=None):
             except Exception as e:
                 print(f"[UPGRADE] Enrichissement session échoué: {e}")
             report_note(host, enriched)
-            faraday_report_pwn(str(host), enriched.get('via_exploit', '?'),
+            dojo_report_pwn(str(host), enriched.get('via_exploit', '?'),
                                enriched.get('via_payload', '?'), enriched)
             send_telegram_alert({msid: enriched}, host)
             return msid
@@ -1503,7 +1559,7 @@ def main():
                          stats['pwned'].append((mod['fullname'], p))
                          print(f"[PWN] {mod['fullname']} → sessions {sorted(new_sessions)}")
                          report_vuln(str(host), mod['fullname'], p, sorted(new_sessions)[0])
-                         if faraday_report_pwn(str(host), mod['fullname'], p, mod_info=mod):
+                         if dojo_report_pwn(str(host), mod['fullname'], p, mod_info=mod):
                              stats['faraday_ok'] = True
                          break  # session ouverte — inutile d'essayer d'autres payloads
          check_con.destroy()

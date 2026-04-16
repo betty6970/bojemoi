@@ -260,8 +260,10 @@ def zap_alerts(url: str) -> List[Dict]:
 # ── DefectDojo client ─────────────────────────────────────────────────────────
 
 _ZAP_SEV = {3: 'High', 2: 'Medium', 1: 'Low', 0: 'Info'}
+_ZAP_NUM_SEV = {3: 'S1', 2: 'S2', 1: 'S3', 0: 'S4'}  # numerical_severity requis par DefectDojo
 
 _dojo_test_cache: Dict[str, int] = {}  # product_name → test_id
+_dojo_test_type_cache: Dict[str, int] = {}  # test_type name → id
 
 
 def _dojo_headers() -> Dict:
@@ -314,6 +316,16 @@ def _dojo_get_or_create_test(product_name: str) -> Optional[int]:
             r2.raise_for_status()
             engagement_id = r2.json()["id"]
 
+        # Test type: préférer "ZAP Scan"
+        r2 = requests.get(f"{base}/api/v2/test_types/", headers=headers, params={"name": "ZAP Scan"}, timeout=10)
+        r2.raise_for_status()
+        types = r2.json().get("results", [])
+        if not types:
+            r2 = requests.get(f"{base}/api/v2/test_types/", headers=headers, params={"limit": 1}, timeout=10)
+            r2.raise_for_status()
+            types = r2.json().get("results", [])
+        test_type_id = types[0]["id"] if types else 1
+
         # Test
         r = requests.get(f"{base}/api/v2/tests/", headers=headers,
                          params={"engagement": engagement_id, "title": "zap"}, timeout=10)
@@ -322,10 +334,6 @@ def _dojo_get_or_create_test(product_name: str) -> Optional[int]:
         if tests:
             test_id = tests[0]["id"]
         else:
-            r2 = requests.get(f"{base}/api/v2/test_types/", headers=headers, params={"name": "Manual"}, timeout=10)
-            r2.raise_for_status()
-            types = r2.json().get("results", [])
-            test_type_id = types[0]["id"] if types else 1
             today = str(datetime.date.today())
             r3 = requests.post(f"{base}/api/v2/tests/", headers=headers, json={
                 "title": "zap", "engagement": engagement_id, "test_type": test_type_id,
@@ -335,6 +343,7 @@ def _dojo_get_or_create_test(product_name: str) -> Optional[int]:
             test_id = r3.json()["id"]
 
         _dojo_test_cache[product_name] = test_id
+        _dojo_test_type_cache[product_name] = test_type_id
         return test_id
 
     except Exception as e:
@@ -376,10 +385,13 @@ def dojo_post_vulns(address: str, alerts: List[Dict]) -> int:
         if evidence_parts:
             desc_parts.append('\n'.join(evidence_parts))
 
+        test_type_id = _dojo_test_type_cache.get(DEFECTDOJO_PRODUCT, 1)
         finding = {
             'title': alert.get('name', 'ZAP finding'),
             'description': '\n\n'.join(filter(None, desc_parts)) or "No description",
             'severity': severity,
+            'numerical_severity': _ZAP_NUM_SEV.get(riskcode, 'S4'),
+            'found_by': [test_type_id],
             'active': True,
             'verified': False,
             'false_p': False,
