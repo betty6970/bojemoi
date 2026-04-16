@@ -262,8 +262,10 @@ def zap_alerts(url: str) -> List[Dict]:
 _ZAP_SEV = {3: 'High', 2: 'Medium', 1: 'Low', 0: 'Info'}
 _ZAP_NUM_SEV = {3: 'S1', 2: 'S2', 1: 'S3', 0: 'S4'}  # numerical_severity requis par DefectDojo
 
-_dojo_test_cache: Dict[str, int] = {}  # product_name → test_id
-_dojo_test_type_cache: Dict[str, int] = {}  # test_type name → id
+_dojo_test_cache: Dict[str, int] = {}       # product_name → test_id
+_dojo_test_type_cache: Dict[str, int] = {}  # product_name → test_type_id
+_dojo_product_cache: Dict[str, int] = {}    # product_name → product_id
+_dojo_endpoint_cache: Dict[str, int] = {}   # host → endpoint_id
 
 
 def _dojo_headers() -> Dict:
@@ -344,10 +346,40 @@ def _dojo_get_or_create_test(product_name: str) -> Optional[int]:
 
         _dojo_test_cache[product_name] = test_id
         _dojo_test_type_cache[product_name] = test_type_id
+        _dojo_product_cache[product_name] = product_id
         return test_id
 
     except Exception as e:
         logger.debug(f"DefectDojo setup failed: {e}")
+        return None
+
+
+def _dojo_get_or_create_endpoint(host: str, product_name: str) -> Optional[int]:
+    """Retourne l'ID de l'endpoint DefectDojo pour un host. Crée si nécessaire."""
+    if host in _dojo_endpoint_cache:
+        return _dojo_endpoint_cache[host]
+    product_id = _dojo_product_cache.get(product_name)
+    if not product_id:
+        return None
+    base = DEFECTDOJO_URL
+    headers = _dojo_headers()
+    try:
+        r = requests.get(f"{base}/api/v2/endpoints/", headers=headers,
+                         params={"host": host, "product": product_id}, timeout=10)
+        r.raise_for_status()
+        results = r.json().get("results", [])
+        if results:
+            eid = results[0]["id"]
+        else:
+            r2 = requests.post(f"{base}/api/v2/endpoints/", headers=headers,
+                               json={"host": host, "product": product_id}, timeout=10)
+            if r2.status_code not in (200, 201):
+                return None
+            eid = r2.json()["id"]
+        _dojo_endpoint_cache[host] = eid
+        return eid
+    except Exception as e:
+        logger.debug(f"DefectDojo endpoint failed for {host}: {e}")
         return None
 
 
@@ -361,6 +393,7 @@ def dojo_post_vulns(address: str, alerts: List[Dict]) -> int:
         logger.debug(f"DefectDojo: cannot get test_id for {ip}")
         return 0
 
+    endpoint_id = _dojo_get_or_create_endpoint(ip, DEFECTDOJO_PRODUCT)
     headers = _dojo_headers()
     posted = 0
 
@@ -397,8 +430,9 @@ def dojo_post_vulns(address: str, alerts: List[Dict]) -> int:
             'false_p': False,
             'risk_accepted': False,
             'test': test_id,
-            'endpoints': [{"host": ip}],
         }
+        if endpoint_id:
+            finding['endpoints'] = [endpoint_id]
         try:
             r = requests.post(
                 f"{DEFECTDOJO_URL}/api/v2/findings/",
