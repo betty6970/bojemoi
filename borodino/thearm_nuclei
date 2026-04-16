@@ -284,19 +284,19 @@ def mark_running(conn, host_id: int, address: str, tags: str):
     conn.commit()
 
 
-def mark_result(conn, host_id: int, status: str, findings: dict, faraday_ok: bool):
+def mark_result(conn, host_id: int, status: str, findings: dict, dojo_imported: int):
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE nuclei_scan_log SET
-                status      = %s,
-                findings    = %s,
-                critical    = %s,
-                high        = %s,
-                medium      = %s,
-                low         = %s,
-                info        = %s,
-                faraday_ok  = %s,
-                scanned_at  = now()
+                status        = %s,
+                findings      = %s,
+                critical      = %s,
+                high          = %s,
+                medium        = %s,
+                low           = %s,
+                info          = %s,
+                dojo_imported = %s,
+                scanned_at    = now()
             WHERE host_id = %s
         """, (
             status,
@@ -306,7 +306,7 @@ def mark_result(conn, host_id: int, status: str, findings: dict, faraday_ok: boo
             findings.get('medium', 0),
             findings.get('low', 0),
             findings.get('info', 0),
-            faraday_ok,
+            dojo_imported,
             host_id
         ))
     conn.commit()
@@ -454,7 +454,7 @@ def run():
             scan_data = wait_for_scan(scan_id)
             final_status = scan_data.get('status', 'error')
             findings_count = scan_data.get('findings_count', 0)
-            faraday_imported = scan_data.get('faraday_imported', 0)
+            faraday_imported = scan_data.get('dojo_imported', 0)
 
             if findings_count > 0:
                 findings = parse_severity_breakdown(scan_id)
@@ -469,7 +469,7 @@ def run():
                 db_status = final_status
 
             conn = get_db_conn()
-            mark_result(conn, host_id, db_status, findings, faraday_imported > 0)
+            mark_result(conn, host_id, db_status, findings, faraday_imported)
             conn.close()
             conn = None
 
@@ -477,7 +477,7 @@ def run():
                 f'[{address}] {db_status} | '
                 f'findings={findings_count} '
                 f'(crit={findings["critical"]} high={findings["high"]} med={findings["medium"]}) '
-                f'| faraday={faraday_imported}'
+                f'| dojo={faraday_imported}'
             )
 
         except redis.ConnectionError as e:
