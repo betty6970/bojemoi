@@ -93,6 +93,10 @@ _SEVERITY_MAP = {
     'medium': 'medium', 'low': 'low', 'info': 'info'
 }
 
+_NUCLEI_NUM_SEV = {
+    'critical': 'S0', 'high': 'S1', 'medium': 'S2', 'low': 'S3', 'info': 'S4'
+}
+
 _CVE_RE = re.compile(r'CVE-\d{4}-\d+', re.I)
 
 
@@ -102,12 +106,13 @@ def _dojo_headers() -> dict:
     return {}
 
 
-def _dojo_get_or_create_test(session: http_requests.Session) -> int | None:
-    """Retourne l'ID du test DefectDojo pour le product nuclei. Crée la hiérarchie si nécessaire."""
+def _dojo_get_or_create_test(session: http_requests.Session) -> tuple[int, int, int] | tuple[None, None, None]:
+    """Retourne (test_id, test_type_id, product_id) pour le product nuclei. Crée la hiérarchie si nécessaire."""
     base = DEFECTDOJO_URL
     headers = _dojo_headers()
 
     try:
+        import datetime
         # Product
         r = session.get(f"{base}/api/v2/products/", headers=headers, params={"name": DEFECTDOJO_PRODUCT}, timeout=10)
         r.raise_for_status()
@@ -126,7 +131,6 @@ def _dojo_get_or_create_test(session: http_requests.Session) -> int | None:
             product_id = r3.json()["id"]
 
         # Engagement
-        import datetime
         r = session.get(f"{base}/api/v2/engagements/", headers=headers,
                         params={"product": product_id, "name": "nuclei"}, timeout=10)
         r.raise_for_status()
@@ -143,27 +147,53 @@ def _dojo_get_or_create_test(session: http_requests.Session) -> int | None:
             r2.raise_for_status()
             engagement_id = r2.json()["id"]
 
+        # Test type (Nuclei Scan ou Manual)
+        r2 = session.get(f"{base}/api/v2/test_types/", headers=headers, params={"name": "Nuclei Scan"}, timeout=10)
+        r2.raise_for_status()
+        types = r2.json().get("results", [])
+        if not types:
+            r2 = session.get(f"{base}/api/v2/test_types/", headers=headers, params={"name": "Manual"}, timeout=10)
+            r2.raise_for_status()
+            types = r2.json().get("results", [])
+        test_type_id = types[0]["id"] if types else 1
+
         # Test
         r = session.get(f"{base}/api/v2/tests/", headers=headers,
                         params={"engagement": engagement_id, "title": "nuclei"}, timeout=10)
         r.raise_for_status()
         tests = r.json().get("results", [])
         if tests:
-            return tests[0]["id"]
-        r2 = session.get(f"{base}/api/v2/test_types/", headers=headers, params={"name": "Manual"}, timeout=10)
-        r2.raise_for_status()
-        types = r2.json().get("results", [])
-        test_type_id = types[0]["id"] if types else 1
+            return tests[0]["id"], test_type_id, product_id
         today = str(datetime.date.today())
         r3 = session.post(f"{base}/api/v2/tests/", headers=headers, json={
             "title": "nuclei", "engagement": engagement_id, "test_type": test_type_id,
             "target_start": today, "target_end": today,
         }, timeout=10)
         r3.raise_for_status()
-        return r3.json()["id"]
+        return r3.json()["id"], test_type_id, product_id
 
     except Exception:
-        return None
+        return None, None, None
+
+
+def _dojo_get_or_create_endpoint(session: http_requests.Session, host: str, product_id: int) -> int | None:
+    """Retourne l'ID de l'endpoint DefectDojo pour un host/product. Crée si nécessaire."""
+    base = DEFECTDOJO_URL
+    headers = _dojo_headers()
+    try:
+        r = session.get(f"{base}/api/v2/endpoints/", headers=headers,
+                        params={"host": host, "product": product_id}, timeout=10)
+        r.raise_for_status()
+        results = r.json().get("results", [])
+        if results:
+            return results[0]["id"]
+        r2 = session.post(f"{base}/api/v2/endpoints/", headers=headers,
+                          json={"host": host, "product": product_id}, timeout=10)
+        if r2.status_code in (200, 201):
+            return r2.json()["id"]
+    except Exception:
+        pass
+    return None
 
 
 def push_to_defectdojo(findings: list, target: str) -> int:
@@ -176,11 +206,12 @@ def push_to_defectdojo(findings: list, target: str) -> int:
         session.verify = False
         headers = _dojo_headers()
 
-        test_id = _dojo_get_or_create_test(session)
+        test_id, test_type_id, product_id = _dojo_get_or_create_test(session)
         if not test_id:
             return 0
 
         ip = _extract_ip(target)
+        endpoint_id = _dojo_get_or_create_endpoint(session, ip, product_id)
         imported = 0
 
         for finding in findings:
@@ -206,20 +237,22 @@ def push_to_defectdojo(findings: list, target: str) -> int:
             if isinstance(raw_refs, str):
                 raw_refs = [raw_refs]
             cve_ids = [m for ref in raw_refs for m in _CVE_RE.findall(ref)]
-            cve_str = ", ".join(cve_ids) if cve_ids else ""
 
             vuln_data = {
                 'title': info.get('name', finding.get('template-id', 'Nuclei Finding')),
                 'description': desc or "No description",
                 'severity': _SEVERITY_MAP.get(severity, 'info').capitalize(),
+                'numerical_severity': _NUCLEI_NUM_SEV.get(severity, 'S4'),
+                'found_by': [test_type_id],
                 'active': True,
                 'verified': False,
                 'false_p': False,
                 'risk_accepted': False,
                 'test': test_id,
-                'endpoints': [{"host": ip}],
             }
-            if cve_str:
+            if endpoint_id:
+                vuln_data['endpoints'] = [endpoint_id]
+            if cve_ids:
                 vuln_data['cve'] = cve_ids[0]
 
             resp = session.post(
