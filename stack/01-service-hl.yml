@@ -115,6 +115,8 @@ configs:
      external: true
    postgres_hba_conf_v4:
      external: true
+   postgres_init_sql:
+     file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/postgres/init/01-create-databases.sql
    rsync_rsyncd:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/rsync/configs/rsyncd.conf
    rsync_jobs:
@@ -193,6 +195,11 @@ services:
       - source: postgres_hba_conf_v4
         target: /etc/postgresql/pg_hba.conf
         mode: 0640
+        uid: '999'
+        gid: '999'
+      - source: postgres_init_sql
+        target: /docker-entrypoint-initdb.d/01-create-databases.sql
+        mode: 0644
         uid: '999'
         gid: '999'
     volumes:
