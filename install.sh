@@ -95,7 +95,7 @@ interactive_setup() {
   ask_secret POSTGRES_PASSWORD  "PostgreSQL password"
   ask_secret GRAFANA_ADMIN_PASSWORD "Grafana admin password"
   ask_secret PGADMIN_PASSWORD   "PgAdmin password"
-  ask_secret FARADAY_PASSWORD   "Faraday password"
+  ask_secret DEFECTDOJO_ADMIN_PASSWORD "DefectDojo admin password"
   ask_secret MSF_RPC_PASSWORD   "Metasploit RPC password"
   ask_secret KARACHO_SECRET_KEY "Karacho secret key"
 
@@ -175,13 +175,13 @@ SENTINEL_PG_PASS=${SENTINEL_PG_PASS:-changeme}
 PGADMIN_EMAIL=${PGADMIN_EMAIL:-admin@admin.com}
 PGADMIN_PASSWORD=${PGADMIN_PASSWORD}
 
-# Faraday
-FARADAY_USER=${FARADAY_USER:-faraday}
-FARADAY_PASSWORD=${FARADAY_PASSWORD}
-FARADAY_URL=${FARADAY_URL:-http://faraday:5985}
-FARADAY_WORKSPACE_ZAP=${FARADAY_WORKSPACE_ZAP:-zap}
-FARADAY_WORKSPACE_NUCLEI=${FARADAY_WORKSPACE_NUCLEI:-nuclei}
-FARADAY_WORKSPACE_UZI=${FARADAY_WORKSPACE_UZI:-uzi}
+# DefectDojo
+DEFECTDOJO_URL=${DEFECTDOJO_URL:-http://defectdojo:8080}
+DEFECTDOJO_ADMIN_USER=${DEFECTDOJO_ADMIN_USER:-admin}
+DEFECTDOJO_ADMIN_PASSWORD=${DEFECTDOJO_ADMIN_PASSWORD}
+DEFECTDOJO_PRODUCT_ZAP=${DEFECTDOJO_PRODUCT_ZAP:-ZAP Scans}
+DEFECTDOJO_PRODUCT_NUCLEI=${DEFECTDOJO_PRODUCT_NUCLEI:-Nuclei Scans}
+DEFECTDOJO_PRODUCT_UZI=${DEFECTDOJO_PRODUCT_UZI:-MSF Exploitation}
 
 # Metasploit
 MSF_RPC_PORT=${MSF_RPC_PORT:-55553}
@@ -305,6 +305,7 @@ deploy_stacks() {
     "dvar:stack/56-service-dvar.yml"
     "telegram:stack/60-service-telegram.yml"
     "medved:stack/65-service-medved.yml"
+    "dojo:stack/70-service-defectdojo.yml"
   )
 
   header "Deploying base stack"
@@ -355,7 +356,7 @@ print_summary() {
   echo -e "${GREEN}Services should be available at:${NC}"
   echo "  https://grafana.$domain"
   echo "  https://prometheus.$domain"
-  echo "  https://faraday.$domain"
+  echo "  https://defectdojo.$domain"
   echo "  https://pgadmin.$domain"
   echo "  https://alertmanager.$domain"
   echo "  https://redis.$domain"
