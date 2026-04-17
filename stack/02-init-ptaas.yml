@@ -1,0 +1,64 @@
+# PTaaS Init Stack
+# ----------------
+# One-shot service. Runs AFTER 01-boot + 01-base (postgres required).
+# Registers this node as a PTaaS client:
+#   - Computes serial from HMAC(telegram_key, local_key)
+#   - Creates DefectDojo product
+#   - Sets Docker node label ptaas.serial=<serial>
+#   - Registers on blockchain (stub)
+#   - Persists in postgres ptaas_identity table
+#
+# Deploy:
+#   docker stack deploy -c stack/02-init-ptaas.yml ptaas-init --resolve-image always
+
+networks:
+  backend:
+    name: backend
+    external: true
+
+secrets:
+  postgres_password:
+    external: true
+  ptaas_telegram_key:
+    external: true
+  ptaas_local_key:
+    external: true
+  dojo_api_token:
+    external: true
+
+services:
+  init:
+    image: localhost:5000/ptaas-init:latest
+    networks:
+      - backend
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ptaas
+      POSTGRES_USER: postgres
+      DEFECTDOJO_URL: http://defectdojo-nginx:8080
+    secrets:
+      - postgres_password
+      - ptaas_telegram_key
+      - ptaas_local_key
+      - dojo_api_token
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

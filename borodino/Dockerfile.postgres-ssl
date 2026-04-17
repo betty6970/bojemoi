@@ -1,0 +1,6 @@
+FROM localhost:5000/postgres:latest
+
+COPY --chmod=755 ../volumes/postgres/postgres-entrypoint.sh /usr/local/bin/postgres-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/postgres-entrypoint.sh"]
+CMD ["postgres"]
