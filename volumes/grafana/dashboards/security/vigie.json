@@ -10,7 +10,7 @@
       "title": "Bulletins CERT-FR (30j)",
       "type": "table",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
           "expr": "increase(vigie_items_total[30d])",
@@ -31,7 +31,7 @@
       "title": "Bulletins par categorie (30j)",
       "type": "piechart",
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
           "expr": "increase(vigie_items_total[30d])",
@@ -52,7 +52,7 @@
       "title": "Nouveaux bulletins (rate/h)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 16, "x": 8, "y": 10 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
           "expr": "rate(vigie_items_total[1h])",
@@ -71,7 +71,7 @@
       "title": "Alertes envoyees",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
           "expr": "increase(vigie_alerts_sent_total[1h])",
@@ -93,7 +93,7 @@
       "title": "Produits matches (30j)",
       "type": "stat",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
           "expr": "increase(vigie_matches_total[30d])",
@@ -118,7 +118,7 @@
       "title": "Dernier poll par flux",
       "type": "stat",
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 26 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
           "expr": "vigie_last_poll_timestamp",

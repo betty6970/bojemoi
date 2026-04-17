@@ -14,7 +14,7 @@
     {
       "id": 1, "title": "Devices inconnus actifs (5min)",
       "type": "stat", "gridPos": { "h": 4, "w": 5, "x": 0, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [{ "expr": "sentinel_active_devices{known=\"false\"}", "refId": "A" }],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "textMode": "auto", "colorMode": "background", "graphMode": "none" },
       "fieldConfig": { "defaults": {
@@ -30,7 +30,7 @@
     {
       "id": 2, "title": "Devices connus actifs (5min)",
       "type": "stat", "gridPos": { "h": 4, "w": 5, "x": 5, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [{ "expr": "sentinel_active_devices{known=\"true\"}", "refId": "A" }],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
       "fieldConfig": { "defaults": {
@@ -42,7 +42,7 @@
     {
       "id": 3, "title": "Alertes proches (24h)",
       "type": "stat", "gridPos": { "h": 4, "w": 5, "x": 10, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [{ "expr": "increase(sentinel_unknown_close_total[24h])", "refId": "A" }],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
       "fieldConfig": { "defaults": {
@@ -58,7 +58,7 @@
     {
       "id": 4, "title": "Total détections (24h)",
       "type": "stat", "gridPos": { "h": 4, "w": 5, "x": 15, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [{ "expr": "sum(increase(sentinel_detections_total[24h]))", "refId": "A" }],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
       "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "text", "value": null }] }, "unit": "short" }, "overrides": [] }
@@ -67,7 +67,7 @@
     {
       "id": 5, "title": "Collector",
       "type": "stat", "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [{ "expr": "up{job=\"sentinel-collector\"}", "refId": "A" }],
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
       "fieldConfig": { "defaults": {
@@ -86,7 +86,7 @@
     {
       "id": 10, "title": "Taux de détections (wifi + BLE)",
       "type": "timeseries", "gridPos": { "h": 8, "w": 14, "x": 0, "y": 6 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
           "expr": "sum by(known, type) (rate(sentinel_detections_total[2m]))",
@@ -107,7 +107,7 @@
     {
       "id": 11, "title": "Alertes proches par capteur",
       "type": "timeseries", "gridPos": { "h": 8, "w": 10, "x": 14, "y": 6 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "targets": [
         {
           "expr": "sum by(esp32_id) (increase(sentinel_unknown_close_total[5m]))",
