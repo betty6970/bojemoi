@@ -55,7 +55,7 @@ prometheus.scrape "cadvisor" {
 }
 
 prometheus.scrape "traefik" {
-  targets = [{"__address__" = "base_traefik:8085", "__metrics_path__" = "/metrics"}]
+  targets = [{"__address__" = "boot_traefik:8085", "__metrics_path__" = "/metrics"}]
   forward_to = [prometheus.remote_write.default.receiver]
   scrape_interval = "15s"
 }
@@ -114,7 +114,7 @@ discovery.docker "containers" {
   host = "http://docker-socket-proxy:2375"
   filter {
     name = "name"
-    values = ["base_.*", "faraday_.*", "owasp_.*"]
+    values = ["base_.*", "dojo_.*", "borodino_.*", "owasp_.*"]
   }
 }
 

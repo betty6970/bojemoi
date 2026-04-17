@@ -757,6 +757,27 @@ groups:
           summary: "Conteneur pentest OOM killed"
           description: "Le conteneur {{ $labels.name }} a été tué par OOM killer"
 
+      # C2 / Metasploit
+      - alert: MSFTeamserverDown
+        expr: msf_c2_msfrpcd_up == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: pentest
+        annotations:
+          summary: "msfrpcd non joignable"
+          description: "c2-monitor ne peut plus se connecter à msf-teamserver:55553"
+
+      - alert: C2SessionOpened
+        expr: increase(msf_c2_sessions_total_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: pentest
+        annotations:
+          summary: "Nouvelle session C2 ouverte"
+          description: "{{ $value }} nouvelle(s) session(s) meterpreter reçue(s)"
+
   - name: pentest_workload
     interval: 60s
     rules:

@@ -110,6 +110,11 @@ scrape_configs:
         regex: running
         action: keep
 
+      # Only scrape via the monitoring network to avoid duplicate targets per network
+      - source_labels: [__meta_dockerswarm_network_name]
+        regex: 'monitoring'
+        action: keep
+
       # Build address from service name and published port
       - source_labels: [__meta_dockerswarm_service_name]
         target_label: __tmp_service_name
