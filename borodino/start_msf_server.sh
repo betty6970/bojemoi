@@ -88,12 +88,33 @@ fi
 
 echo "[INFO] Teamserver running. msfrpcd=:${MSF_PORT} handler=:${C2_LPORT}"
 
-# Garder le container vivant ; surveiller que msfconsole reste en vie
+# Garder le container vivant ; surveiller msfrpcd ET msfconsole
 while true; do
+    sleep 30
+
+    # Watchdog msfrpcd
+    if ! nc -z 127.0.0.1 ${MSF_PORT} 2>/dev/null; then
+        echo "[WARN] msfrpcd down — restarting..."
+        ./msfrpcd -P "${MSF_PASS}" -a 0.0.0.0 -p ${MSF_PORT}
+        i=0
+        while [ $i -lt 180 ]; do
+            if nc -z 127.0.0.1 ${MSF_PORT} 2>/dev/null; then
+                echo "[INFO] msfrpcd restarted after ${i}s"
+                break
+            fi
+            sleep 1
+            i=$((i + 1))
+        done
+        if ! nc -z 127.0.0.1 ${MSF_PORT} 2>/dev/null; then
+            echo "[ERROR] msfrpcd failed to restart after 180s — exiting"
+            exit 1
+        fi
+    fi
+
+    # Watchdog msfconsole
     if ! kill -0 $MSF_PID 2>/dev/null; then
         echo "[WARN] msfconsole exited — restarting handler..."
         tail -f /dev/null | ./msfconsole -q -r /tmp/c2_handler.rc 2>&1 &
         MSF_PID=$!
     fi
-    sleep 30
 done

@@ -8,6 +8,7 @@ Architecture: Redis queue + zap_scan_log + DefectDojo export
 """
 import os
 import sys
+from pathlib import Path
 import time
 import json
 import logging
@@ -61,7 +62,12 @@ ZAP_BASE        = f"http://{ZAP_HOST}:{ZAP_PORT}"
 
 DEFECTDOJO_URL      = os.getenv('DEFECTDOJO_URL', '').rstrip('/')
 DEFECTDOJO_TOKEN    = _read_secret("dojo_api_token", "DEFECTDOJO_TOKEN")
-DEFECTDOJO_PRODUCT  = os.getenv('DEFECTDOJO_PRODUCT', 'zap')
+_ptaas_serial_path  = Path('/run/configs/ptaas_serial')
+DEFECTDOJO_PRODUCT  = (
+    _ptaas_serial_path.read_text().strip()
+    if _ptaas_serial_path.exists()
+    else os.getenv('DEFECTDOJO_PRODUCT', 'zap')
+)
 
 FEED_INTERVAL = int(os.getenv('FEED_INTERVAL_SECONDS', '300'))
 BATCH_SIZE    = int(os.getenv('BATCH_SIZE', '50'))

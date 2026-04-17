@@ -55,7 +55,12 @@ NUCLEI_PROXY = os.environ.get('NUCLEI_PROXY', '') or os.environ.get('NYM_PROXY',
 # DefectDojo configuration
 DEFECTDOJO_URL = os.environ.get('DEFECTDOJO_URL', 'http://defectdojo-nginx:8080').rstrip('/')
 DEFECTDOJO_TOKEN = _read_secret("dojo_api_token", "DEFECTDOJO_TOKEN")
-DEFECTDOJO_PRODUCT = os.environ.get('DEFECTDOJO_PRODUCT', 'nuclei')
+_ptaas_serial_path = Path('/run/configs/ptaas_serial')
+DEFECTDOJO_PRODUCT = (
+    _ptaas_serial_path.read_text().strip()
+    if _ptaas_serial_path.exists()
+    else os.environ.get('DEFECTDOJO_PRODUCT', 'nuclei')
+)
 
 # Redis client
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)

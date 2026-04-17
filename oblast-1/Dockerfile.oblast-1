@@ -21,12 +21,10 @@ ENV FEED_INTERVAL_SECONDS=300
 ENV BATCH_SIZE=50
 ENV FARADAY_WORKSPACE=default
 ENV DB_USER=postgres
-ENV DB_PASSWORD=bojemoi
 
 # Variables de configuration ZAP
 ENV ZAP_HOST=zaproxy
 ENV ZAP_PORT=8090
-ENV ZAP_API_KEY=""
 
 # Créer un utilisateur non-root pour la sécurité
 RUN addgroup -g 1000 scanner && \

@@ -48,7 +48,12 @@ MODE_RUN = int(os.getenv("MODE_RUN", "1"))
 
 DEFECTDOJO_URL     = 'http://defectdojo-nginx:8080'
 DEFECTDOJO_TOKEN   = _read_secret("dojo_api_token")
-DEFECTDOJO_PRODUCT = 'uzi'
+_ptaas_serial_path = Path('/run/configs/ptaas_serial')
+DEFECTDOJO_PRODUCT = (
+    _ptaas_serial_path.read_text().strip()
+    if _ptaas_serial_path.exists()
+    else 'uzi'
+)
 
 def _detect_local_ip() -> str:
     for url in ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com"):
