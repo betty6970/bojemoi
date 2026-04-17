@@ -18,6 +18,7 @@ oblast/vpn-swarm/secrets/
 # Certificates
 volumes/traefik/certs/
 volumes/alertmanager/certs/
+volumes/postgres/ssl/
 
 # Logs
 *.log
