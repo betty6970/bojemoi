@@ -58,7 +58,9 @@ ssh -p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no dock
 |---------|-------|---------------|
 | `01-service-hl.yml` | **base** | postgres, prometheus, grafana, loki, tempo, alertmanager, alloy, node-exporter\*, cadvisor\*, postfix, protonmail-bridge, orchestrator, rsync-master, rsync-slave\* |
 | `02-service-maintenance.yml` | maintenance | docker-cleanup (cron 03:00, global) |
-| `40-service-borodino.yml` | borodino | zaproxy, zap-scanner, wg-gateway, ak47×5, bm12×15, msf-teamserver, uzi×3, karacho-blockchain, masscan\*, nuclei, nuclei-api, nuclei-worker, logpull, redis, faraday, pentest-orchestrator, pentest-exporter |
+| `02-init-ptaas.yml` | ptaas-init | init job (DB schema, DefectDojo bootstrap) |
+| `40-service-borodino.yml` | borodino | zaproxy, zap-scanner, wg-gateway, ak47×5, bm12×15, msf-teamserver, uzi×3, karacho-blockchain, masscan\*, nuclei, nuclei-api, nuclei-worker, logpull, redis, pentest-orchestrator, pentest-exporter |
+| `70-service-defectdojo.yml` | dojo | DefectDojo (vuln management), dojo-triage agent |
 | `41-service-nym.yml` | nym | nym-proxy (SOCKS5 mixnet) |
 | `45-service-ml-threat-intel.yml` | ml-threat | ml-threat-intel-api |
 | `46-service-razvedka.yml` | razvedka | razvedka (CTI Telegram/Twitter) |
@@ -83,7 +85,7 @@ ssh -p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no dock
 | `monitoring` | — | Prometheus → Grafana/Loki/Tempo |
 | `backend` | — | PostgreSQL, communications inter-services |
 | `proxy` | — | Traefik (ingress) |
-| `pentest` | — | Faraday, Redis, MSF, ZAP |
+| `pentest` | — | DefectDojo, Redis, MSF, ZAP |
 | `borodino_scan_net` | 10.11.0.0/24 | Scans sortants via wg-gateway (ProtonVPN) |
 | `rsync_network` | — | Sauvegardes rsync master ↔ slaves |
 | `mail` | — | Alertmanager ↔ Postfix ↔ ProtonMail bridge |
@@ -118,7 +120,7 @@ IP2Location CIDRs
                                     ▼
                              msf-teamserver (RPC :55553)
                                     │
-                              Faraday (vulns)
+                             DefectDojo (vulns)
                                     │
                              Prometheus metrics ──── Grafana dashboards
 ```
@@ -134,7 +136,7 @@ Logs Fly.io/Lightsail ─────── logpull ───── PostgreSQL
 
 IoC (IP/URL/hash) ─────────── ml-threat-intel-api ─── ML classifier
                                     │                  + OSINT enrichment
-                                    └─────────────────── Faraday / alertes
+                                    └─────────────────── DefectDojo / alertes
 
 ESP32 probes ──── MQTT (Mosquitto) ─── sentinel-collector ─── PostgreSQL + Prometheus
 ```
@@ -257,7 +259,7 @@ Config source   : Gitea (GitOps — vms/*.yaml, cloud-init/*.yaml)
 | `get_scan_stats` | Stats globales DB |
 | `run_nmap` | Scan nmap (basic/full/stealth/udp/quick) |
 | `lookup_ip` | OSINT enrichment (ip-api, OTX, ThreatCrowd, +AbuseIPDB/VT/Shodan) |
-| `list_workspaces` / `get_vulns` / `add_vuln` | API Faraday |
+| `list_products` / `get_findings` / `add_finding` | API DefectDojo |
 
 ---
 
@@ -269,8 +271,10 @@ Config source   : Gitea (GitOps — vms/*.yaml, cloud-init/*.yaml)
 ├── provisioning/           # Orchestrateur FastAPI
 ├── borodino/               # Outils pentest (ak47, bm12, uzi, nuclei, logpull, redirector)
 ├── oblast/ oblast-1/       # OWASP ZAP scanning
-├── samsonov/               # Faraday, pentest-orchestrator, nuclei-api, MITRE ATT&CK
-├── mcp-server/             # Serveur MCP (database, faraday, nmap, osint tools)
+├── samsonov/               # pentest-orchestrator, nuclei-api, MITRE ATT&CK
+├── mcp-server/             # Serveur MCP (database, DefectDojo, nmap, osint tools)
+├── c2-monitor/             # Monitoring sessions C2 (Metasploit/Meterpreter)
+├── ptaas-init/             # Init job PTaaS (DB schema, DefectDojo bootstrap)
 ├── razvedka/               # CTI Telegram/Twitter
 ├── vigie/                  # ANSSI RSS monitor
 ├── dozor/                  # Gestionnaire règles Suricata
@@ -290,7 +294,7 @@ Config source   : Gitea (GitOps — vms/*.yaml, cloud-init/*.yaml)
 │   ├── loki/ tempo/        # Config logs/traces
 │   ├── suricata/           # Règles IDS (41 MB+)
 │   ├── c2-vpn/             # PKI OpenVPN C2
-│   └── pojemoi/            # Données PostgreSQL
+│   └── postgres/           # PostgreSQL config + entrypoint SSL
 └── CLAUDE.md               # Instructions Claude Code
 ```
 

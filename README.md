@@ -22,7 +22,7 @@ Automated network reconnaissance, vulnerability scanning, exploitation, and thre
                    │  ├─ nuclei → template vulnerability scan │
                    │  ├─ uzi    → Metasploit exploitation     │
                    │  ├─ ZAP    → web app scanning            │
-                   │  ├─ Faraday → vuln management            │
+                   │  ├─ DefectDojo → vuln management         │
                    │  └─ wg-gateway → ProtonVPN exit          │
                    └─────────────────────────────────────────┘
                               ↕ VPN tunnel
@@ -69,7 +69,7 @@ git clone <repo> bojemoi && cd bojemoi
 # Copy and edit configuration
 cp .env.example .env
 chmod 600 .env
-$EDITOR .env             # fill in POSTGRES_PASSWORD, FARADAY_PASSWORD, etc.
+$EDITOR .env             # fill in POSTGRES_PASSWORD, DEFECTDOJO_PASSWORD, etc.
 
 # Load env
 set -a && source .env && set +a
@@ -94,7 +94,8 @@ docker stack deploy -c stack/60-service-telegram.yml   telegram --prune --resolv
 | File | Stack name | Description |
 |---|---|---|
 | `01-service-hl.yml` | `base` | Core: Postgres, Grafana, Prometheus, Loki, Alertmanager, Traefik |
-| `40-service-borodino.yml` | `borodino` | Scanning: ak47, bm12, nuclei, uzi, ZAP, Faraday, MSF teamserver |
+| `40-service-borodino.yml` | `borodino` | Scanning: ak47, bm12, nuclei, uzi, ZAP, MSF teamserver |
+| `70-service-defectdojo.yml` | `dojo` | DefectDojo vuln management + triage agent |
 | `45-service-ml-threat-intel.yml` | `ml-threat` | ML threat intelligence pipeline |
 | `46-service-razvedka.yml` | `razvedka` | Telegram channel monitoring (OSINT) |
 | `47-service-vigie.yml` | `vigie` | RSS/CVE feed watcher |
@@ -105,7 +106,7 @@ docker stack deploy -c stack/60-service-telegram.yml   telegram --prune --resolv
 | `55-service-sentinel.yml` | `sentinel` | MQTT-based IoT sensor collector |
 | `56-service-dvar.yml` | `dvar` | IoT network monitoring |
 | `60-service-telegram.yml` | `telegram` | PTaaS Telegram bot |
-| `65-service-medved.yml` | `medved` | Bear — additional recon service |
+| `65-service-medved.yml` | `medved` | Honeypot multi-protocoles (SSH/HTTP/RDP/SMB/FTP/Telnet) |
 
 ## Configuration
 
@@ -115,7 +116,7 @@ All configuration lives in `.env` (generated from `.env.example`).
 - `POSTGRES_PASSWORD` — PostgreSQL master password
 - `GRAFANA_ADMIN_PASSWORD` — Grafana admin password
 - `PGADMIN_PASSWORD` — PgAdmin password
-- `FARADAY_PASSWORD` — Faraday vuln management password
+- `DEFECTDOJO_ADMIN_PASSWORD` — DefectDojo admin password
 - `MSF_RPC_PASSWORD` — Metasploit RPC password
 - `KARACHO_SECRET_KEY` — Karacho blockchain service key
 
@@ -179,7 +180,7 @@ ssh -p 4422 -i ~/.ssh/meta76_ed25519 docker@$NODE_IP
 Add to `/etc/hosts` on any machine that needs access to the lab UI:
 
 ```
-<MANAGER_IP>  grafana.bojemoi.lab prometheus.bojemoi.lab faraday.bojemoi.lab
+<MANAGER_IP>  grafana.bojemoi.lab prometheus.bojemoi.lab defectdojo.bojemoi.lab
 <MANAGER_IP>  pgadmin.bojemoi.lab alertmanager.bojemoi.lab karacho.bojemoi.lab
 <MANAGER_IP>  nuclei.bojemoi.lab redis.bojemoi.lab cadvisor.bojemoi.lab
 ```
