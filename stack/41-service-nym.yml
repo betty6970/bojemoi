@@ -4,8 +4,8 @@
 # Pré-requis :
 #   export NYM_PROVIDER=<Network Requester address>
 #   # Obtenir une adresse active :
-    # curl -4 -s  "https://mainnet-node-status-api.nymtech.cc/v2/services?size=50" |       jq -r '
-      .items[] |…)
+    # curl -4 -s  "https://harbourmaster.nymtech.net/v2/services?size=100" |
+    #   python3 -c "import json,sys; d=json.load(sys.stdin); [print(x['service_provider_client_id']) for x in d['items'] if x['routing_score']==1.0]"
 #
 # Build :
 #   docker build -f nym-proxy/Dockerfile -t localhost:5000/nym-proxy:latest nym-proxy/
@@ -32,7 +32,7 @@ services:
       - scan_net
     environment:
       - NYM_ID=${NYM_ID:-bojemoi-lab}
-      - NYM_PROVIDER=$${NYM_PROVIDER:?NYM_PROVIDER is required}
+      - NYM_PROVIDER=${NYM_PROVIDER:?NYM_PROVIDER is required}
       - NYM_PORT=1080
     volumes:
       - nym_config:/root/.nym

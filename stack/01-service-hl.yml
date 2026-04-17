@@ -73,6 +73,8 @@ secrets:
      external: true
    alertmanager_smtp_pass:
      external: true
+   postgres_ssl_key:
+     external: true
 configs:
    # NOTE: traefik_tls_config, dnsmask_config, traefik_config, crowdsec_config,
    #       registry_config moved to /opt/bojemoi_boot/stack/01-boot-service.yml
@@ -80,7 +82,7 @@ configs:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alertmanager/alertmanager.yml
    tls_alertmanager_config:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alertmanager/certs/protonmail-bridge.crt
-   alloy_config_v2:
+   alloy_config_v3:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alloy/config/config.alloy
    grafana-ini_config:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/grafana/grafana.ini
@@ -92,7 +94,7 @@ configs:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/loki/loki-config.yml
    postfix_config:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/postfix/main.cf
-   prometheus_config_v3:
+   prometheus_config_v4:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/prometheus/prometheus.yml
    # suricata configs removed - suricata uses bind mounts instead
    # (${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata:/etc/suricata)
@@ -101,6 +103,18 @@ configs:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/tempo/config/tempo.yaml
    provisioning_env_v2:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/provisioning/.env
+   postgres_ssl_cert_v1:
+     external: true
+   postgres_ca_cert_v1:
+     external: true
+   postgres_hba_conf_v1:
+     external: true
+   postgres_hba_conf_v2:
+     external: true
+   postgres_hba_conf_v3:
+     external: true
+   postgres_hba_conf_v4:
+     external: true
    rsync_rsyncd:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/rsync/configs/rsyncd.conf
    rsync_jobs:
@@ -151,11 +165,36 @@ services:
   # =========================================================================
 
   postgres:
-    image: ${IMAGE_REGISTRY:-localhost:5000}/postgres:latest
+    image: ${IMAGE_REGISTRY:-localhost:5000}/postgres-ssl:latest
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_DB: ${MSF_DBNAME:-msf}
+    command: >
+      postgres
+      -c ssl=on
+      -c ssl_cert_file=/var/lib/postgresql/ssl/server.crt
+      -c ssl_key_file=/var/lib/postgresql/ssl/server.key
+      -c ssl_ca_file=/var/lib/postgresql/ssl/ca.crt
+      -c hba_file=/etc/postgresql/pg_hba.conf
+    secrets:
+      - postgres_ssl_key
+    configs:
+      - source: postgres_ssl_cert_v1
+        target: /var/lib/postgresql/ssl/server.crt
+        mode: 0644
+        uid: '999'
+        gid: '999'
+      - source: postgres_ca_cert_v1
+        target: /var/lib/postgresql/ssl/ca.crt
+        mode: 0644
+        uid: '999'
+        gid: '999'
+      - source: postgres_hba_conf_v4
+        target: /etc/postgresql/pg_hba.conf
+        mode: 0640
+        uid: '999'
+        gid: '999'
     volumes:
       - postgres_data:/var/lib/postgresql/
     logging:
@@ -182,13 +221,18 @@ services:
         - prometheus.label.component=database
         - prometheus.label.stack=base
         - prometheus.label.tier=data
-    # ports removed - postgres accessible via overlay network only (no public exposure)
+    ports:
+      - target: 5432
+        published: 5432
+        protocol: tcp
+        mode: host   # bind sur l'interface physique du manager (192.168.1.x) — pas d'exposition internet
     networks:
       -  backend
     stop_grace_period: 30s
-  # =========================================================================
-  # =========================================================================
 
+  # =========================================================================
+  # pgadmin
+  # =========================================================================
   pgadmin:
     image: ${IMAGE_REGISTRY:-localhost:5000}/pgadmin4
     environment:
@@ -226,11 +270,11 @@ services:
         - traefik.enable=true
         - traefik.swarm.network=proxy
         # Router HTTP
-        - traefik.http.routers.pgadmin.rule=Host(`pgadmin.${LAB_DOMAIN:-${LAB_DOMAIN:-bojemoi.lab}}`)
+        - traefik.http.routers.pgadmin.rule=Host(`pgadmin.bojemoi.lab`)
         - traefik.http.routers.pgadmin.entrypoints=web
         - traefik.http.routers.pgadmin.middlewares=redirect-to-https
         # Router HTTPS
-        - traefik.http.routers.pgadmin-secure.rule=Host(`pgadmin.${LAB_DOMAIN:-${LAB_DOMAIN:-bojemoi.lab}}`)
+        - traefik.http.routers.pgadmin-secure.rule=Host(`pgadmin.bojemoi.lab`)
         - traefik.http.routers.pgadmin-secure.entrypoints=websecure
         - traefik.http.routers.pgadmin-secure.tls=true
 #        - traefik.http.routers.pgadmin-secure.tls.certresolver=letsencrypt
@@ -367,9 +411,8 @@ services:
         - traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true
 
   #================================================
-  #
+  # Tempo
   #================================================
-
   tempo:
     image: ${IMAGE_REGISTRY:-localhost:5000}/grafana/tempo:latest
 
@@ -459,7 +502,7 @@ services:
       - --web.enable-lifecycle
       - --web.enable-remote-write-receiver
     configs:
-      - source: prometheus_config_v3
+      - source: prometheus_config_v4
         target: /etc/prometheus/prometheus.yml
     volumes:
       - prometheus_data:/prometheus
@@ -564,7 +607,7 @@ services:
     image: ${IMAGE_REGISTRY:-localhost:5000}/alloy:latest
     # ports removed - internal telemetry collector
     configs:
-      - source: alloy_config_v2
+      - source: alloy_config_v3
         target: /etc/alloy/config.alloy
     environment:
       - DOCKER_HOST=tcp://docker-socket-proxy:2375

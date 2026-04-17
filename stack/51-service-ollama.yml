@@ -4,6 +4,8 @@
 networks:
   backend:
     external: true
+  monitoring:
+    external: true
 
 volumes:
   ollama-models:
@@ -59,6 +61,7 @@ services:
         read_only: true
     networks:
       - backend
+      - monitoring
     environment:
       NVIDIA_VISIBLE_DEVICES: "all"
       NVIDIA_DRIVER_CAPABILITIES: "compute,utility"

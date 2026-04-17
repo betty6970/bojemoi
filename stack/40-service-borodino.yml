@@ -102,6 +102,13 @@ volumes:
     driver: local
 
 #--------------------------------------------------------------------------------
+# CONFIGS
+#--------------------------------------------------------------------------------
+configs:
+  ptaas_serial:
+    external: true
+
+#--------------------------------------------------------------------------------
 # SERVICES
 #--------------------------------------------------------------------------------
 services:
@@ -186,6 +193,9 @@ services:
     secrets:
       - postgres_password
       - dojo_api_token
+    configs:
+      - source: ptaas_serial
+        target: /run/configs/ptaas_serial
     volumes:
       - scan_logs:/logs
     networks:
@@ -451,6 +461,9 @@ services:
       - telegram_bot_token
       - telegram_alert_chat_id
       - anthropic_api_key
+    configs:
+      - source: ptaas_serial
+        target: /run/configs/ptaas_serial
     logging:
       driver: json-file
       options:
@@ -739,6 +752,9 @@ services:
       - NYM_PROXY=${NYM_PROXY:-}
     secrets:
       - dojo_api_token
+    configs:
+      - source: ptaas_serial
+        target: /run/configs/ptaas_serial
     logging:
       driver: json-file
       options:
@@ -916,6 +932,54 @@ services:
         - traefik.http.services.redis-commander.loadbalancer.server.port=8081
 
 
+  # =========================================================================
+  # C2 Session Monitor
+  # =========================================================================
+  c2-monitor:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/c2-monitor:latest
+    environment:
+      MSF_HOST: msf-teamserver
+      MSF_PORT: "55553"
+      DEFECTDOJO_URL: http://defectdojo-nginx:8080
+      METRICS_PORT: "9305"
+      POLL_INTERVAL: "30"
+    secrets:
+      - msf_rpc_password
+      - telegram_bot_token
+      - telegram_alert_chat_id
+      - dojo_api_token
+    configs:
+      - source: ptaas_serial
+        target: /run/configs/ptaas_serial
+    networks:
+      - pentest
+      - backend
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      labels:
+        - "prometheus.enable=true"
+        - "prometheus.port=9305"
+        - "prometheus.path=/metrics"
+
 secrets:
   postgres_password:
     external: true
@@ -934,4 +998,6 @@ secrets:
   protonvpn_auth:
     external: true
   fly_api_token:
+    external: true
+  msf_rpc_password:
     external: true

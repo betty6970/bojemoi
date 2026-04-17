@@ -1,6 +1,8 @@
 networks:
   backend:
     external: true
+  monitoring:
+    external: true
 
 services:
   dozor:
@@ -15,6 +17,7 @@ services:
       - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/run:/var/run/suricata
     networks:
       - backend
+      - monitoring
     logging:
       driver: json-file
       options:
