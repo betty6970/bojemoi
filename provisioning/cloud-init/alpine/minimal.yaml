@@ -19,6 +19,7 @@ packages:
   - git
   - htop
   - vim
+  - xe-guest-utilities
 
 # Mise à jour système
 package_update: true
@@ -34,6 +35,9 @@ write_files:
 
 # Commandes à exécuter au démarrage
 runcmd:
+  # XenServer guest tools — expose IP to XenStore so the orchestrator can read it
+  - rc-update add xe-guest-utilities default
+  - rc-service xe-guest-utilities start || true
   - echo "VM {{ vm_name }} initialized in {{ environment }} environment" > /var/log/cloud-init-complete.log
   - echo "Deployment completed at $(date)" >> /var/log/cloud-init-complete.log
 

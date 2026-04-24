@@ -20,6 +20,7 @@ packages:
   - nginx
   - docker
   - docker-compose
+  - xe-guest-utilities
 
 # Mise à jour système
 package_update: true
@@ -49,6 +50,9 @@ write_files:
 
 # Commandes à exécuter au démarrage
 runcmd:
+  # XenServer guest tools — expose IP to XenStore so the orchestrator can read it
+  - rc-update add xe-guest-utilities default
+  - rc-service xe-guest-utilities start || true
   # Configuration Nginx
   - rc-update add nginx default
   - rc-service nginx start

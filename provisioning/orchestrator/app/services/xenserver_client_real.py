@@ -418,7 +418,8 @@ class XenServerClient:
         memory: int,
         disk: int,
         network: str = "default",
-        cloudinit_data: Optional[str] = None
+        cloudinit_data: Optional[str] = None,
+        boot_vdi_uuid: Optional[str] = None
     ) -> str:
         """
         Create a new VM.
@@ -487,18 +488,7 @@ class XenServerClient:
                     memory_bytes   # dynamic_max
                 )
 
-                # 4. Configure disk
-                vbds = session.xenapi.VM.get_VBDs(vm_ref)
-                for vbd_ref in vbds:
-                    vbd = session.xenapi.VBD.get_record(vbd_ref)
-                    if vbd['type'] == 'Disk':
-                        vdi_ref = vbd['VDI']
-                        if vdi_ref != 'OpaqueRef:NULL':
-                            disk_bytes = disk * 1024 * 1024 * 1024
-                            session.xenapi.VDI.resize(vdi_ref, str(disk_bytes))
-                            logger.debug(f"Resized disk to {disk}GB")
-
-                # 5. Configure network
+                # 4. Configure network (disk sizing handled in step 7b after provision)
                 networks = session.xenapi.network.get_by_name_label(network)
                 if networks:
                     network_ref = networks[0]
@@ -529,8 +519,65 @@ class XenServerClient:
                     }
                     session.xenapi.VM.set_xenstore_data(vm_ref, xenstore_data)
 
-                # 7. Provision VM
+                # 7. Provision VM (creates deferred disks from template, if any)
                 session.xenapi.VM.provision(vm_ref)
+
+                # 7b. If no disk VBD exists after provisioning, clone boot_vdi_uuid
+                disk_bytes = disk * 1024 * 1024 * 1024
+                vbds_after = session.xenapi.VM.get_VBDs(vm_ref)
+                has_disk = False
+                for vbd_ref in vbds_after:
+                    vbd = session.xenapi.VBD.get_record(vbd_ref)
+                    if vbd['type'] == 'Disk' and vbd['VDI'] != 'OpaqueRef:NULL':
+                        has_disk = True
+                        break
+
+                if not has_disk:
+                    if not boot_vdi_uuid:
+                        raise XenServerError(
+                            error_code="NO_BOOT_DISK",
+                            message=(
+                                f"Template '{template}' has no disk and no boot_vdi_uuid "
+                                f"was provided. Set ALPINE_BOOT_VDI_UUID in config."
+                            ),
+                            details=[template]
+                        )
+                    logger.info(f"No disk found after provision — cloning boot VDI {boot_vdi_uuid}")
+                    src_vdi_ref = session.xenapi.VDI.get_by_uuid(boot_vdi_uuid)
+                    src_sr_ref = session.xenapi.VDI.get_SR(src_vdi_ref)
+
+                    # Clone into same SR
+                    new_vdi_ref = session.xenapi.VDI.copy(src_vdi_ref, src_sr_ref)
+                    session.xenapi.VDI.set_name_label(new_vdi_ref, f"{name}-disk")
+
+                    # Resize if requested size > source size
+                    src_size = int(session.xenapi.VDI.get_virtual_size(src_vdi_ref))
+                    if disk_bytes > src_size:
+                        session.xenapi.VDI.resize(new_vdi_ref, str(disk_bytes))
+                        logger.debug(f"Resized boot disk to {disk}GB")
+
+                    # Attach as primary bootable disk
+                    session.xenapi.VBD.create({
+                        'VM': vm_ref,
+                        'VDI': new_vdi_ref,
+                        'userdevice': '0',
+                        'mode': 'RW',
+                        'type': 'Disk',
+                        'bootable': True,
+                        'empty': False,
+                        'other_config': {},
+                        'qos_algorithm_type': '',
+                        'qos_algorithm_params': {}
+                    })
+                    logger.info(f"Boot disk attached for VM {name} (cloned from {boot_vdi_uuid})")
+                else:
+                    # Template had a disk — just resize it to requested size
+                    for vbd_ref in vbds_after:
+                        vbd = session.xenapi.VBD.get_record(vbd_ref)
+                        if vbd['type'] == 'Disk' and vbd['VDI'] != 'OpaqueRef:NULL':
+                            session.xenapi.VDI.resize(vbd['VDI'], str(disk_bytes))
+                            logger.debug(f"Resized existing disk to {disk}GB")
+                            break
 
                 # 8. Start VM
                 logger.info(f"Starting VM {name}")

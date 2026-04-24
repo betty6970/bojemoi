@@ -99,6 +99,9 @@ class Settings(BaseSettings):
         default_factory=lambda: _read_secret("xenserver_pass") or "",
         description="XenServer password (from Docker secret)"
     )
+    # UUID of the Alpine root VDI used as boot disk source when the template has no disk.
+    # Find with: session.xenapi.VDI.get_all() filtered by name_label='alpine root'
+    ALPINE_BOOT_VDI_UUID: str = "df288d22-9c34-410f-8392-6af76151f14a"
 
     # Docker
     DOCKER_HOST: str = "unix:///var/run/docker.sock"

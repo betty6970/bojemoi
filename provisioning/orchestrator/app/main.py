@@ -359,6 +359,9 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
         if not template_name:
             raise ValueError(f"Unknown os_type: {request.os_type}. Available: {list(XENSERVER_TEMPLATES.keys())}")
 
+        # For alpine, the template has no disk — pass the boot VDI to clone
+        boot_vdi = settings.ALPINE_BOOT_VDI_UUID if request.os_type.value == "alpine" else None
+
         logger.info(f"Creating VM on XenServer: {request.name} (template: {template_name})")
         vm_ref = await xenserver_client.create_vm(
             name=request.name,
@@ -367,10 +370,24 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
             memory=request.memory,
             disk=request.disk,
             network=request.network,
-            cloudinit_data=cloudinit_config
+            cloudinit_data=cloudinit_config,
+            boot_vdi_uuid=boot_vdi
         )
 
-        # 4. Log deployment in blockchain
+        # 4. Poll for guest IP via XenTools (requires xe-guest-utilities inside the VM)
+        vm_ip = None
+        if request.ip_poll_timeout > 0:
+            logger.info(f"Polling for guest IP (timeout={request.ip_poll_timeout}s)...")
+            vm_ip = await _poll_vm_ip(vm_ref, request.ip_poll_timeout)
+            if vm_ip:
+                logger.info(f"Guest IP detected: {vm_ip}")
+            else:
+                logger.warning(
+                    f"Guest IP not detected after {request.ip_poll_timeout}s "
+                    f"— host_debug will store UUID as address"
+                )
+
+        # 5. Log deployment in blockchain
         block = await blockchain_service.create_block(
             deployment_type="vm",
             name=request.name,
@@ -381,9 +398,10 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
             source_country=source_country
         )
 
-        # Register in host_debug
+        # Register in host_debug — use real IP if available, fall back to UUID
+        host_address = vm_ip or vm_ref
         host_id = await db.register_host(
-            address=vm_ref,
+            address=host_address,
             vm_name=request.name,
             vm_uuid=vm_ref,
         )
@@ -392,13 +410,15 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
         duration = time.time() - start_time
         record_deployment("vm", "success", request.environment.value, duration)
 
-        logger.info(f"VM deployed successfully: {request.name} (block: #{block['block_number']}, hash: {block['current_hash'][:16]}...)")
+        ip_info_str = f", IP={vm_ip}" if vm_ip else ", IP=pending (XenTools not ready)"
+        logger.info(f"VM deployed successfully: {request.name} (block: #{block['block_number']}{ip_info_str})")
 
         return DeploymentResponse(
             success=True,
             deployment_id=host_id,
             resource_id=vm_ref,
-            message=f"VM {request.name} deployed successfully (block #{block['block_number']})"
+            ip_address=vm_ip,
+            message=f"VM {request.name} deployed successfully (block #{block['block_number']}{ip_info_str})"
         )
 
     except Exception as e:

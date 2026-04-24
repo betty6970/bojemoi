@@ -89,6 +89,12 @@ class VMDeployRequest(BaseModel):
     )
     environment: Environment = Field(default=Environment.PRODUCTION, description="Deployment environment")
     variables: Optional[Dict[str, Any]] = Field(default=None, description="Additional cloud-init variables")
+    ip_poll_timeout: int = Field(
+        default=120,
+        ge=0,
+        le=300,
+        description="Seconds to wait for guest IP via XenTools after boot (0 = skip)"
+    )
 
     @field_validator("variables")
     @classmethod
@@ -190,6 +196,7 @@ class DeploymentResponse(BaseModel):
     success: bool
     deployment_id: Optional[int] = None
     resource_id: Optional[str] = None
+    ip_address: Optional[str] = None
     message: str
 
 
