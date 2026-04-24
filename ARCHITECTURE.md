@@ -28,9 +28,9 @@ Bojemoi Lab est une infrastructure as-code basée sur **Docker Swarm** (4 nœuds
               │                            │                            │
    ┌──────────▼──────────┐    ┌────────────▼────────┐    ┌─────────────▼───────┐
    │   meta-68 (Worker)  │    │  meta-69 (Worker)   │    │  meta-70 (Worker)   │
-   │  pentest, faraday   │    │  pentest, faraday   │    │  pentest, storage   │
-   │  storage, rsync     │    │  rsync.slave        │    │  rsync.slave        │
-   │  nvidia.vgpu (T400) │    │  IP: dynamic        │    │  Suricata IDS       │
+   │  pentest, storage   │    │  pentest, rsync     │    │  pentest, storage   │
+   │  defectdojo, rsync  │    │  IP: dynamic        │    │  rsync.slave        │
+   │  nvidia.vgpu (T400) │    │                     │    │  Suricata IDS       │
    └─────────────────────┘    └─────────────────────┘    └─────────────────────┘
          Workers only — tous les stacks sauf base/boot
 ```
@@ -59,8 +59,8 @@ ssh -p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no dock
 | `01-service-hl.yml` | **base** | postgres, prometheus, grafana, loki, tempo, alertmanager, alloy, node-exporter\*, cadvisor\*, postfix, protonmail-bridge, orchestrator, rsync-master, rsync-slave\* |
 | `02-service-maintenance.yml` | maintenance | docker-cleanup (cron 03:00, global) |
 | `02-init-ptaas.yml` | ptaas-init | init job (DB schema, DefectDojo bootstrap) |
-| `40-service-borodino.yml` | borodino | zaproxy, zap-scanner, wg-gateway, ak47×5, bm12×15, msf-teamserver, uzi×3, karacho-blockchain, masscan\*, nuclei, nuclei-api, nuclei-worker, logpull, redis, pentest-orchestrator, pentest-exporter |
-| `70-service-defectdojo.yml` | dojo | DefectDojo (vuln management), dojo-triage agent |
+| `40-service-borodino.yml` | borodino | zaproxy, zap-scanner, wg-gateway, ak47×5, bm12×15, msf-teamserver, uzi×3, karacho-blockchain, masscan\*, nuclei, nuclei-api, nuclei-worker, logpull, redis, pentest-orchestrator, pentest-exporter, c2-monitor |
+| `70-service-defectdojo.yml` | **dojo** | DefectDojo (nginx, uWSGI, Celery Beat/Worker, initializer), dojo-triage |
 | `41-service-nym.yml` | nym | nym-proxy (SOCKS5 mixnet) |
 | `45-service-ml-threat-intel.yml` | ml-threat | ml-threat-intel-api |
 | `46-service-razvedka.yml` | razvedka | razvedka (CTI Telegram/Twitter) |
@@ -120,10 +120,44 @@ IP2Location CIDRs
                                     ▼
                              msf-teamserver (RPC :55553)
                                     │
-                             DefectDojo (vulns)
+                                    ├── c2-monitor → Telegram + DefectDojo findings
                                     │
-                             Prometheus metrics ──── Grafana dashboards
+                                    └── DefectDojo (vuln management)
+                                             │
+                                        dojo-triage (IA — Ollama mistral:7b)
+                                             │
+                                        Prometheus metrics ──── Grafana dashboards
 ```
+
+---
+
+## DefectDojo — Vulnerability Management
+
+**Stack** : `dojo` (`70-service-defectdojo.yml`)
+
+```
+DefectDojo nginx (ingress :8080)
+       │
+       ▼
+DefectDojo uWSGI (application Python)
+       │
+       ├── Celery Worker  — traitement asynchrone des imports
+       ├── Celery Beat    — tâches planifiées
+       └── dojo-triage    — agent IA (Ollama mistral:7b-instruct)
+                            re-triage automatique des findings
+```
+
+**Sources de findings importées** :
+| Source | Type | Intégration |
+|--------|------|-------------|
+| OWASP ZAP | DAST | zap-scanner → API v2 |
+| Nuclei | CVE templates | nuclei-api → API v2 |
+| Metasploit/uzi | Exploitation | c2-monitor → API v2 |
+| ml-threat-intel | IoC enrichissement | API v2 |
+| Trivy | Container CVEs | trivy-scanner → API v2 |
+
+**API** : `http://defectdojo.bojemoi.lab.local/api/v2/`
+**Auth** : Docker secret `dojo_api_token`
 
 ---
 
@@ -150,7 +184,6 @@ Implants
    │
    ▼
 Redirecteurs Fly.io (nginx + OpenVPN client)
-   │  - redirector-1 : 37.16.12.4 (cdg/Paris)
    │  - Filtre UA : scanners → 302 google.com
    │  - Paths C2 : /api /update /assets /cdn /upload /download /v*
    │
@@ -163,7 +196,10 @@ bojemoi.me (Lightsail) — openvpn-c2 container
 192.168.1.121:4444 (meta-76 Traefik TCP)
    │
    ▼
-msf-teamserver (multi/handler)
+msf-teamserver (multi/handler :4444)
+   │
+   ├── c2-monitor (sessions Meterpreter → Telegram + DefectDojo)
+   └── uzi×3 (post-exploitation automatisé)
 ```
 
 **PKI** : `/opt/bojemoi/volumes/c2-vpn/{pki,server,clients,ccd}`
@@ -180,6 +216,7 @@ Services (all nodes)
   postgres-exporter (9187) ─────────────────────────┤
   redis-exporter (9634) ────────────────────────────┤
   pentest-exporter ─────────────────────────────────┤
+  c2-monitor (9305) ─────────────────────────────────┤
   suricata-exporter (9917, meta-70) ────────────────┤
   dcgm-exporter (meta-68, GPU) ─────────────────────┤
                                                      │
@@ -259,7 +296,7 @@ Config source   : Gitea (GitOps — vms/*.yaml, cloud-init/*.yaml)
 | `get_scan_stats` | Stats globales DB |
 | `run_nmap` | Scan nmap (basic/full/stealth/udp/quick) |
 | `lookup_ip` | OSINT enrichment (ip-api, OTX, ThreatCrowd, +AbuseIPDB/VT/Shodan) |
-| `list_products` / `get_findings` / `add_finding` | API DefectDojo |
+| `list_products` / `get_findings` / `add_finding` | API DefectDojo v2 |
 
 ---
 
@@ -268,7 +305,7 @@ Config source   : Gitea (GitOps — vms/*.yaml, cloud-init/*.yaml)
 ```
 /opt/bojemoi/
 ├── stack/                  # Stacks Docker Swarm (YAML)
-├── provisioning/           # Orchestrateur FastAPI
+├── provisioning/           # Orchestrateur FastAPI (legacy)
 ├── borodino/               # Outils pentest (ak47, bm12, uzi, nuclei, logpull, redirector)
 ├── oblast/ oblast-1/       # OWASP ZAP scanning
 ├── samsonov/               # pentest-orchestrator, nuclei-api, MITRE ATT&CK
@@ -283,7 +320,8 @@ Config source   : Gitea (GitOps — vms/*.yaml, cloud-init/*.yaml)
 ├── karacho/                # API blockchain analytics
 ├── nym-proxy/              # Proxy Nym mixnet
 ├── redirector/             # Configs nginx redirecteur C2
-├── scripts/                # CI/CD, build, PKI, provisioning (50+ scripts)
+├── discord/                # Scripts setup serveur Discord PTaaS
+├── scripts/                # CI/CD, build, PKI, provisioning
 ├── cloud-init/             # Templates cloud-init pour VMs XenServer
 ├── configs/                # Templates de configuration
 ├── SecLists/               # Wordlists (git submodule)
@@ -310,7 +348,8 @@ Config source   : Gitea (GitOps — vms/*.yaml, cloud-init/*.yaml)
 | Monitoring | Prometheus, Grafana, Loki, Tempo, Alloy, cAdvisor |
 | Alerting | Alertmanager → Telegram + ProtonMail |
 | Reverse proxy | Traefik + Let's Encrypt |
-| Sécurité périmètre | CrowdSec, Suricata IDS |
+| Sécurité périmètre | Suricata IDS (host mode, tous les workers) |
+| Vuln management | DefectDojo + dojo-triage (Ollama mistral:7b) |
 | Scanning | Nmap, Masscan, OWASP ZAP, Nuclei, Trivy |
 | Exploitation | Metasploit Framework (RPC), Meterpreter |
 | OSINT | VirusTotal, AbuseIPDB, OTX, ip-api, Shodan |

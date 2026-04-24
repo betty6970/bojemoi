@@ -10,35 +10,37 @@ def _read_secret(name: str, default: str = "") -> str:
 
 
 class Settings(BaseSettings):
+    # Ollama / LLM
+    ollama_base_url: str = "http://ollama:11434"
+    ollama_model: str = "mistral"
+
+    # Dry-run mode (default: True — log actions without executing)
+    dry_run: bool = True
+
     # PostgreSQL
     pg_host: str = "postgres"
     pg_port: int = 5432
     pg_user: str = "postgres"
     pg_password: str = "bojemoi"
-    pg_database: str = "vigie"
+    pg_database: str = "alert_agent"
 
-    # CERT-FR feeds
-    feed_urls: str = (
-        "https://cert.ssi.gouv.fr/alerte/feed/,"
-        "https://cert.ssi.gouv.fr/avis/feed/,"
-        "https://cert.ssi.gouv.fr/ioc/feed/"
-    )
-    poll_interval: int = 300
+    # Docker socket proxy
+    docker_socket_proxy_url: str = "http://docker-socket-proxy:2375"
 
-    # Product watchlist (comma-separated, case-insensitive match on title+summary)
-    watchlist: str = (
-        "linux,docker,postgresql,postgres,traefik,grafana,prometheus,"
-        "suricata,nginx,python,alpine,openssl,openssh,git,curl,"
-        "ruby,node,fastapi,redis,loki"
-    )
-
-    # Alerting
+    # Telegram alerting
     telegram_bot_token: str = ""
     telegram_alert_chat_id: str = ""
-    alertmanager_webhook_url: str = "http://alertmanager:9093/api/v1/alerts"
 
     # Metrics
-    metrics_port: int = 9301
+    metrics_port: int = 9302
+
+    # Cooldown between actions on same service (seconds)
+    cooldown_seconds: int = 300
+
+    # Max replicas when scaling up
+    max_replicas: int = 10
+
+    model_config = {"env_prefix": ""}
 
     def load_secrets(self):
         pg_pass = _read_secret("postgres_password")
@@ -50,12 +52,6 @@ class Settings(BaseSettings):
         chat_id = _read_secret("telegram_alert_chat_id")
         if chat_id:
             self.telegram_alert_chat_id = chat_id
-
-    def get_feed_urls(self) -> list[str]:
-        return [u.strip() for u in self.feed_urls.split(",") if u.strip()]
-
-    def get_watchlist(self) -> list[str]:
-        return [w.strip().lower() for w in self.watchlist.split(",") if w.strip()]
 
 
 settings = Settings()

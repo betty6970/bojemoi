@@ -16,6 +16,9 @@ route:
   group_interval: 6h
   repeat_interval: 12h
   routes:
+    # Toutes les alertes → alert-agent LLM (continue = ne bloque pas les autres)
+    - receiver: 'alert-agent'
+      continue: true
     # Alertes périmètre → Telegram immédiat (pas de délai)
     - receiver: 'telegram-perimeter'
       match:
@@ -35,6 +38,11 @@ inhibit_rules:
     equal: ['alertname', 'cluster', 'service']
 
 receivers:
+  - name: 'alert-agent'
+    webhook_configs:
+      - url: 'http://alert-agent:8002/webhook'
+        send_resolved: false
+
   - name: 'telegram-perimeter'
     telegram_configs:
       - bot_token_file: /run/secrets/telegram_bot_token

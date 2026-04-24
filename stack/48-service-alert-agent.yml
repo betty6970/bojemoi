@@ -1,0 +1,73 @@
+# Alert-Agent — LLM-powered remediation agent
+# Receives Alertmanager webhooks, enriches with Docker context,
+# consults Ollama/Mistral for decisions, executes (or dry-run logs) actions
+
+networks:
+  backend:
+    external: true
+  monitoring:
+    external: true
+
+secrets:
+  telegram_bot_token:
+    external: true
+  telegram_alert_chat_id:
+    external: true
+  postgres_password:
+    external: true
+
+services:
+  alert-agent:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/alert-agent:latest
+    hostname: alert-agent
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: mistral
+      DRY_RUN: "true"
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: postgres
+      PG_DATABASE: alert_agent
+      DOCKER_SOCKET_PROXY_URL: http://docker-socket-proxy:2375
+      METRICS_PORT: "9302"
+      COOLDOWN_SECONDS: "300"
+      MAX_REPLICAS: "10"
+    secrets:
+      - telegram_bot_token
+      - telegram_alert_chat_id
+      - postgres_password
+    networks:
+      - backend
+      - monitoring
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      labels:
+        - "prometheus.enable=true"
+        - "prometheus.port=9302"
+        - "prometheus.path=/metrics"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

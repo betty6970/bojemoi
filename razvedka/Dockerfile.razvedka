@@ -14,10 +14,13 @@ FROM python:3.12-slim
 COPY --from=builder /root/.local /root/.local
 ENV PATH=/root/.local/bin:$PATH
 
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 && rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /data && chmod 700 /data
 
 WORKDIR /app
 COPY razvedka/ /app/razvedka/
+COPY auth_helper.py /app/auth_helper.py
 
 RUN python -m compileall -b /app/razvedka && \
     find /app/razvedka -name "*.py" -delete

@@ -66,6 +66,9 @@ class Settings(BaseSettings):
 
     def load_secrets(self):
         """Override settings with Docker secrets if available."""
+        pg_pass = _read_secret("postgres_password")
+        if pg_pass:
+            self.pg_password = pg_pass
         api_id = _read_secret("telegram_api_id")
         if api_id:
             self.telegram_api_id = int(api_id)
@@ -87,3 +90,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+settings.load_secrets()

@@ -50,6 +50,7 @@ async def main():
         await client.disconnect()
 
     elif step == "verify":
+        from telethon.errors import SessionPasswordNeededError
         code = os.environ.get("TELEGRAM_CODE", "")
         phone_hash = os.environ.get("TELEGRAM_HASH", "")
         if not code:
@@ -59,7 +60,14 @@ async def main():
             print("ERROR: TELEGRAM_HASH not set")
             sys.exit(1)
         await client.connect()
-        await client.sign_in(phone=phone, code=code, phone_code_hash=phone_hash)
+        try:
+            await client.sign_in(phone=phone, code=code, phone_code_hash=phone_hash)
+        except SessionPasswordNeededError:
+            password = os.environ.get("TELEGRAM_2FA_PASSWORD", "")
+            if not password:
+                print("ERROR: 2FA enabled but TELEGRAM_2FA_PASSWORD not set")
+                sys.exit(1)
+            await client.sign_in(password=password)
         me = await client.get_me()
         print(f"SUCCESS! Authenticated as {me.first_name} (id={me.id})")
         print("Session saved to /data/razvedka.session")

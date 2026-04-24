@@ -40,7 +40,7 @@ services:
       DB_PORT: 5432
       DB_NAME: ${ML_THREAT_DBNAME:-bojemoi_threat_intel}
       DB_USER: postgres
-      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DB_PASSWORD_FILE: /run/secrets/postgres_password
       VT_API_KEY_FILE: /run/secrets/vt_api_key
       ABUSEIPDB_API_KEY_FILE: /run/secrets/abuseipdb_api_key
       OTX_API_KEY_FILE: /run/secrets/otx_api_key
@@ -57,6 +57,7 @@ services:
       - abuseipdb_api_key
       - otx_api_key
       - shodan_api_key
+      - postgres_password
     logging:
       driver: json-file
       options:
@@ -78,4 +79,6 @@ secrets:
   otx_api_key:
     external: true
   shodan_api_key:
+    external: true
+  postgres_password:
     external: true

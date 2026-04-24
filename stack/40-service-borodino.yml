@@ -8,6 +8,30 @@
 # YAML ANCHORS & ALIASES
 # =====================================
 
+# DefectDojo shared environment
+x-dojo-env: &dojo-env
+  DD_CELERY_BROKER_URL: redis://redis:6379/1
+  DD_ALLOWED_HOSTS: "defectdojo,defectdojo-nginx,dojo.bojemoi.lab,localhost,127.0.0.1"
+  DD_DEBUG: "False"
+  DD_DJANGO_METRICS_ENABLED: "True"
+  DD_SAML2_ENABLED: "False"
+  DD_SESSION_COOKIE_SECURE: "False"
+  DD_CSRF_COOKIE_SECURE: "False"
+  DD_SECURE_SSL_REDIRECT: "False"
+  DD_TRACK_MIGRATIONS: "True"
+  DD_TIME_ZONE: "UTC"
+  DD_WHITENOISE: "True"
+
+x-dojo-volumes: &dojo-volumes
+  - dojo-media:/app/media
+  - dojo-uwsgi-socket:/run/uwsgi
+
+x-dojo-logging: &dojo-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 # Template de base avec anchor (from 50-service-borodino.yml)
 x-arme-template: &arme-template
   image: ${IMAGE_REGISTRY:-localhost:5000}/borodino:latest
@@ -97,6 +121,16 @@ volumes:
   nuclei-results:
     driver: local
 
+  # DefectDojo volumes
+  dojo-uwsgi-socket:
+    driver: local
+  dojo-media:
+    driver: local
+
+  # Nym Mixnet volume
+  nym_config:
+    driver: local
+
   # Redis volume
   redis_data:
     driver: local
@@ -106,6 +140,8 @@ volumes:
 #--------------------------------------------------------------------------------
 configs:
   ptaas_serial:
+    external: true
+  route_setup_v1:
     external: true
 
 #--------------------------------------------------------------------------------
@@ -120,11 +156,18 @@ services:
     image: ${IMAGE_REGISTRY:-localhost:5000}/oblast:latest
     hostname: zaproxy
     # ports removed - internal pentest service, accessed via overlay network
+    cap_add:
+      - NET_ADMIN
     environment:
       - ZAP_HOST=0.0.0.0
       - ZAP_PORT=8090
       - TARGET_URL=${TARGET_URL:-https://zap.${LAB_DOMAIN:-bojemoi.lab}}
       - REPORT_FORMAT=html
+      - SCAN_GATEWAY_HOST=wg-gateway
+    configs:
+      - source: route_setup_v1
+        target: /usr/bin/route-setup.sh
+        mode: 0755
     volumes:
       - zap-data:/zap/wrk
       - zap-reports:/zap/reports
@@ -133,6 +176,13 @@ services:
       - backend
       - pentest
       - proxy
+      - scan_net
+    entrypoint: ["/usr/bin/route-setup.sh", "/zap/init-db.sh"]
+    command: ["-daemon", "-host", "0.0.0.0", "-port", "8090",
+              "-config", "database.driver=org.postgresql.Driver",
+              "-config", "api.addrs.addr.name=.*",
+              "-config", "api.addrs.addr.regex=true",
+              "-config", "api.disablekey=true"]
     dns_search:
       - ${LAB_DOMAIN:-bojemoi.lab}
     healthcheck:
@@ -173,6 +223,8 @@ services:
   zap-scanner:
     image: ${IMAGE_REGISTRY:-localhost:5000}/oblast-1:latest
     hostname: zap_scanner
+    cap_add:
+      - NET_ADMIN
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -190,17 +242,23 @@ services:
       DEFECTDOJO_PRODUCT: zap
       PYTHONUNBUFFERED: 1
       LOG_LEVEL: INFO
+      SCAN_GATEWAY_HOST: wg-gateway
     secrets:
       - postgres_password
       - dojo_api_token
     configs:
       - source: ptaas_serial
         target: /run/configs/ptaas_serial
+      - source: route_setup_v1
+        target: /usr/bin/route-setup.sh
+        mode: 0755
     volumes:
       - scan_logs:/logs
     networks:
       - backend
       - pentest
+      - scan_net
+    command: ["/usr/bin/route-setup.sh", "python3", "zap_scanner.pyc"]
     dns_search:
       - ${LAB_DOMAIN:-bojemoi.lab}
     logging:
@@ -226,6 +284,50 @@ services:
   # FROM: 50-service-borodino.yml - Arme services
   # =========================================================================
 
+  # =========================================================================
+  # FROM: 41-service-nym.yml - Nym Mixnet SOCKS5 proxy
+  # =========================================================================
+  nym-proxy:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/nym-proxy:latest
+    hostname: nym-proxy
+    networks:
+      - scan_net
+    environment:
+      - NYM_ID=${NYM_ID:-bojemoi-lab}
+      - NYM_PROVIDER=${NYM_PROVIDER:-}
+      - NYM_PORT=1080
+    volumes:
+      - nym_config:/root/.nym
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+        max_replicas_per_node: 1
+      restart_policy:
+        condition: on-failure
+        delay: 15s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
   wg-gateway:
     image: ${IMAGE_REGISTRY:-localhost:5000}/wg-gateway:latest
     networks:
@@ -243,6 +345,7 @@ services:
         max-size: "10m"
         max-file: "3"
     deploy:
+      endpoint_mode: dnsrr
       replicas: 1
       placement:
         constraints:
@@ -287,6 +390,12 @@ services:
     deploy:
       <<: *deploy-template
       replicas: 5
+      placement:
+        constraints:
+          - node.role == worker
+          - node.labels.defectdojo != true
+          - node.labels.nvidia.vgpu != true
+        max_replicas_per_node: 5
     command: ["/usr/bin/route-setup.sh", "/usr/bin/thearm_ak47"]
 
   bm12-service:
@@ -324,6 +433,12 @@ services:
     deploy:
       <<: *deploy-template
       replicas: 15
+      placement:
+        constraints:
+          - node.role == worker
+          - node.labels.defectdojo != true
+          - node.labels.nvidia.vgpu != true
+        max_replicas_per_node: 5
     command: ["/usr/bin/route-setup.sh", "/usr/bin/thearm_bm12"]
   ########################################################
   #
@@ -554,8 +669,13 @@ services:
     image: ${IMAGE_REGISTRY:-localhost:5000}/tsushima:latest
     networks:
       - backend
+      - scan_net
     cap_add:
       - NET_ADMIN
+    configs:
+      - source: route_setup_v1
+        target: /usr/bin/route-setup.sh
+        mode: 0755
     volumes:
       - /etc/openvpn/:/etc/openvpn/
     environment:
@@ -572,8 +692,11 @@ services:
       MSF_DB_PORT: 5432
       MSF_DB_NAME: msf
       MSF_DB_USER: postgres
+      SCAN_GATEWAY_HOST: wg-gateway
     secrets:
       - postgres_password
+    entrypoint: ["/usr/bin/route-setup.sh", "/app/entrypoint.sh"]
+    command: ["python3", "/app/masscan_msf_script.py"]
     logging:
       driver: json-file
       options:
@@ -678,6 +801,9 @@ services:
     networks:
       - backend
       - pentest
+      - scan_net
+    cap_add:
+      - NET_ADMIN
     environment:
       - PG_HOST=postgres
       - PG_PORT=5432
@@ -695,8 +821,13 @@ services:
       - OLLAMA_ENABLED=true
       - OLLAMA_MODEL=mistral:7b-instruct
       - OLLAMA_TIMEOUT=30
+      - SCAN_GATEWAY_HOST=wg-gateway
     secrets:
       - postgres_password
+    configs:
+      - source: route_setup_v1
+        target: /usr/bin/route-setup.sh
+        mode: 0755
     logging:
       driver: json-file
       options:
@@ -719,7 +850,7 @@ services:
         reservations:
           cpus: '0.1'
           memory: 64M
-    command: ["python3", "/usr/bin/thearm_nuclei"]
+    command: ["/usr/bin/route-setup.sh", "python3", "/usr/bin/thearm_nuclei"]
 
   nuclei-api:
     image: ${IMAGE_REGISTRY:-localhost:5000}/nuclei-api:latest
@@ -980,10 +1111,248 @@ services:
         - "prometheus.port=9305"
         - "prometheus.path=/metrics"
 
+  # =========================================================================
+  # FROM: 70-service-defectdojo.yml - DefectDojo Vulnerability Management
+  # =========================================================================
+
+  # ─── HTTP frontend (nginx → uwsgi socket) ────────────────────────────────────
+  defectdojo-nginx:
+    image: localhost:5000/defectdojo-nginx:latest
+    volumes:
+      - dojo-media:/usr/share/nginx/html/media:ro
+      - dojo-uwsgi-socket:/run/uwsgi
+    networks:
+      - backend
+      - pentest
+      - proxy
+    environment:
+      NGINX_METRICS_ENABLED: "true"
+    logging: *dojo-logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.defectdojo == true
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=proxy
+        - traefik.http.routers.defectdojo.rule=Host(`dojo.bojemoi.lab`)
+        - traefik.http.routers.defectdojo.entrypoints=websecure
+        - traefik.http.routers.defectdojo.tls=true
+        - traefik.http.services.defectdojo.loadbalancer.server.port=8080
+
+  # ─── Django uWSGI application ─────────────────────────────────────────────────
+  defectdojo-uwsgi:
+    image: localhost:5000/defectdojo-django:latest
+    volumes: *dojo-volumes
+    environment: *dojo-env
+    secrets:
+      - dojo_secret_key
+      - postgres_password
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export DD_SECRET_KEY=$$(cat /run/secrets/dojo_secret_key 2>/dev/null || echo 'changeme-set-dojo_secret_key')
+        PG_PASS=$$(cat /run/secrets/postgres_password)
+        export DD_DATABASE_URL="postgresql://postgres:$${PG_PASS}@postgres:5432/defectdojo"
+        exec /entrypoint-uwsgi.sh
+    networks:
+      backend:
+        aliases:
+          - uwsgi
+      pentest:
+        aliases:
+          - uwsgi
+    logging: *dojo-logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.defectdojo == true
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ─── Celery worker ─────────────────────────────────────────────────────────────
+  dojo-celery-worker:
+    image: localhost:5000/defectdojo-django:latest
+    volumes: *dojo-volumes
+    environment: *dojo-env
+    secrets:
+      - dojo_secret_key
+      - postgres_password
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export DD_SECRET_KEY=$$(cat /run/secrets/dojo_secret_key 2>/dev/null || echo 'changeme-set-dojo_secret_key')
+        PG_PASS=$$(cat /run/secrets/postgres_password)
+        export DD_DATABASE_URL="postgresql://postgres:$${PG_PASS}@postgres:5432/defectdojo"
+        exec /entrypoint-celery-worker.sh
+    networks:
+      - backend
+    logging: *dojo-logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+
+  # ─── Celery beat (scheduler) ───────────────────────────────────────────────────
+  dojo-celery-beat:
+    image: localhost:5000/defectdojo-django:latest
+    volumes: *dojo-volumes
+    environment: *dojo-env
+    secrets:
+      - dojo_secret_key
+      - postgres_password
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export DD_SECRET_KEY=$$(cat /run/secrets/dojo_secret_key 2>/dev/null || echo 'changeme-set-dojo_secret_key')
+        PG_PASS=$$(cat /run/secrets/postgres_password)
+        export DD_DATABASE_URL="postgresql://postgres:$${PG_PASS}@postgres:5432/defectdojo"
+        exec /entrypoint-celery-beat.sh
+    networks:
+      - backend
+    logging: *dojo-logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  # ─── Initializer (one-shot, migrations + admin creation) ──────────────────────
+  dojo-initializer:
+    image: localhost:5000/defectdojo-django:latest
+    volumes: *dojo-volumes
+    environment:
+      DD_CELERY_BROKER_URL: redis://redis:6379/1
+      DD_ALLOWED_HOSTS: "defectdojo,localhost"
+      DD_INITIALIZE: "True"
+      DD_ADMIN_USER: admin
+      DD_SAML2_ENABLED: "False"
+      DD_SESSION_COOKIE_SECURE: "False"
+      DD_CSRF_COOKIE_SECURE: "False"
+      DD_SECURE_SSL_REDIRECT: "False"
+      DD_TRACK_MIGRATIONS: "True"
+    secrets:
+      - dojo_secret_key
+      - dojo_admin_password
+      - postgres_password
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export DD_SECRET_KEY=$$(cat /run/secrets/dojo_secret_key 2>/dev/null || echo 'changeme-set-dojo_secret_key')
+        export DD_ADMIN_PASSWORD=$$(cat /run/secrets/dojo_admin_password 2>/dev/null || echo 'changeme')
+        PG_PASS=$$(cat /run/secrets/postgres_password)
+        export DD_DATABASE_URL="postgresql://postgres:$${PG_PASS}@postgres:5432/defectdojo"
+        export PGPASSWORD="$${PG_PASS}"
+        exec /entrypoint-initializer.sh
+    networks:
+      - backend
+    logging: *dojo-logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # ─── Triage agent (LLM-powered via Ollama/Mistral) ───────────────────────────
+  dojo-triage:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/dojo-triage:latest
+    environment:
+      DEFECTDOJO_URL: http://defectdojo-nginx:8080
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: mistral:7b-instruct
+      DRY_RUN: "false"
+      SCHEDULE_HOURS: "6"
+      BATCH_SIZE: "100"
+      METRICS_PORT: "9303"
+      RETRIAGE_DAYS: "7"
+    secrets:
+      - dojo_api_token
+    networks:
+      - backend
+      - monitoring
+    logging: *dojo-logging
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+      labels:
+        - "prometheus.enable=true"
+        - "prometheus.port=9303"
+        - "prometheus.path=/metrics"
+
 secrets:
   postgres_password:
     external: true
   dojo_api_token:
+    external: true
+  dojo_secret_key:
+    external: true
+  dojo_admin_password:
     external: true
   karacho_secret_key:
     external: true

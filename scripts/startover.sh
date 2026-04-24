@@ -83,19 +83,29 @@ NODE_ROLE=$(docker info --format '{{.Swarm.ControlAvailable}}')
 if [ "$NODE_ROLE" = "true" ]; then
     log_info "Running on manager node - full deployment"
 
+    SSH_OPTS="-p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no -o ConnectTimeout=5"
+
     # Créer silence pour 30 minutes
     SILENCE_ID=$(create_silence 30 "Full stack deployment - startover.sh")
 
     # Déployer les stacks
     deploy_stack "${DIR}_boot/stack/01-boot-service.yml" "boot" 15
     deploy_stack "$DIR/stack/01-service-hl.yml" "base" 15
+    deploy_stack "$DIR/stack/02-service-maintenance.yml" "maintenance" 5
+    # 02-init-ptaas.yml — one-shot, ne pas déployer dans startover
+    deploy_stack "$DIR/stack/51-service-ollama.yml" "ollama" 10
+    # Nym Mixnet — provider requis par nym-proxy (inclus dans borodino)
+    if [ -z "$NYM_PROVIDER" ]; then
+        NYM_PROVIDER=$(curl -4 -s --max-time 10 "https://harbourmaster.nymtech.net/v2/services?size=100" 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); items=[x['service_provider_client_id'] for x in d['items'] if x.get('routing_score',0)==1.0]; print(items[0] if items else '')" 2>/dev/null)
+    fi
+    if [ -z "$NYM_PROVIDER" ]; then
+        log_warn "NYM_PROVIDER introuvable (harbourmaster unreachable?) — nym-proxy démarrera sans provider"
+    else
+        log_info "NYM_PROVIDER: ${NYM_PROVIDER}"
+        export NYM_PROVIDER
+    fi
     deploy_stack "$DIR/stack/40-service-borodino.yml" "borodino" 15
-    # Force-restart nuclei-api: bind-mount files may have changed but Swarm
-    # won't rolling-update the service if the stack spec is unchanged.
-    # rsync-master keeps /opt/bojemoi in sync on workers, so files are ready.
-    docker service update --force borodino_nuclei-api > /dev/null 2>&1 \
-        && log_info "nuclei-api restarted (bind-mount refresh)" \
-        || log_warn "nuclei-api restart skipped (service not found)"
     deploy_stack "$DIR/stack/45-service-ml-threat-intel.yml" "ml-threat" 15
     deploy_stack "$DIR/stack/46-service-razvedka.yml" "razvedka" 10
     deploy_stack "$DIR/stack/47-service-vigie.yml" "vigie" 10
@@ -104,12 +114,23 @@ if [ "$NODE_ROLE" = "true" ]; then
     deploy_stack "$DIR/stack/50-service-trivy.yml" "trivy" 5
     deploy_stack "$DIR/stack/55-service-sentinel.yml" "sentinel" 10
     deploy_stack "${DIR}/stack/60-service-telegram.yml" "telegram" 5
-    deploy_stack "${DIR}/stack/66-service-discovery.yml" "cti" 5
+    # deploy_stack "${DIR}/stack/66-service-discovery.yml" "cti" 5  # TODO: create stack file
     deploy_stack "${DIR}/stack/65-service-medved.yml" "honeypot" 5
+    # deploy_stack "$DIR/stack/56-service-dvar.yml" "dvar" 5      # Optionnel: cible IoT ARM lab
 
-    # Deploy suricata standalone (needs network_mode: host, not supported in Swarm)
-    log_info "Deploying suricata (standalone docker compose)..."
+    # Deploy suricata standalone on ALL nodes (needs network_mode: host, not supported in Swarm)
+    log_info "Deploying suricata on all nodes..."
     docker compose -f "$DIR/stack/01-suricata-host.yml" up -d
+    for node in $(docker node ls --format '{{.Hostname}}' | grep -v "$(hostname)"); do
+        NODE_IP=$(docker node inspect "$node" --format '{{.Status.Addr}}' 2>/dev/null)
+        if [ -n "$NODE_IP" ]; then
+            log_info "  suricata → $node ($NODE_IP)..."
+            ssh $SSH_OPTS docker@"$NODE_IP" \
+                "cd /opt/bojemoi && docker compose -f stack/01-suricata-host.yml up -d" 2>/dev/null \
+                && log_info "  $node: OK" \
+                || log_warn "  $node: FAILED"
+        fi
+    done
 
     # Afficher le statut
     log_info "Deployment complete. Services status:"
@@ -168,7 +189,6 @@ if [ "$NODE_ROLE" = "true" ]; then
     check_url "IP-API" "http://ip-api.com/json/8.8.8.8"
 
     # Authenticated APIs (read keys from worker containers)
-    SSH_OPTS="-p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no -o ConnectTimeout=5"
     ML_NODE=$(docker service ps ml-threat_ml-threat-intel-api --format "{{.Node}}" --filter "desired-state=running" 2>/dev/null | head -1)
     if [ -n "$ML_NODE" ]; then
         ML_IP=$(docker node inspect "$ML_NODE" --format '{{.Status.Addr}}' 2>/dev/null)

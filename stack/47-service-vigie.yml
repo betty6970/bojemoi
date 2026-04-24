@@ -4,22 +4,38 @@
 networks:
   backend:
     external: true
+  scan_net:
+    external: true
+    name: borodino_scan_net
+
+configs:
+  route_setup_v1:
+    external: true
 
 secrets:
   telegram_bot_token:
     external: true
   telegram_alert_chat_id:
     external: true
+  postgres_password:
+    external: true
 
 services:
   vigie:
     image: ${IMAGE_REGISTRY:-localhost:5000}/vigie:latest
     hostname: vigie
+    cap_add:
+      - NET_ADMIN
+    configs:
+      - source: route_setup_v1
+        target: /usr/bin/route-setup.sh
+        mode: 0755
     environment:
+      SCAN_GATEWAY_HOST: wg-gateway
       PG_HOST: postgres
       PG_PORT: "5432"
       PG_USER: postgres
-      PG_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # PG_PASSWORD read from /run/secrets/postgres_password by app
       PG_DATABASE: vigie
       FEED_URLS: >-
         https://cert.ssi.gouv.fr/alerte/feed/,
@@ -35,8 +51,11 @@ services:
     secrets:
       - telegram_bot_token
       - telegram_alert_chat_id
+      - postgres_password
     networks:
       - backend
+      - scan_net
+    command: ["/usr/bin/route-setup.sh", "python", "-m", "vigie"]
     logging:
       driver: json-file
       options:

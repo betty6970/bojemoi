@@ -5,7 +5,11 @@ services:
     image: ${IMAGE_REGISTRY:-localhost:5000}/telegram-bot:latest
     hostname: telegram-bot
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/telegram_bot
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER:-postgres}
+      - DB_NAME=telegram_bot
+      - DB_PASSWORD_FILE=/run/secrets/postgres_password
       # Redis configuration for pentest-orchestrator communication (borodino stack)
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -16,6 +20,7 @@ services:
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
     secrets:
       - telegram_bot_token
+      - postgres_password
     networks:
       - backend
       - telegram_net
@@ -45,6 +50,8 @@ services:
 
 secrets:
   telegram_bot_token:
+    external: true
+  postgres_password:
     external: true
 
 networks:

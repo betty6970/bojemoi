@@ -24,71 +24,61 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  eve-cleaner:
-    image: ${IMAGE_REGISTRY:-localhost:5000}/alpine:latest
-    volumes:
-      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata
-    environment:
-      KEEP_HOURS: "24"
-    command: >
-      sh -c "while true; do
-        find /var/log/suricata -name 'eve.json' -size +5G -exec truncate -s 0 {} \; 2>/dev/null;
-        find /var/log/suricata -name 'fast.log' -size +500M -exec truncate -s 0 {} \; 2>/dev/null;
-        find /var/log/suricata -name 'stats.log' -size +500M -exec truncate -s 0 {} \; 2>/dev/null;
-        find /var/log/suricata -name 'eve.*.json' -mmin +$$((KEEP_HOURS * 60)) -delete 2>/dev/null;
-        echo \"[eve-cleaner] done (keep=$${KEEP_HOURS}h)\";
-        sleep 3600;
-      done"
-    logging:
-      driver: json-file
-      options:
-        max-size: "1m"
-        max-file: "1"
-    deploy:
-      mode: replicated
-      replicas: 1
-      placement:
-        constraints:
-          - node.role == worker
-      restart_policy:
-        condition: any
-      resources:
-        limits:
-          cpus: '0.05'
-          memory: 32M
-        reservations:
-          cpus: '0.01'
-          memory: 8M
-
-  suricata-attack-enricher:
-    image: ${IMAGE_REGISTRY:-localhost:5000}/suricata-attack-enricher:latest
-    container_name: suricata-attack-enricher
-    network_mode: host
-    networks:
-      - backend
+  suricata-exporter:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/suricata_exporter:latest
+    container_name: suricata-exporter
     volumes:
       - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata:ro
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=${ML_THREAT_DBNAME:-bojemoi_threat_intel}
-      - DB_USER=postgres
-      - DB_PASSWORD_FILE=/run/secrets/postgres_password
-    secrets:
-      - postgres_password
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/run:/var/run/suricata:ro
+    ports:
+      - "9917:9917"
+    command:
+      - '--suricata.socket-path=/var/run/suricata/suricata-command.socket'
     restart: unless-stopped
+    depends_on:
+      - suricata
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+  eve-cleaner:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/alpine:latest
+    container_name: eve-cleaner
+    volumes:
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata
+    environment:
+      # Nombre d'heures de logs tournés à conserver (suricata crée eve.TIMESTAMP.json toutes les heures)
+      KEEP_HOURS: "48"
+    command: >
+      sh -c "while true; do
+        LOGDIR=/var/log/suricata;
+        NOW=$$(date +%s);
+        DELETED=0;
+        SIZE_BEFORE=$$(du -sk $$LOGDIR 2>/dev/null | cut -f1);
+        for f in $$LOGDIR/eve.*.json $$LOGDIR/fast.log.* $$LOGDIR/stats.log.*; do
+          [ -f \"$$f\" ] || continue;
+          MTIME=$$(stat -c %Y \"$$f\" 2>/dev/null || stat -f %m \"$$f\" 2>/dev/null);
+          AGE_H=$$(( (NOW - MTIME) / 3600 ));
+          if [ \"$$AGE_H\" -ge \"$$KEEP_HOURS\" ]; then
+            rm -f \"$$f\";
+            DELETED=$$(( DELETED + 1 ));
+          fi;
+        done;
+        SIZE_AFTER=$$(du -sk $$LOGDIR 2>/dev/null | cut -f1);
+        FREED=$$(( (SIZE_BEFORE - SIZE_AFTER) / 1024 ));
+        echo \"[eve-cleaner] $$(date -Iseconds) keep=$${KEEP_HOURS}h deleted=$${DELETED} freed=$${FREED}MB dir_size=$$(du -sh $$LOGDIR 2>/dev/null | cut -f1)\";
+        sleep 3600;
+      done"
+    restart: unless-stopped
     depends_on:
       - suricata
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
 
-networks:
-  backend:
-    external: true
-
-secrets:
-  postgres_password:
-    external: true
+  # suricata-attack-enricher runs as a global Swarm service (needs overlay network + secrets)
+  # See stack/01-service-hl.yml

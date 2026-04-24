@@ -5,6 +5,13 @@
 networks:
   backend:
     external: true
+  scan_net:
+    external: true
+    name: borodino_scan_net
+
+configs:
+  route_setup_v1:
+    external: true
 
 volumes:
   razvedka-session:
@@ -21,6 +28,8 @@ secrets:
     external: true
   telegram_alert_chat_id:
     external: true
+  postgres_password:
+    external: true
   # twitter_bearer_token:  # uncomment after: docker secret create twitter_bearer_token -
   #   external: true
 
@@ -28,11 +37,18 @@ services:
   razvedka:
     image: ${IMAGE_REGISTRY:-localhost:5000}/razvedka:latest
     hostname: razvedka
+    cap_add:
+      - NET_ADMIN
+    configs:
+      - source: route_setup_v1
+        target: /usr/bin/route-setup.sh
+        mode: 0755
     environment:
+      SCAN_GATEWAY_HOST: wg-gateway
       PG_HOST: postgres
       PG_PORT: 5432
       PG_USER: postgres
-      PG_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      # PG_PASSWORD read from /run/secrets/postgres_password by app
       PG_DATABASE: razvedka
       TELEGRAM_CHANNELS: >-
         ddos_separ,
@@ -63,11 +79,14 @@ services:
       - telegram_phone
       - telegram_bot_token
       - telegram_alert_chat_id
+      - postgres_password
       # - twitter_bearer_token  # uncomment after creating the secret
     volumes:
       - razvedka-session:/data
     networks:
       - backend
+      - scan_net
+    command: ["/usr/bin/route-setup.sh", "python", "-m", "razvedka.main"]
     logging:
       driver: json-file
       options:
