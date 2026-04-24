@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from app.config import settings
 from app.models.schemas import (
     VMDeployRequest, ContainerDeployRequest,
-    DeploymentResponse, HealthResponse, DeploymentListResponse,
+    DeploymentResponse, HealthResponse,
     BlockchainBlock, BlockchainVerifyResponse, BlockListResponse,
     BlockchainStatsResponse,
     Rapid7DeployRequest, Rapid7RegisterRequest,
@@ -20,6 +20,7 @@ from app.models.schemas import (
     VulnHubDeployRequest, VulnHubDeployResponse, VulnHubTargetsResponse,
 )
 from app.services.gitea_client import GiteaClient
+from app.services.local_template_client import LocalTemplateClient
 from app.services.xenserver_client_real import XenServerClient
 from app.services.docker_client import DockerSwarmClient
 from app.services.cloudinit_gen import CloudInitGenerator
@@ -65,6 +66,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize clients (will be initialized on startup)
 gitea_client: Optional[GiteaClient] = None
+template_client: Optional[LocalTemplateClient] = None
 xenserver_client: Optional[XenServerClient] = None
 docker_client: Optional[DockerSwarmClient] = None
 cloudinit_gen: Optional[CloudInitGenerator] = None
@@ -78,7 +80,7 @@ vulnhub_manager: Optional[VulnHubManager] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan (startup and shutdown)"""
-    global gitea_client, xenserver_client, docker_client, cloudinit_gen, db
+    global gitea_client, template_client, xenserver_client, docker_client, cloudinit_gen, db
     global ip2location_client, blockchain_service, rapid7_manager, vulnhub_manager
 
     # Startup
@@ -95,6 +97,10 @@ async def lifespan(app: FastAPI):
         )
         logger.info(f"Gitea client initialized (repo: {settings.GITEA_REPO_OWNER}/{settings.GITEA_REPO})")
 
+        # Initialize local template client (no Gitea dependency at runtime)
+        template_client = LocalTemplateClient(settings.TEMPLATES_DIR)
+        logger.info(f"LocalTemplateClient initialized (dir: {settings.TEMPLATES_DIR})")
+
         # Initialize XenServer client
         xenserver_client = XenServerClient(
             url=settings.XENSERVER_URL,
@@ -109,8 +115,8 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Docker Swarm client initialized")
 
-        # Initialize CloudInit generator
-        cloudinit_gen = CloudInitGenerator(gitea_client)
+        # Initialize CloudInit generator (uses local templates)
+        cloudinit_gen = CloudInitGenerator(template_client)
         logger.info("CloudInit generator initialized")
 
         # Initialize Database
@@ -255,9 +261,9 @@ async def health_check():
         update_service_health("gitea", False)
         logger.error(f"Gitea health check failed: {e}")
 
-    # Check XenServer
+    # Check XenServer (5s timeout to avoid hanging health check)
     try:
-        xenserver_ok = await xenserver_client.ping()
+        xenserver_ok = await asyncio.wait_for(xenserver_client.ping(), timeout=5.0)
         health_status["services"]["xenserver"] = "up" if xenserver_ok else "down"
         update_service_health("xenserver", xenserver_ok)
     except Exception as e:
@@ -333,11 +339,11 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
     try:
         logger.info(f"Deploying VM: {request.name} (from IP: {source_ip}, country: {source_country})")
 
-        # 1. Fetch cloud-init template from Gitea
-        template_path = f"cloud-init/{request.os_type}/{request.template}.yaml"
+        # 1. Fetch cloud-init template from local filesystem
+        template_path = f"cloud-init/{request.os_type.value}/{request.template}.yaml"
         logger.debug(f"Fetching template: {template_path}")
 
-        template_content = await gitea_client.get_file_content(template_path)
+        template_content = await template_client.get_file_content(template_path)
 
         # 2. Generate final cloud-init configuration
         cloudinit_config = cloudinit_gen.generate(
@@ -375,13 +381,11 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
             source_country=source_country
         )
 
-        # Also log in legacy database for backwards compatibility
-        deployment_id = await db.log_deployment(
-            deployment_type="vm",
-            name=request.name,
-            config=request.dict(),
-            resource_ref=vm_ref,
-            status="success"
+        # Register in host_debug
+        host_id = await db.register_host(
+            address=vm_ref,
+            vm_name=request.name,
+            vm_uuid=vm_ref,
         )
 
         # Record success metrics
@@ -392,7 +396,7 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
 
         return DeploymentResponse(
             success=True,
-            deployment_id=deployment_id,
+            deployment_id=host_id,
             resource_id=vm_ref,
             message=f"VM {request.name} deployed successfully (block #{block['block_number']})"
         )
@@ -419,18 +423,6 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
         except Exception as blockchain_err:
             logger.error(f"Failed to log VM deployment failure to blockchain: {blockchain_err}")
 
-        # Also log in legacy database
-        try:
-            await db.log_deployment(
-                deployment_type="vm",
-                name=request.name,
-                config=request.dict(),
-                status="failed",
-                error=str(e)
-            )
-        except Exception as db_err:
-            logger.error(f"Failed to log VM deployment failure to database: {db_err}")
-        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to deploy VM: {str(e)}"
@@ -472,15 +464,6 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
             source_country=source_country
         )
 
-        # Also log in legacy database for backwards compatibility
-        deployment_id = await db.log_deployment(
-            deployment_type="container",
-            name=request.name,
-            config=request.dict(),
-            resource_ref=service_id,
-            status="success"
-        )
-
         # Record success metrics
         duration = time.time() - start_time
         record_deployment("container", "success", "production", duration)
@@ -489,7 +472,7 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
 
         return DeploymentResponse(
             success=True,
-            deployment_id=deployment_id,
+            deployment_id=0,
             resource_id=service_id,
             message=f"Container {request.name} deployed successfully (block #{block['block_number']})"
         )
@@ -515,18 +498,6 @@ async def deploy_container(request: ContainerDeployRequest, req: Request):
             )
         except Exception as blockchain_err:
             logger.error(f"Failed to log container deployment failure to blockchain: {blockchain_err}")
-
-        # Also log in legacy database
-        try:
-            await db.log_deployment(
-                deployment_type="container",
-                name=request.name,
-                config=request.dict(),
-                status="failed",
-                error=str(e)
-            )
-        except Exception as db_err:
-            logger.error(f"Failed to log container deployment failure to database: {db_err}")
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -612,13 +583,6 @@ async def deploy_rapid7_vm(request: Rapid7DeployRequest, req: Request):
             status="success",
             source_ip=ip_info.get("source_ip"),
             source_country=ip_info.get("source_country"),
-        )
-        await db.log_deployment(
-            deployment_type="vm",
-            name=request.vm_name,
-            config={**request.dict(), "xen_uuid": vm_uuid, "ip": ip},
-            resource_ref=vm_uuid,
-            status="success",
         )
 
         duration = time.time() - start_time
@@ -803,13 +767,6 @@ async def deploy_vulnhub_vm(vm_id: str, request: VulnHubDeployRequest, req: Requ
             source_ip=ip_info.get("source_ip"),
             source_country=ip_info.get("source_country"),
         )
-        await db.log_deployment(
-            deployment_type="vm",
-            name=vm_name,
-            config={**request.dict(), "vm_id": vm_id, "xen_uuid": vm_uuid, "ip": ip},
-            resource_ref=vm_uuid,
-            status="success",
-        )
 
         duration = time.time() - start_time
         record_deployment("vm", "success", "dev", duration)
@@ -876,94 +833,42 @@ async def delete_vulnhub_vm(vm_id: str):
     }
 
 
-@app.get("/api/v1/deployments", response_model=DeploymentListResponse, tags=["Deployments"])
-async def list_deployments(
-    deployment_type: Optional[str] = None,
-    status_filter: Optional[str] = None,
-    limit: int = 50
-):
-    """List all deployments"""
+@app.get("/api/v1/hosts", tags=["Hosts"])
+async def list_hosts(limit: int = 50):
+    """List all registered hosts in host_debug"""
     try:
-        deployments = await db.get_deployments(
-            deployment_type=deployment_type,
-            status_filter=status_filter,
-            limit=limit
-        )
-        
-        return DeploymentListResponse(
-            success=True,
-            count=len(deployments),
-            deployments=deployments
-        )
-        
+        hosts = await db.get_hosts(limit=limit)
+        serialized = [
+            {k: (str(v) if hasattr(v, "isoformat") else v) for k, v in h.items()}
+            for h in hosts
+        ]
+        return {"success": True, "count": len(serialized), "hosts": serialized}
     except Exception as e:
-        logger.error(f"Failed to list deployments: {e}")
+        logger.error(f"Failed to list hosts: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list deployments: {str(e)}"
+            detail=f"Failed to list hosts: {str(e)}"
         )
 
 
-@app.get("/api/v1/deployments/{deployment_id}", tags=["Deployments"])
-async def get_deployment(deployment_id: int):
-    """Get details of a specific deployment"""
+@app.delete("/api/v1/hosts/{address}", tags=["Hosts"])
+async def delete_host(address: str):
+    """Remove a host from host_debug"""
     try:
-        deployment = await db.get_deployment(deployment_id)
-        
-        if not deployment:
+        removed = await db.delete_host(address)
+        if not removed:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Deployment {deployment_id} not found"
+                detail=f"Host {address} not found"
             )
-        
-        return deployment
-        
+        return {"success": True, "message": f"Host {address} removed from host_debug"}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get deployment {deployment_id}: {e}")
+        logger.error(f"Failed to delete host {address}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get deployment: {str(e)}"
-        )
-
-
-@app.delete("/api/v1/deployments/{deployment_id}", tags=["Deployments"])
-async def delete_deployment(deployment_id: int):
-    """Delete a deployment (VM or container)"""
-    try:
-        # Get deployment info
-        deployment = await db.get_deployment(deployment_id)
-        
-        if not deployment:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Deployment {deployment_id} not found"
-            )
-        
-        # Delete resource based on type
-        if deployment["type"] == "vm":
-            await xenserver_client.delete_vm(deployment["resource_ref"])
-        elif deployment["type"] == "container":
-            await docker_client.delete_service(deployment["resource_ref"])
-        
-        # Update database
-        await db.update_deployment_status(deployment_id, "deleted")
-        
-        logger.info(f"Deployment {deployment_id} deleted successfully")
-        
-        return {
-            "success": True,
-            "message": f"Deployment {deployment_id} deleted successfully"
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to delete deployment {deployment_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete deployment: {str(e)}"
+            detail=f"Failed to delete host: {str(e)}"
         )
 
 
@@ -1117,7 +1022,7 @@ async def list_templates(os_type: Optional[str] = None):
         os_type: Filter by OS type (alpine, ubuntu, debian), or omit for all
     """
     try:
-        templates = await gitea_client.list_templates(os_type)
+        templates = await template_client.list_templates(os_type)
 
         return {
             "success": True,
@@ -1142,7 +1047,7 @@ async def get_template(os_type: str, template_name: str):
         template_name: Template name (without .yaml extension)
     """
     try:
-        content = await gitea_client.get_template(os_type, template_name)
+        content = await template_client.get_template(os_type, template_name)
 
         return {
             "success": True,
@@ -1168,7 +1073,7 @@ async def get_template(os_type: str, template_name: str):
 async def list_common_scripts():
     """List available common scripts for cloud-init."""
     try:
-        scripts = await gitea_client.list_common_scripts()
+        scripts = await template_client.list_common_scripts()
 
         return {
             "success": True,
@@ -1192,7 +1097,7 @@ async def get_common_script(script_name: str):
         script_name: Script name (with or without .sh extension)
     """
     try:
-        content = await gitea_client.get_common_script(script_name)
+        content = await template_client.get_common_script(script_name)
 
         return {
             "success": True,
@@ -1215,9 +1120,9 @@ async def get_common_script(script_name: str):
 
 @app.post("/api/v1/templates/cache/clear", tags=["Templates"])
 async def clear_template_cache():
-    """Clear the template cache to force fresh fetches from Gitea."""
+    """Clear the template cache (no-op for local templates, kept for API compatibility)."""
     try:
-        gitea_client.clear_cache()
+        template_client.clear_cache()
 
         return {
             "success": True,

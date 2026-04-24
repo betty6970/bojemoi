@@ -1,0 +1,41 @@
+#cloud-config
+# Template minimal pour Alpine Linux
+
+hostname: {{ hostname }}
+fqdn: {{ fqdn }}
+
+# Utilisateur admin
+users:
+  - name: admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/ash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... # VOTRE CLÉ SSH ICI
+
+# Packages minimaux
+packages:
+  - curl
+  - wget
+  - git
+  - htop
+  - vim
+
+# Mise à jour système
+package_update: true
+package_upgrade: true
+
+# Configuration minimale
+write_files:
+  - path: /etc/environment
+    content: |
+      ENVIRONMENT={{ environment }}
+      VM_NAME={{ vm_name }}
+      HOSTNAME={{ hostname }}
+
+# Commandes à exécuter au démarrage
+runcmd:
+  - echo "VM {{ vm_name }} initialized in {{ environment }} environment" > /var/log/cloud-init-complete.log
+  - echo "Deployment completed at $(date)" >> /var/log/cloud-init-complete.log
+
+# Message final
+final_message: "Alpine minimal {{ vm_name }} ready after $UPTIME seconds"

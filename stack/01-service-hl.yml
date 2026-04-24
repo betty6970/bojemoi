@@ -75,6 +75,14 @@ secrets:
      external: true
    postgres_ssl_key:
      external: true
+   postgres_password:
+     external: true
+   gitea_token:
+     external: true
+   xenserver_pass:
+     external: true
+   grafana_admin_password:
+     external: true
 configs:
    # NOTE: traefik_tls_config, dnsmask_config, traefik_config, crowdsec_config,
    #       registry_config moved to /opt/bojemoi_boot/stack/01-boot-service.yml
@@ -82,7 +90,7 @@ configs:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alertmanager/alertmanager.yml
    tls_alertmanager_config:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alertmanager/certs/protonmail-bridge.crt
-   alloy_config_v3:
+   alloy_config_v4:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/alloy/config/config.alloy
    grafana-ini_config:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/grafana/grafana.ini
@@ -101,7 +109,7 @@ configs:
    # Rules files are 41MB+ which exceeds Docker's 4MB gRPC config limit
    tempo_config:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/tempo/config/tempo.yaml
-   provisioning_env_v2:
+   provisioning_env_v5:
      file: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/provisioning/.env
    postgres_ssl_cert_v1:
      external: true
@@ -169,7 +177,7 @@ services:
   postgres:
     image: ${IMAGE_REGISTRY:-localhost:5000}/postgres-ssl:latest
     environment:
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_DB: ${MSF_DBNAME:-msf}
     command: >
@@ -181,6 +189,7 @@ services:
       -c hba_file=/etc/postgresql/pg_hba.conf
     secrets:
       - postgres_ssl_key
+      - postgres_password
     configs:
       - source: postgres_ssl_cert_v1
         target: /var/lib/postgresql/ssl/server.crt
@@ -243,8 +252,8 @@ services:
   pgadmin:
     image: ${IMAGE_REGISTRY:-localhost:5000}/pgadmin4
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?PGADMIN_PASSWORD is required}
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: bojemoi
     volumes:
       - pgadmin-data:/var/lib/pgadmin
     networks:
@@ -290,47 +299,38 @@ services:
 
 
   # =========================================================================
-  # SERVICE: suricata — moved to standalone docker compose (01-suricata-host.yml)
-  # Requires network_mode: host for real packet capture, not supported in Swarm.
+  # SERVICE: suricata + exporter — moved to standalone docker compose (01-suricata-host.yml)
+  # Deployed on ALL nodes. Prometheus scrapes exporter on port 9917 (host mode).
   # Deploy: docker compose -f stack/01-suricata-host.yml up -d
   # =========================================================================
-  # Suricata Exporter pour les métriques Prometheus
-  suricata-exporter:
-    image: ${IMAGE_REGISTRY:-localhost:5000}/suricata_exporter
+  # Suricata Attack Enricher — global Swarm service (needs overlay + secret)
+  suricata-attack-enricher:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/suricata-attack-enricher:latest
     volumes:
-      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata
-      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/run:/var/run/suricata
+      - ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/volumes/suricata/logs:/var/log/suricata:ro
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${ML_THREAT_DBNAME:-bojemoi_threat_intel}
+      DB_USER: postgres
+      DB_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     networks:
-      - monitoring
       - backend
-    # ports removed - Prometheus scrapes via overlay network
-    command:
-      - '--suricata.socket-path=/var/run/suricata/suricata-command.socket'
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
     deploy:
-      replicas: 1
-      placement:
-        constraints:
-          - node.hostname == ${SURICATA_NODE_HOSTNAME:-meta-70}  # Suricata socket only exists on this node
+      mode: global
       restart_policy:
         condition: on-failure
-        delay: 5s
-        max_attempts: 3
-      update_config:
-        parallelism: 1
         delay: 10s
+        max_attempts: 3
       labels:
-        - prometheus.enable=true
-        - prometheus.port=9917
-        - prometheus.path=/metrics
-        - prometheus.label.team=security
-        - prometheus.label.component=ids-exporter
-        - prometheus.label.stack=base
-        - prometheus.label.tier=security
+        - prometheus.enable=false
 
   # =========================================================================
   # SERVICE: Grafana (Serveur principal de visualisation)
@@ -346,13 +346,13 @@ services:
     # ports removed - access via Traefik (grafana.${LAB_DOMAIN:-bojemoi.lab})
     environment:
       GF_SERVER_ROOT_URL: http://localhost:3000
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_DATABASE_TYPE: postgres
       GF_DATABASE_HOST: postgres:5432
       GF_DATABASE_NAME: ${GRAFANA_DBNAME:-grafana}
       GF_DATABASE_USER: ${POSTGRES_USER:-postgres}
-      GF_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      GF_DATABASE_PASSWORD__FILE: /run/secrets/postgres_password
       GF_DATABASE_SSL_MODE: disable
       SENTINEL_PG_PASS: ${SENTINEL_PG_PASS:-changeme}
     configs:
@@ -363,6 +363,9 @@ services:
       - source: grafana-dashboards-provider_v4
         target: /etc/grafana/provisioning/dashboards/dashboards.yml
  
+    secrets:
+      - postgres_password
+      - grafana_admin_password
     volumes:
       # Données persistantes (DB, plugins, sessions)
       - grafana_data:/var/lib/grafana
@@ -614,7 +617,7 @@ services:
     image: ${IMAGE_REGISTRY:-localhost:5000}/alloy:latest
     # ports removed - internal telemetry collector
     configs:
-      - source: alloy_config_v3
+      - source: alloy_config_v4
         target: /etc/alloy/config.alloy
     environment:
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
@@ -1077,7 +1080,11 @@ services:
   postgres-exporter:
     image: ${IMAGE_REGISTRY:-localhost:5000}/postgres-exporter:latest
     environment:
-      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/postgres?sslmode=disable"
+      DATA_SOURCE_URI: "postgres:5432/postgres?sslmode=disable"
+      DATA_SOURCE_USER: ${POSTGRES_USER:-postgres}
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     networks:
       - monitoring
       - backend
@@ -1121,9 +1128,13 @@ services:
     command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --app-dir /app
     # ports removed - access via Traefik (provisioning.${LAB_DOMAIN:-bojemoi.lab})
     configs:
-      - source: provisioning_env_v2
+      - source: provisioning_env_v5
         target: /app/.env
         mode: 0444
+    secrets:
+      - postgres_password
+      - gitea_token
+      - xenserver_pass
     environment:
       - DOCKER_SWARM_URL=tcp://docker-socket-proxy:2375
     volumes:
@@ -1131,6 +1142,11 @@ services:
       - provisioning_logs:/app/logs
       # Cache
       - provisioning_cache:/app/cache
+      # Cloud-init templates (local copy — no Gitea dependency at runtime)
+      - type: bind
+        source: ${BOJEMOI_BASE_PATH:-/opt/bojemoi}/provisioning/cloud-init
+        target: /app/cloud-init
+        read_only: true
     networks:
       - backend
       - proxy

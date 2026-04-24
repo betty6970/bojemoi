@@ -10,14 +10,14 @@ logger = logging.getLogger(__name__)
 class CloudInitGenerator:
     """Generate cloud-init configurations"""
     
-    def __init__(self, gitea_client):
+    def __init__(self, template_client):
         """
         Initialize CloudInit generator
-        
+
         Args:
-            gitea_client: GiteaClient instance for fetching templates
+            template_client: LocalTemplateClient (or GiteaClient) for fetching templates
         """
-        self.gitea_client = gitea_client
+        self.gitea_client = template_client  # kept as gitea_client for internal compat
     
     def generate(
         self,

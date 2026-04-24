@@ -1,0 +1,65 @@
+#cloud-config
+# Template webserver pour Alpine Linux
+
+hostname: {{ hostname }}
+fqdn: {{ fqdn }}
+
+# Utilisateur admin
+users:
+  - name: admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... # VOTRE CLÉ SSH ICI
+
+# Packages à installer
+packages:
+  - curl
+  - wget
+  - git
+  - nginx
+  - docker
+  - docker-compose
+
+# Mise à jour système
+package_update: true
+package_upgrade: true
+
+# Configuration Nginx
+write_files:
+  - path: /etc/nginx/http.d/default.conf
+    content: |
+      server {
+          listen 80;
+          server_name {{ vm_name }};
+          
+          location / {
+              proxy_pass http://localhost:8080;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          }
+      }
+
+  - path: /etc/environment
+    content: |
+      ENVIRONMENT={{ environment }}
+      VM_NAME={{ vm_name }}
+      HOSTNAME={{ hostname }}
+
+# Commandes à exécuter au démarrage
+runcmd:
+  # Configuration Nginx
+  - rc-update add nginx default
+  - rc-service nginx start
+  
+  # Configuration Docker
+  - rc-update add docker default
+  - rc-service docker start
+  
+  # Log de complétion
+  - echo "VM {{ vm_name }} initialized successfully in {{ environment }} environment" > /var/log/cloud-init-complete.log
+  - echo "Deployment completed at $(date)" >> /var/log/cloud-init-complete.log
+
+# Message final
+final_message: "Cloud-init completed for {{ vm_name }} after $UPTIME seconds"

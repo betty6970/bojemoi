@@ -1,0 +1,54 @@
+#cloud-config
+# Template par défaut pour Ubuntu
+
+hostname: {{ hostname }}
+fqdn: {{ fqdn }}
+
+# Utilisateur admin
+users:
+  - name: admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... # VOTRE CLÉ SSH ICI
+
+# Packages de base
+packages:
+  - curl
+  - wget
+  - git
+  - htop
+  - vim
+  - net-tools
+  - dnsutils
+
+# Mise à jour système
+package_update: true
+package_upgrade: true
+
+# Configuration de base
+write_files:
+  - path: /etc/environment
+    content: |
+      ENVIRONMENT={{ environment }}
+      VM_NAME={{ vm_name }}
+      HOSTNAME={{ hostname }}
+
+  - path: /etc/motd
+    content: |
+      =====================================
+      Bojemoi Lab - {{ vm_name }}
+      Environment: {{ environment }}
+      =====================================
+
+# Commandes à exécuter au démarrage
+runcmd:
+  # Configuration timezone
+  - timedatectl set-timezone Europe/Paris
+
+  # Log de complétion
+  - echo "VM {{ vm_name }} initialized in {{ environment }} environment" > /var/log/cloud-init-complete.log
+  - echo "Deployment completed at $(date)" >> /var/log/cloud-init-complete.log
+
+# Message final
+final_message: "Ubuntu VM {{ vm_name }} ready after $UPTIME seconds"

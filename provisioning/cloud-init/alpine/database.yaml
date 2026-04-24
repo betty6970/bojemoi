@@ -1,0 +1,62 @@
+#cloud-config
+# Template database pour Alpine Linux
+
+hostname: {{ hostname }}
+fqdn: {{ fqdn }}
+
+# Utilisateur admin
+users:
+  - name: admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... # VOTRE CLÉ SSH ICI
+
+# Packages à installer
+packages:
+  - curl
+  - wget
+  - git
+  - postgresql15
+  - postgresql15-contrib
+
+# Mise à jour système
+package_update: true
+package_upgrade: true
+
+# Configuration PostgreSQL
+write_files:
+  - path: /etc/postgresql/postgresql.conf
+    content: |
+      # Configuration pour {{ environment }}
+      listen_addresses = '*'
+      max_connections = 100
+      shared_buffers = 256MB
+      work_mem = 4MB
+      maintenance_work_mem = 64MB
+
+  - path: /etc/environment
+    content: |
+      ENVIRONMENT={{ environment }}
+      VM_NAME={{ vm_name }}
+      DB_NAME={{ db_name | default('bojemoi') }}
+
+# Commandes à exécuter au démarrage
+runcmd:
+  # Configuration PostgreSQL
+  - rc-update add postgresql default
+  - rc-service postgresql setup
+  - rc-service postgresql start
+
+  # Création base de données
+  - sleep 5
+  - sudo -u postgres psql -c "CREATE DATABASE {{ db_name | default('bojemoi') }};"
+  - sudo -u postgres psql -c "CREATE USER dbuser WITH ENCRYPTED PASSWORD 'changeme';"
+  - sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE {{ db_name | default('bojemoi') }} TO dbuser;"
+
+  # Log de complétion
+  - echo "Database {{ vm_name }} initialized in {{ environment }} environment" > /var/log/cloud-init-complete.log
+  - echo "Deployment completed at $(date)" >> /var/log/cloud-init-complete.log
+
+# Message final
+final_message: "Database server {{ vm_name }} ready after $UPTIME seconds"

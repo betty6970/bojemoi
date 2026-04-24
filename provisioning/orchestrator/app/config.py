@@ -1,27 +1,30 @@
 """Application configuration with secure defaults.
 
-All sensitive values MUST be provided via environment variables.
-No secrets are stored in code.
+All sensitive values are read from Docker secrets (/run/secrets/).
+Fallback to environment variables for local development only.
 """
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 from typing import List, Optional
+from pathlib import Path
 import os
 
+SECRETS_DIR = Path("/run/secrets")
 
-def _require_env(var_name: str, default: Optional[str] = None) -> str:
-    """Require environment variable or raise error in production."""
-    value = os.getenv(var_name, default)
-    if value is None:
-        raise ValueError(f"Required environment variable {var_name} is not set")
-    return value
+
+def _read_secret(name: str, default: Optional[str] = None) -> Optional[str]:
+    """Read a Docker secret from /run/secrets/, fallback to env var."""
+    secret_file = SECRETS_DIR / name
+    if secret_file.is_file():
+        return secret_file.read_text().strip()
+    return os.getenv(name.upper(), default)
 
 
 class Settings(BaseSettings):
     """Application settings with secure defaults.
 
-    SECURITY: All credentials must be provided via environment variables.
-    Default values are only used for non-sensitive configuration.
+    SECURITY: All credentials are read from Docker secrets.
+    Fallback to env vars for local dev only.
     """
 
     # App
@@ -37,12 +40,15 @@ class Settings(BaseSettings):
     API_VERSION: str = "1.0.0"
     API_DESCRIPTION: str = "VM and Container Deployment Orchestration"
 
-    # Database - NO DEFAULT PASSWORD
+    # Database
     POSTGRES_HOST: str = "postgres"
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = Field(..., description="Database password (required)")
-    POSTGRES_DB: str = "deployments"
+    POSTGRES_PASSWORD: str = Field(
+        default_factory=lambda: _read_secret("postgres_password") or "",
+        description="Database password (from Docker secret)"
+    )
+    POSTGRES_DB: str = "msf"
 
     # IP2Location Database
     IP2LOCATION_DB_NAME: str = "ip2location"
@@ -76,17 +82,23 @@ class Settings(BaseSettings):
         description="Allowed countries for IP validation"
     )
 
-    # Gitea - NO DEFAULT TOKEN
+    # Gitea
     GITEA_URL: str = "https://gitea.bojemoi.me"
-    GITEA_TOKEN: str = Field(..., description="Gitea API token (required)")
+    GITEA_TOKEN: str = Field(
+        default_factory=lambda: _read_secret("gitea_token") or "",
+        description="Gitea API token (from Docker secret)"
+    )
     GITEA_REPO_OWNER: str = "bojemoi"
     GITEA_REPO: str = "bojemoi-configs"
 
-    # XenServer - NO DEFAULT PASSWORD
+    # XenServer
     XENSERVER_URL: str = "https://xenserver.bojemoi.lab"
     XENSERVER_HOST: str = "xenserver.bojemoi.lab"
     XENSERVER_USER: str = "root"
-    XENSERVER_PASS: str = Field(..., description="XenServer password (required)")
+    XENSERVER_PASS: str = Field(
+        default_factory=lambda: _read_secret("xenserver_pass") or "",
+        description="XenServer password (from Docker secret)"
+    )
 
     # Docker
     DOCKER_HOST: str = "unix:///var/run/docker.sock"
@@ -96,6 +108,9 @@ class Settings(BaseSettings):
     # Scheduler
     CHECK_INTERVAL_MINUTES: int = 5
     ENABLE_SCHEDULER: bool = True
+
+    # Templates (local bind-mount — no Gitea dependency at runtime)
+    TEMPLATES_DIR: str = "/app/cloud-init"
 
     # Logging
     LOG_LEVEL: str = "INFO"
@@ -120,7 +135,10 @@ class Settings(BaseSettings):
     def validate_secrets(cls, v, info):
         """Ensure secrets are not default/placeholder values."""
         if v in (None, "", "changeme", "password", "secret"):
-            raise ValueError(f"{info.field_name} must be set to a secure value")
+            raise ValueError(
+                f"{info.field_name} must be set — provide via Docker secret "
+                f"(/run/secrets/{info.field_name.lower()}) or env var"
+            )
         return v
 
     class Config:
