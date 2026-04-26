@@ -517,7 +517,7 @@ services:
       - LPORT=24444
       - LPORT_BIND=4444
       - BIND_PORT=5556
-      - MODE_RUN=1
+      - MODE_DEBUG=false
       # ── Brute-force wordlists — SecLists Default-Credentials (user:pass) ──
       - SSH_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/ssh-betterdefaultpasslist.txt
       - SSH_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
