@@ -10,7 +10,7 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
     ssh_authorized_keys:
-      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC... # VOTRE CLÉ SSH ICI
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMyy5HLUQH9fh+vemlelFMWs8UOgkiT0M3qVbUeKvZO1 docker@meta-76
 
 # Packages de base
 packages:
