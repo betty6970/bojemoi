@@ -393,7 +393,7 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 5
+      replicas: ${AK47_REPLICAS:-5}
       placement:
         constraints:
           - node.role == worker
@@ -436,7 +436,7 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 15
+      replicas: ${BM12_REPLICAS:-15}
       placement:
         constraints:
           - node.role == worker
@@ -454,6 +454,12 @@ services:
       - PG_PORT=5432
       - PG_USER=postgres
       - PG_DBNAME=msf
+      # ── Ruby GC tuning — réduit la pression mémoire de msfrpcd ──
+      # GC déclenché plus souvent, croissance du heap bridée
+      - RUBY_GC_HEAP_GROWTH_FACTOR=1.1
+      - RUBY_GC_HEAP_FREE_SLOTS_MIN_RATIO=0.20
+      - RUBY_GC_MALLOC_LIMIT=16777216
+      - RUBY_GC_MALLOC_LIMIT_MAX=67108864
     secrets:
       - postgres_password
     networks:
@@ -590,7 +596,7 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: 3
+      replicas: ${UZI_REPLICAS:-3}
       placement:
         constraints:
           - node.role == worker

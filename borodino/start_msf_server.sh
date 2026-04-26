@@ -20,7 +20,7 @@ production:
   password: ${PG_PASSWORD}
   host: ${PG_HOST}
   port: 5432
-  pool: 75
+  pool: 20
   timeout: 5
 EOF
 
