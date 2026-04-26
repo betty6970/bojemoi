@@ -39,7 +39,7 @@ x-arme-template: &arme-template
     - backend
   environment:
     - PYTHONUNBUFFERED=1
-    - DEBUG_MODE=0
+    - MODE_DEBUG=false
     - PG_HOST=postgres
     - PG_PORT=5432
     - PG_USER=${POSTGRES_USER:-postgres}
@@ -373,7 +373,7 @@ services:
       - NET_ADMIN
     environment:
       - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=0
+      - MODE_DEBUG=true
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
@@ -411,7 +411,7 @@ services:
       - NET_ADMIN
     environment:
       - PYTHONUNBUFFERED=1
-      - DEBUG_MODE=0
+      - MODE_DEBUG=true
       - PG_HOST=postgres
       - PG_PORT=5432
       - PG_USER=postgres
@@ -517,7 +517,7 @@ services:
       - LPORT=24444
       - LPORT_BIND=4444
       - BIND_PORT=5556
-      - MODE_DEBUG=false
+      - MODE_DEBUG=true
       # ── Brute-force wordlists — SecLists Default-Credentials (user:pass) ──
       - SSH_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/ssh-betterdefaultpasslist.txt
       - SSH_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt

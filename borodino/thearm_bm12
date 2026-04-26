@@ -43,7 +43,7 @@ PG_USER = os.getenv("PG_USER", "postgres")
 PG_PASSWORD = _read_secret("postgres_password", "PG_PASSWORD")
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 SCAN_TIMEOUT   = int(os.getenv("SCAN_TIMEOUT", "600"))  # 10 min max par host
-DEBUG_MODE     = int(os.getenv("DEBUG_MODE", "0"))
+MODE_DEBUG     = os.getenv("MODE_DEBUG", "false").lower() in ("true", "1", "yes")
 REDIS_HOST     = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT     = int(os.getenv("REDIS_PORT", "6379"))
 NUCLEI_QUEUE   = "pentest:nuclei_queue"
@@ -777,7 +777,7 @@ def main():
         time.sleep(10)
 
     # Charger les hôtes debug avant la boucle (mode debug uniquement)
-    if DEBUG_MODE:
+    if MODE_DEBUG:
         debug_hosts = get_all_debug_hosts()
         if not debug_hosts:
             print("[DEBUG] Aucun hôte dans host_debug — insérer l'IP cible dans la table.")
@@ -787,10 +787,13 @@ def main():
 
     # Boucle de scan
     while True:
-        if DEBUG_MODE:
+        if MODE_DEBUG:
             if debug_index >= len(debug_hosts):
-                print("[DEBUG] Tous les hôtes debug traités — fin.")
-                break
+                print("[DEBUG] Tous les hôtes debug traités — reboucle.")
+                debug_hosts = get_all_debug_hosts()
+                debug_index = 0
+                time.sleep(60)
+                continue
             _, host = debug_hosts[debug_index]
             debug_index += 1
             host_str = str(host)

@@ -10,6 +10,7 @@ PG_PASSWORD="${PG_PASSWORD:-${POSTGRES_PASSWORD:-}}"
 [ -z "$PG_PASSWORD" ] && [ -f /run/secrets/postgres_password ] && PG_PASSWORD=$(cat /run/secrets/postgres_password)
 PG_DBNAME="${PG_DBNAME:-msf}"
 IP2LOC_DBNAME="${IP2LOC_DBNAME:-ip2location}"
+MODE_DEBUG="${MODE_DEBUG:-false}"
 
 # Attendre que PostgreSQL soit prêt (retry indéfini)
 echo "[ATTENTE] Attente PostgreSQL sur $PG_HOST:$PG_PORT..."
@@ -25,7 +26,30 @@ done
 
 while true; do
 
-# Sélection alternée IPv4/IPv6 (50/50)
+# ── Mode DEBUG : scan direct depuis host_debug ─────────────────────────────
+if [ "$MODE_DEBUG" = "true" ] || [ "$MODE_DEBUG" = "1" ]; then
+    hosts=$(echo "SELECT address FROM host_debug ORDER BY id;" | \
+        PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DBNAME" -t | tr -d ' ')
+    if [ -z "$hosts" ]; then
+        echo "[DEBUG] Aucun hôte dans host_debug — retry dans 30s..."
+        sleep 30
+        continue
+    fi
+    for host in $hosts; do
+        [ -z "$host" ] && continue
+        echo "[DEBUG] Scan direct : $host"
+        SCAN_XML="/tmp/scan_$(echo $host | tr '/' '_' | tr ':' '-').xml"
+        nmap -sS -A -O --reason -Pn -oX "$SCAN_XML" "$host" 2>/dev/null || true
+        python3 /usr/bin/msf_import.pyc "$SCAN_XML" || echo "[WARN] MSF import failed for $host"
+        rm -f "$SCAN_XML"
+        echo "[DEBUG] $host scanné."
+    done
+    echo "[DEBUG] Tous les hôtes debug scannés — reboucle dans 60s..."
+    sleep 60
+    continue
+fi
+
+# ── Mode NORMAL : sélection alternée IPv4/IPv6 (50/50) ────────────────────
 if [ $(( RANDOM % 2 )) -eq 1 ]; then
     TABLE="ip2location_db1_v6"
 else
