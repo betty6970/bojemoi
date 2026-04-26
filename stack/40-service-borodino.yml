@@ -525,7 +525,9 @@ services:
       - BIND_PORT=5556
       - MODE_DEBUG=true
       # ── Brute-force wordlists — SecLists Default-Credentials (user:pass) ──
-      - SSH_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/ssh-betterdefaultpasslist.txt
+      # OS/app defaults en premier, puis ssh-betterdefaultpasslist en fallback
+      - SSH_USERPASS_FILE=/opt/bojemoi/SecLists/Passwords/Default-Credentials/os-app-defaults.txt
+      - SSH_USERPASS_FILE_EXTRA=/opt/bojemoi/SecLists/Passwords/Default-Credentials/ssh-betterdefaultpasslist.txt
       - SSH_USER_FILE=/opt/bojemoi/SecLists/Usernames/cirt-default-usernames.txt
       - SSH_PASS_FILE=/opt/bojemoi/SecLists/Passwords/Common-Credentials/10k-most-common.txt
       - SSH_BRUTE_TIMEOUT=300

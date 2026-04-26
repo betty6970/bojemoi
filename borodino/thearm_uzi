@@ -118,12 +118,40 @@ _SL_USERS = f'{_SU}/cirt-default-usernames.txt'
 _SL_PASS  = f'{_SL}/Common-Credentials/10k-most-common.txt'
 _SL_DC    = f'{_SL}/Default-Credentials'
 
+def _build_combined_userpass(primary_env, extra_env, default_primary):
+    """
+    Construit /tmp/combined_userpass.txt = primary + extra (sans doublons, # ignorés).
+    Retourne le chemin du fichier combiné si extra existe, sinon le primary seul.
+    """
+    primary = os.getenv(primary_env, default_primary)
+    extra   = os.getenv(extra_env, "")
+    if not extra or not os.path.exists(extra):
+        return primary
+    out = "/tmp/combined_userpass.txt"
+    seen = set()
+    with open(out, "w") as fout:
+        for path in (primary, extra):
+            if not os.path.exists(path):
+                continue
+            with open(path) as fin:
+                for line in fin:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line not in seen:
+                        seen.add(line)
+                        fout.write(line + "\n")
+    print(f"[WORDLIST] {out} : {len(seen)} entrées uniques ({primary} + {extra})")
+    return out
+
 BRUTE_MODULES = {
     # ── user:pass format (USERPASS_FILE) — listes dédiées SecLists ─────────────
     'ssh': {
         'module': 'scanner/ssh/ssh_login',
         'ports': {22}, 'services': {'ssh'},
-        'userpass_file': _wl('SSH_USERPASS_FILE', f'{_SL_DC}/ssh-betterdefaultpasslist.txt'),
+        'userpass_file': _build_combined_userpass(
+            'SSH_USERPASS_FILE', 'SSH_USERPASS_FILE_EXTRA',
+            f'{_SL_DC}/ssh-betterdefaultpasslist.txt'),
         'user_file': SSH_USER_FILE,   # fallback si USERPASS_FILE absent
         'pass_file': SSH_PASS_FILE,
         'timeout': SSH_BRUTE_TIMEOUT, 'threads': SSH_THREADS,
