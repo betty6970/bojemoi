@@ -44,9 +44,8 @@ if [ "$MODE_DEBUG" = "true" ] || [ "$MODE_DEBUG" = "1" ]; then
         rm -f "$SCAN_XML"
         echo "[DEBUG] $host scanné."
     done
-    echo "[DEBUG] Tous les hôtes debug scannés — reboucle dans 60s..."
-    sleep 60
-    continue
+    echo "[DEBUG] Tous les hôtes debug scannés — fin."
+    break
 fi
 
 # ── Mode NORMAL : sélection alternée IPv4/IPv6 (50/50) ────────────────────
