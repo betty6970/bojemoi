@@ -8,7 +8,9 @@ services:
     command:
       - -c
       - |
-        echo "0 3 * * * docker system prune -af --filter until=24h >> /proc/1/fd/1 2>&1" \
+        printf '%s\n' \
+          "0 */2 * * * docker container prune -f --filter until=2h >> /proc/1/fd/1 2>&1" \
+          "0 3   * * * docker system prune -af --filter until=24h >> /proc/1/fd/1 2>&1" \
           > /etc/crontabs/root
         crond -f -l 6
     volumes:

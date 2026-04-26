@@ -172,6 +172,10 @@ services:
       - zap-data:/zap/wrk
       - zap-reports:/zap/reports
       - scan_logs:/zap/logs
+      - type: tmpfs
+        target: /home/zap/.ZAP/session
+        tmpfs:
+          size: 2147483648  # 2 GB cap — auto-cleared on restart
     networks:
       - backend
       - pentest
