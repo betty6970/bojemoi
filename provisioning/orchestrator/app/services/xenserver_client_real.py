@@ -419,7 +419,8 @@ class XenServerClient:
         disk: int,
         network: str = "default",
         cloudinit_data: Optional[str] = None,
-        boot_vdi_uuid: Optional[str] = None
+        boot_vdi_uuid: Optional[str] = None,
+        iso_vdi_uuid: Optional[str] = None,
     ) -> str:
         """
         Create a new VM.
@@ -474,7 +475,10 @@ class XenServerClient:
                     f"VM created by Bojemoi Orchestrator"
                 )
 
-                # Set CPU count
+                # Set CPU count — order matters: VCPUs_at_startup must always be ≤ VCPUs_max.
+                # To avoid constraint violations when reducing (template may have higher values),
+                # pin VCPUs_at_startup to 1 first, then set both to target.
+                session.xenapi.VM.set_VCPUs_at_startup(vm_ref, "1")
                 session.xenapi.VM.set_VCPUs_max(vm_ref, str(cpu))
                 session.xenapi.VM.set_VCPUs_at_startup(vm_ref, str(cpu))
 
@@ -514,6 +518,10 @@ class XenServerClient:
                 if cloudinit_data:
                     logger.debug("Setting cloud-init config-drive")
                     xenstore_data = {
+                        # Standard path expected by cloud-init XenServer datasource
+                        'vm-data/user-data': cloudinit_data,
+                        'vm-data/meta-data': f'{{"instance-id": "{name}", "local-hostname": "{name}"}}',
+                        # Legacy path (kept for compatibility)
                         'vm-data/cloud-init/user-data': cloudinit_data,
                         'vm-data/cloud-init/meta-data': f'{{"instance-id": "{name}", "local-hostname": "{name}"}}'
                     }
@@ -533,7 +541,7 @@ class XenServerClient:
                         break
 
                 if not has_disk:
-                    if not boot_vdi_uuid:
+                    if not boot_vdi_uuid and not iso_vdi_uuid:
                         raise XenServerError(
                             error_code="NO_BOOT_DISK",
                             message=(
@@ -542,21 +550,51 @@ class XenServerClient:
                             ),
                             details=[template]
                         )
+                    if iso_vdi_uuid and not boot_vdi_uuid:
+                        # VM ISO-install : créer un VDI vide sur device 0 AVANT d'attacher l'ISO
+                        sr_refs = session.xenapi.SR.get_all_records()
+                        default_sr = next(
+                            ref for ref, rec in sr_refs.items()
+                            if rec.get('content_type') == 'user'
+                            and rec.get('type') in ('lvm', 'ext', 'zfs', 'nfs', 'lvmoiscsi', 'lvmohba')
+                        )
+                        new_vdi_ref = session.xenapi.VDI.create({
+                            'name_label': f"{name}-disk",
+                            'name_description': f"Disk for {name}",
+                            'SR': default_sr,
+                            'virtual_size': str(disk_bytes),
+                            'type': 'user',
+                            'sharable': False,
+                            'read_only': False,
+                            'other_config': {},
+                            'sm_config': {},
+                        })
+                        session.xenapi.VBD.create({
+                            'VM': vm_ref,
+                            'VDI': new_vdi_ref,
+                            'userdevice': '0',
+                            'mode': 'RW',
+                            'type': 'Disk',
+                            'bootable': False,
+                            'empty': False,
+                            'other_config': {},
+                            'qos_algorithm_type': '',
+                            'qos_algorithm_params': {}
+                        })
+                        logger.info(f"Disque vide {disk}GB créé pour VM ISO-install {name} (device 0)")
+                        has_disk = True
+
+                # 7c. Cloner boot_vdi si fourni (chemin alpine standard)
+                if not has_disk and boot_vdi_uuid:
                     logger.info(f"No disk found after provision — cloning boot VDI {boot_vdi_uuid}")
                     src_vdi_ref = session.xenapi.VDI.get_by_uuid(boot_vdi_uuid)
                     src_sr_ref = session.xenapi.VDI.get_SR(src_vdi_ref)
-
-                    # Clone into same SR
                     new_vdi_ref = session.xenapi.VDI.copy(src_vdi_ref, src_sr_ref)
                     session.xenapi.VDI.set_name_label(new_vdi_ref, f"{name}-disk")
-
-                    # Resize if requested size > source size
                     src_size = int(session.xenapi.VDI.get_virtual_size(src_vdi_ref))
                     if disk_bytes > src_size:
                         session.xenapi.VDI.resize(new_vdi_ref, str(disk_bytes))
                         logger.debug(f"Resized boot disk to {disk}GB")
-
-                    # Attach as primary bootable disk
                     session.xenapi.VBD.create({
                         'VM': vm_ref,
                         'VDI': new_vdi_ref,
@@ -570,7 +608,33 @@ class XenServerClient:
                         'qos_algorithm_params': {}
                     })
                     logger.info(f"Boot disk attached for VM {name} (cloned from {boot_vdi_uuid})")
-                else:
+
+                # 7d. Attacher ISO comme CD-ROM (device 3 = convention XenServer CD)
+                if iso_vdi_uuid:
+                    iso_vdi_ref = session.xenapi.VDI.get_by_uuid(iso_vdi_uuid)
+                    used_devices = {
+                        session.xenapi.VBD.get_record(v)['userdevice']
+                        for v in session.xenapi.VM.get_VBDs(vm_ref)
+                    }
+                    cd_device = next(
+                        str(d) for d in [3, 4, 5, 6, 7, 8, 9]
+                        if str(d) not in used_devices
+                    )
+                    session.xenapi.VBD.create({
+                        'VM': vm_ref,
+                        'VDI': iso_vdi_ref,
+                        'userdevice': cd_device,
+                        'mode': 'RO',
+                        'type': 'CD',
+                        'bootable': True,
+                        'empty': False,
+                        'other_config': {},
+                        'qos_algorithm_type': '',
+                        'qos_algorithm_params': {}
+                    })
+                    logger.info(f"ISO {iso_vdi_uuid} attaché comme CD-ROM (device {cd_device}) sur VM {name}")
+
+                if has_disk and not iso_vdi_uuid:
                     # Template had a disk — just resize it to requested size
                     for vbd_ref in vbds_after:
                         vbd = session.xenapi.VBD.get_record(vbd_ref)

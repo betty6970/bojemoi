@@ -52,6 +52,21 @@ ssh -p 4422 -i /home/docker/.ssh/meta76_ed25519 -o StrictHostKeyChecking=no dock
 | meta-68 seul | GPU | `ollama`, `dcgm-exporter` (`nvidia.vgpu == true`) |
 | meta-70 seul | IDS | `suricata-exporter` (socket dépendant) |
 
+### Labels des nœuds Swarm
+
+Labels actifs (visibles via `docker node inspect <node> --format '{{json .Spec.Labels}}'`) :
+
+| Nœud | Label | Valeur | Usage |
+|------|-------|--------|-------|
+| meta-76 | `faraday` | `true` | Tag informatif — Faraday tourne via `docker-compose` dans `samsonov/faraday-security-stack/`, **pas** via Swarm |
+| meta-76 | `pentest` | `true` | Tag informatif — présent aussi sur les workers |
+| meta-76 | `storage` | `true` | Réservé pour services de stockage — pas encore utilisé comme contrainte de placement |
+| meta-76 | `ptaas.serial` | `PTaaS-D22A9614` | Assigné par `ptaas-init` (`02-init-ptaas.yml`) — identifie le nœud manager PTaaS |
+| meta-68 | `nvidia.vgpu` | `true` | Contrainte active → `ollama`, `dcgm-exporter` (`51-service-ollama.yml`) |
+| meta-68 | `defectdojo` | `true` | Contrainte active → DefectDojo (`70-service-defectdojo.yml`), exclut certains services borodino |
+| meta-68/69/70 | `rsync.slave` | `true` | Contrainte active → `rsync-slave` (`01-service-hl.yml`) |
+| meta-68/69/70 | `pentest` | `true` | Tag informatif — présent sur tous les workers |
+
 ### Inventaire des stacks
 
 | Fichier | Stack | Services clés |

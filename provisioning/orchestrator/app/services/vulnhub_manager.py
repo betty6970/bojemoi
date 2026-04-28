@@ -10,6 +10,7 @@ pour que bm12/uzi les scannent (DEBUG_MODE=1).
 import asyncpg
 import logging
 from typing import Any, Dict, List, Optional
+from .database import ensure_msf_host
 
 logger = logging.getLogger(__name__)
 
@@ -141,10 +142,14 @@ class VulnHubManager:
                     address    VARCHAR(255) NOT NULL UNIQUE,
                     vm_name    VARCHAR(255),
                     vm_uuid    VARCHAR(255),
+                    host_id    INTEGER,
                     created_at TIMESTAMP DEFAULT NOW(),
                     updated_at TIMESTAMP DEFAULT NOW()
                 )
             """)
+            await conn.execute(
+                "ALTER TABLE host_debug ADD COLUMN IF NOT EXISTS host_id INTEGER"
+            )
 
     async def add_target(
         self,
@@ -154,16 +159,19 @@ class VulnHubManager:
     ) -> Dict[str, Any]:
         """Ajoute ou met à jour une VM dans host_debug (plusieurs cibles simultanées)."""
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("""
-                INSERT INTO host_debug (address, vm_name, vm_uuid, updated_at)
-                VALUES ($1, $2, $3, NOW())
-                ON CONFLICT (address) DO UPDATE SET
-                    vm_name    = EXCLUDED.vm_name,
-                    vm_uuid    = EXCLUDED.vm_uuid,
-                    updated_at = NOW()
-                RETURNING id, address, vm_name, vm_uuid, created_at, updated_at
-            """, address, vm_name, vm_uuid)
-            return dict(row)
+            async with conn.transaction():
+                msf_host_id = await ensure_msf_host(conn, address, vm_name)
+                row = await conn.fetchrow("""
+                    INSERT INTO host_debug (address, vm_name, vm_uuid, host_id, updated_at)
+                    VALUES ($1, $2, $3, $4, NOW())
+                    ON CONFLICT (address) DO UPDATE SET
+                        vm_name    = EXCLUDED.vm_name,
+                        vm_uuid    = EXCLUDED.vm_uuid,
+                        host_id    = COALESCE(EXCLUDED.host_id, host_debug.host_id),
+                        updated_at = NOW()
+                    RETURNING id, address, vm_name, vm_uuid, host_id, created_at, updated_at
+                """, address, vm_name, vm_uuid, msf_host_id)
+                return dict(row)
 
     async def remove_target_by_name(self, vm_name_prefix: str) -> int:
         """Supprime les entrées host_debug dont vm_name commence par vm_name_prefix."""

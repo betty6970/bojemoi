@@ -20,6 +20,8 @@ class OSType(str, Enum):
     ALPINE = "alpine"
     UBUNTU = "ubuntu"
     DEBIAN = "debian"
+    OTHER = "other"        # VM vide avec "Other install media" — boot depuis ISO
+    META_CLOUD = "meta-cloud"  # Template Alpine avec cloud-init pré-installé
 
 
 class Environment(str, Enum):
@@ -89,6 +91,20 @@ class VMDeployRequest(BaseModel):
     )
     environment: Environment = Field(default=Environment.PRODUCTION, description="Deployment environment")
     variables: Optional[Dict[str, Any]] = Field(default=None, description="Additional cloud-init variables")
+    ssh_username: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="SSH username to store in host_debug and inject into cloud-init"
+    )
+    ssh_password: Optional[str] = Field(
+        default=None,
+        max_length=255,
+        description="SSH password to store in host_debug and inject into cloud-init"
+    )
+    iso_uuid: Optional[str] = Field(
+        default=None,
+        description="UUID du VDI ISO à attacher comme CD-ROM (requis pour os_type=other)"
+    )
     ip_poll_timeout: int = Field(
         default=120,
         ge=0,

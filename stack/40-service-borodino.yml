@@ -10,7 +10,7 @@
 
 # DefectDojo shared environment
 x-dojo-env: &dojo-env
-  DD_CELERY_BROKER_URL: redis://redis:6379/1
+  DD_CELERY_BROKER_URL: redis://valkey:6379/1
   DD_ALLOWED_HOSTS: "defectdojo,defectdojo-nginx,dojo.bojemoi.lab,localhost,127.0.0.1"
   DD_DEBUG: "False"
   DD_DJANGO_METRICS_ENABLED: "True"
@@ -131,8 +131,8 @@ volumes:
   nym_config:
     driver: local
 
-  # Redis volume
-  redis_data:
+  # Valkey volume
+  valkey_data:
     driver: local
 
 #--------------------------------------------------------------------------------
@@ -234,7 +234,7 @@ services:
       DB_PORT: 5432
       DB_NAME: msf
       DB_USER: postgres
-      REDIS_HOST: redis
+      REDIS_HOST: valkey
       REDIS_PORT: 6379
       ZAP_HOST: zaproxy
       ZAP_PORT: 8090
@@ -484,10 +484,10 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 3G
+          memory: 6G
         reservations:
           cpus: '0.5'
-          memory: 1G
+          memory: 2G
       labels:
         - traefik.enable=true
         - traefik.docker.network=proxy
@@ -509,6 +509,7 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
+      - PYTHONUNBUFFERED=1
       - ARME_TYPE=uzi
       - TARGET=container1
       - PG_HOST=postgres
@@ -598,7 +599,7 @@ services:
         max-file: "3"
     deploy:
       <<: *deploy-template
-      replicas: ${UZI_REPLICAS:-3}
+      replicas: ${UZI_REPLICAS:-1}
       placement:
         constraints:
           - node.role == worker
@@ -825,7 +826,7 @@ services:
       - NUCLEI_SEVERITY=critical,high,medium
       - NUCLEI_POLL_INTERVAL=15
       - NUCLEI_SCAN_TIMEOUT=1200
-      - REDIS_HOST=redis
+      - REDIS_HOST=valkey
       - REDIS_PORT=6379
       - DEFECTDOJO_URL=http://defectdojo-nginx:8080
       - DEFECTDOJO_PRODUCT=nuclei
@@ -879,7 +880,7 @@ services:
       - nuclei-results:/results
       - nuclei-templates:/root/nuclei-templates
     environment:
-      - REDIS_HOST=redis
+      - REDIS_HOST=valkey
       - REDIS_PORT=6379
       - NUCLEI_HOST=nuclei
       - RESULTS_DIR=/results
@@ -929,16 +930,16 @@ services:
         - traefik.http.services.nuclei-api.loadbalancer.server.port=8001
 
   # =========================================================================
-  # FROM: 60-service-samsonov.yml - Redis
+  # FROM: 60-service-samsonov.yml - Valkey (Redis-compatible)
   # =========================================================================
-  redis:
-    image: ${IMAGE_REGISTRY:-localhost:5000}/redis:alpine
-    command: redis-server --appendonly yes --protected-mode no
+  valkey:
+    image: ${IMAGE_REGISTRY:-localhost:5000}/valkey:alpine
+    command: valkey-server --appendonly yes --protected-mode no
     networks:
       - pentest
       - backend
     volumes:
-      - redis_data:/data
+      - valkey_data:/data
     logging:
       driver: json-file
       options:
@@ -953,7 +954,7 @@ services:
         delay: 5s
         max_attempts: 3
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -965,7 +966,7 @@ services:
     working_dir: /app
     command: ["--daemon"]
     environment:
-      - REDIS_HOST=redis
+      - REDIS_HOST=valkey
       - REDIS_PORT=6379
     networks:
       - pentest
@@ -989,7 +990,7 @@ services:
   redis-exporter:
     image: ${IMAGE_REGISTRY:-localhost:5000}/redis-exporter:latest
     environment:
-      REDIS_ADDR: "redis:6379"
+      REDIS_ADDR: "valkey:6379"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
     networks:
       - pentest
@@ -1041,7 +1042,7 @@ services:
   redis-commander:
     image: ${IMAGE_REGISTRY:-localhost:5000}/redis-commander:latest
     environment:
-      - REDIS_HOSTS=local:redis:6379
+      - REDIS_HOSTS=local:valkey:6379
     networks:
       - backend
       - proxy
@@ -1277,7 +1278,7 @@ services:
     image: localhost:5000/defectdojo-django:latest
     volumes: *dojo-volumes
     environment:
-      DD_CELERY_BROKER_URL: redis://redis:6379/1
+      DD_CELERY_BROKER_URL: redis://valkey:6379/1
       DD_ALLOWED_HOSTS: "defectdojo,localhost"
       DD_INITIALIZE: "True"
       DD_ADMIN_USER: admin

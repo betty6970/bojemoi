@@ -55,6 +55,8 @@ XENSERVER_TEMPLATES = {
     "debian-11": "Debian Bullseye 11",
     "centos": "CentOS 7",
     "rocky": "Rocky Linux 8",
+    "other": "Other install media",
+    "meta-cloud": "meta-cloud",
 }
 
 # Configure logging
@@ -339,30 +341,45 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
     try:
         logger.info(f"Deploying VM: {request.name} (from IP: {source_ip}, country: {source_country})")
 
-        # 1. Fetch cloud-init template from local filesystem
-        template_path = f"cloud-init/{request.os_type.value}/{request.template}.yaml"
-        logger.debug(f"Fetching template: {template_path}")
-
-        template_content = await template_client.get_file_content(template_path)
-
-        # 2. Generate final cloud-init configuration
-        cloudinit_config = cloudinit_gen.generate(
-            template=template_content,
-            vm_name=request.name,
-            environment=request.environment,
-            additional_vars=request.variables or {}
-        )
-
         # 3. Create VM on XenServer
         # Get template name from mapping
         template_name = XENSERVER_TEMPLATES.get(request.os_type)
         if not template_name:
             raise ValueError(f"Unknown os_type: {request.os_type}. Available: {list(XENSERVER_TEMPLATES.keys())}")
 
-        # For alpine, the template has no disk — pass the boot VDI to clone
-        boot_vdi = settings.ALPINE_BOOT_VDI_UUID if request.os_type.value == "alpine" else None
+        # os_type=other : VM vide bootée depuis ISO — pas de cloud-init, pas de boot VDI
+        is_iso_install = request.os_type.value == "other"
 
-        logger.info(f"Creating VM on XenServer: {request.name} (template: {template_name})")
+        if is_iso_install:
+            if not request.iso_uuid:
+                raise ValueError("iso_uuid requis pour os_type=other")
+            cloudinit_config = None
+            boot_vdi = None
+            logger.info(f"Creating ISO-install VM: {request.name} (iso={request.iso_uuid})")
+        else:
+            # 1. Fetch cloud-init template from local filesystem
+            # meta-cloud partage les templates cloud-init d'alpine
+            cloudinit_os = "alpine" if request.os_type.value == "meta-cloud" else request.os_type.value
+            template_path = f"cloud-init/{cloudinit_os}/{request.template}.yaml"
+            logger.debug(f"Fetching template: {template_path}")
+            template_content = await template_client.get_file_content(template_path)
+
+            # 2. Generate final cloud-init configuration
+            cloudinit_vars = request.variables or {}
+            if request.ssh_username:
+                cloudinit_vars = {**cloudinit_vars, "ssh_username": request.ssh_username}
+            if request.ssh_password:
+                cloudinit_vars = {**cloudinit_vars, "ssh_password": request.ssh_password}
+            cloudinit_config = cloudinit_gen.generate(
+                template=template_content,
+                vm_name=request.name,
+                environment=request.environment,
+                additional_vars=cloudinit_vars
+            )
+            # For alpine, the template has no disk — pass the boot VDI to clone
+            boot_vdi = settings.ALPINE_BOOT_VDI_UUID if request.os_type.value == "alpine" else None
+            logger.info(f"Creating VM on XenServer: {request.name} (template: {template_name})")
+
         vm_ref = await xenserver_client.create_vm(
             name=request.name,
             template=template_name,
@@ -371,7 +388,8 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
             disk=request.disk,
             network=request.network,
             cloudinit_data=cloudinit_config,
-            boot_vdi_uuid=boot_vdi
+            boot_vdi_uuid=boot_vdi,
+            iso_vdi_uuid=request.iso_uuid,
         )
 
         # 4. Poll for guest IP via XenTools (requires xe-guest-utilities inside the VM)
@@ -404,6 +422,8 @@ async def deploy_vm(request: VMDeployRequest, req: Request):
             address=host_address,
             vm_name=request.name,
             vm_uuid=vm_ref,
+            username=request.ssh_username,
+            password=request.ssh_password,
         )
 
         # Record success metrics

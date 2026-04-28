@@ -15,6 +15,7 @@ Schéma de la table host_debug (créée automatiquement) :
 import asyncpg
 import logging
 from typing import Optional, Dict, Any
+from .database import ensure_msf_host
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +50,14 @@ class Rapid7Manager:
                     address    VARCHAR(255) NOT NULL UNIQUE,
                     vm_name    VARCHAR(255),
                     vm_uuid    VARCHAR(255),
+                    host_id    INTEGER,
                     created_at TIMESTAMP DEFAULT NOW(),
                     updated_at TIMESTAMP DEFAULT NOW()
                 )
             """)
+            await conn.execute(
+                "ALTER TABLE host_debug ADD COLUMN IF NOT EXISTS host_id INTEGER"
+            )
 
     async def upsert_host(
         self,
@@ -65,16 +70,19 @@ class Rapid7Manager:
         Un seul enregistrement actif à la fois (UPSERT sur address).
         """
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow("""
-                INSERT INTO host_debug (address, vm_name, vm_uuid, updated_at)
-                VALUES ($1, $2, $3, NOW())
-                ON CONFLICT (address) DO UPDATE SET
-                    vm_name    = EXCLUDED.vm_name,
-                    vm_uuid    = EXCLUDED.vm_uuid,
-                    updated_at = NOW()
-                RETURNING id, address, vm_name, vm_uuid, created_at, updated_at
-            """, address, vm_name, vm_uuid)
-            return dict(row)
+            async with conn.transaction():
+                msf_host_id = await ensure_msf_host(conn, address, vm_name)
+                row = await conn.fetchrow("""
+                    INSERT INTO host_debug (address, vm_name, vm_uuid, host_id, updated_at)
+                    VALUES ($1, $2, $3, $4, NOW())
+                    ON CONFLICT (address) DO UPDATE SET
+                        vm_name    = EXCLUDED.vm_name,
+                        vm_uuid    = EXCLUDED.vm_uuid,
+                        host_id    = COALESCE(EXCLUDED.host_id, host_debug.host_id),
+                        updated_at = NOW()
+                    RETURNING id, address, vm_name, vm_uuid, host_id, created_at, updated_at
+                """, address, vm_name, vm_uuid, msf_host_id)
+                return dict(row)
 
     async def replace_host(
         self,
@@ -89,11 +97,12 @@ class Rapid7Manager:
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute("DELETE FROM host_debug")
+                msf_host_id = await ensure_msf_host(conn, address, vm_name)
                 row = await conn.fetchrow("""
-                    INSERT INTO host_debug (address, vm_name, vm_uuid)
-                    VALUES ($1, $2, $3)
-                    RETURNING id, address, vm_name, vm_uuid, created_at, updated_at
-                """, address, vm_name, vm_uuid)
+                    INSERT INTO host_debug (address, vm_name, vm_uuid, host_id)
+                    VALUES ($1, $2, $3, $4)
+                    RETURNING id, address, vm_name, vm_uuid, host_id, created_at, updated_at
+                """, address, vm_name, vm_uuid, msf_host_id)
                 return dict(row)
 
     async def get_host(self) -> Optional[Dict[str, Any]]:

@@ -12,6 +12,17 @@ users:
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMyy5HLUQH9fh+vemlelFMWs8UOgkiT0M3qVbUeKvZO1 docker@meta-76
 
+# Mot de passe root (pour accès console / debug sans sudo)
+# ssh_username / ssh_password peuvent être injectés via l'orchestrator (VMDeployRequest)
+chpasswd:
+  list: |
+    root:{{ ssh_password | default('B0j3m01!@lp1n3') }}
+    {% if ssh_username is defined and ssh_username != 'root' %}{{ ssh_username }}:{{ ssh_password | default('changeme') }}{% endif %}
+  expire: False
+
+# Autoriser l'authentification SSH par mot de passe (requis pour pentest debug)
+ssh_pwauth: true
+
 # Packages minimaux
 packages:
   - curl
@@ -38,6 +49,10 @@ runcmd:
   # XenServer guest tools — expose IP to XenStore so the orchestrator can read it
   - rc-update add xe-guest-utilities default
   - rc-service xe-guest-utilities start || true
+  # SSH — autoriser login root par password (PermitRootLogin est prohibit-password par défaut sur Alpine)
+  - sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+  - echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+  - rc-service sshd restart || true
   - echo "VM {{ vm_name }} initialized in {{ environment }} environment" > /var/log/cloud-init-complete.log
   - echo "Deployment completed at $(date)" >> /var/log/cloud-init-complete.log
 

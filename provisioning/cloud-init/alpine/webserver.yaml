@@ -12,6 +12,15 @@ users:
     ssh_authorized_keys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMyy5HLUQH9fh+vemlelFMWs8UOgkiT0M3qVbUeKvZO1 docker@meta-76
 
+# Mot de passe root (pour accès console / debug sans sudo)
+chpasswd:
+  list: |
+    root:B0j3m01!@lp1n3
+  expire: False
+
+# Autoriser l'authentification SSH par mot de passe (requis pour pentest debug)
+ssh_pwauth: true
+
 # Packages à installer
 packages:
   - curl
