@@ -1,6 +1,6 @@
 ---
 title: "Incident : XMRig injecté dans mon Gitea via packObjectsHook"
-date: 2026-09-19T21:00:00+00:00
+date: 2026-09-19T18:00:00+00:00
 draft: false
 tags: ["cybersecurity", "homelab", "selfhosted", "infosec", "blue-team", "soc", "incident-response", "gitops", "debutant-en-cyber", "apprendre-la-cyber", "build-in-public", "french-tech"]
 summary: "Mon Gitea auto-hébergé a été compromis par un cryptominer XMRig déployé via le mécanisme git packObjectsHook. Retour d'expérience sur la détection, l'analyse et la remédiation."
