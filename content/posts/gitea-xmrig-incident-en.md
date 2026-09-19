@@ -172,6 +172,102 @@ services:
 
 A failing CI isn't always a code bug.
 
+## Hardening applied
+
+### 1. Immutable `.gitconfig`
+
+```bash
+chattr +i /data/gitea/home/.gitconfig
+```
+
+`chattr +i` sets the immutable flag at the filesystem level (ext4/xfs). Even `root` cannot write to that file without removing the flag first — no process inside the container can modify it. This is the most direct protection against this specific vector.
+
+```bash
+lsattr /data/gitea/home/.gitconfig
+# → ----i----------------- .gitconfig
+
+echo "test" >> /data/gitea/home/.gitconfig
+# → Operation not permitted
+```
+
+### 2. `app.ini` hardening
+
+```ini
+[security]
+IMPORT_LOCAL_PATHS = false   ; block local repo imports (LFI vector)
+DISABLE_GIT_HOOKS = true     ; Gitea won't execute server-side hooks
+```
+
+`DISABLE_GIT_HOOKS` prevents Gitea from running `pre-receive`, `update` and `post-receive` hooks in repositories — a distinct but related vector to `packObjectsHook`.
+
+### 3. Outbound firewall — block mining pools
+
+```bash
+# Standard stratum ports
+iptables -A OUTPUT -p tcp --dport 3333 -j DROP
+iptables -A OUTPUT -p tcp --dport 5555 -j DROP
+iptables -A OUTPUT -p tcp --dport 10001 -j DROP
+iptables -A OUTPUT -p tcp --dport 14444 -j DROP
+
+# Pool IPs found in this config
+iptables -A OUTPUT -d 103.7.55.233 -j DROP   # gulf.moneroocean.stream
+iptables -A OUTPUT -d 185.84.98.85 -j DROP   # pool.hashvault.pro
+iptables -A OUTPUT -d 185.84.98.5  -j DROP
+
+iptables-save > /etc/sysconfig/iptables
+```
+
+Even if a miner is dropped again, it can't reach a pool. This also covers TLS on port 443 toward these specific IPs — the `moneroocean.stream:443` pool used in this config is blocked.
+
+### 4. Continuous monitoring — cron every 5 minutes
+
+```bash
+#!/bin/bash
+# /usr/local/bin/gitea-watch.sh
+GITEA_HOME="/home/docker/stacks/gitea/data/gitea"
+
+# New hidden files created recently
+find "$GITEA_HOME" -maxdepth 3 -name ".*" -type f -newer /tmp/.gitea-watch-last \
+  | grep -v ".gitconfig$" | while read f; do
+    echo "$(date -u) ALERT: new hidden file: $f" >> /var/log/gitea-security.log
+done
+
+# .gitconfig modified (should never change with chattr +i)
+MTIME=$(stat -c %Y "$GITEA_HOME/home/.gitconfig")
+[ "$MTIME" != "$(cat /tmp/.gitconfig-mtime 2>/dev/null)" ] && \
+  echo "$(date -u) ALERT: .gitconfig modified!" >> /var/log/gitea-security.log
+
+# Suspicious processes
+for pat in sys_health wp_s2_cron xmrig; do
+    pgrep -f "$pat" > /dev/null && \
+      echo "$(date -u) ALERT: suspicious process: $pat" >> /var/log/gitea-security.log
+done
+
+# Connections to mining ports
+ss -tnp | grep -E ":3333|:5555|:10001|:14444" | grep -v LISTEN && \
+  echo "$(date -u) ALERT: mining connection detected" >> /var/log/gitea-security.log
+
+touch /tmp/.gitea-watch-last
+```
+
+### 5. Runner registration token rotated
+
+The runner registration token was hardcoded in plain text in `docker-compose.yml`. Replaced with a random value — the existing runner keeps its registration, but no new runner can be registered with the old token.
+
 ---
 
-*Gitea 1.27.3, XMRig removed, packObjectsHook cleaned — blog back online.*
+**Summary** (7 controls active):
+
+| Control | Vector blocked |
+|---------|----------------|
+| `chattr +i .gitconfig` | `packObjectsHook` injection |
+| `DISABLE_GIT_HOOKS` | Server-side repo hooks |
+| `IMPORT_LOCAL_PATHS = false` | LFI via local import |
+| Gitea 1.27.3 | Patched CVEs |
+| iptables DROP mining ports/IPs | Pool connection impossible |
+| Cron watch `*/5` | Fast re-infection detection |
+| Runner token rotated | Rogue runner registration |
+
+---
+
+*Gitea 1.27.3, XMRig removed, packObjectsHook cleaned, 7 controls active.*
