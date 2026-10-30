@@ -1,7 +1,7 @@
 ---
 title: "Bojemoi Lab — Architecture Globale"
 date: 2026-03-12T20:00:00+01:00
-draft: false
+draft: true
 tags: ["infrastructure", "docker-swarm", "cybersecurity", "homelab", "devops", "selfhosted", "threat-intelligence", "osint", "machine-learning", "build-in-public", "french-tech", "blue-team", "soc"]
 summary: "Schéma complet de Bojemoi Lab : 4 nœuds Swarm, 12 stacks, 43 services — scan internet, threat intel multi-sources, honeypot, IDS/IPS, et intégration MCP/Claude."
 description: "Architecture détaillée de Bojemoi Lab : pipeline de scan (ak47/bm12/uzi), threat intelligence (razvedka/vigie/dozor/ml-threat), défense (Suricata/CrowdSec/honeypot), observabilité (Prometheus/Grafana/Loki/Tempo), et MCP server pour Claude Code."
