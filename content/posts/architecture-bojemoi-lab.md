@@ -1,7 +1,7 @@
 ---
 title: "Bojemoi Lab : l'architecture complète d'un homelab offensif/défensif sur Docker Swarm"
 date: 2026-03-12T20:00:00+00:00
-lastmod: 2026-10-30T22:00:00+00:00
+lastmod: 2026-11-22T00:00:00+00:00
 draft: false
 tags: ["homelab", "docker", "docker-swarm", "devops", "gitops", "selfhosted", "opensource", "cybersecurity", "infosec", "threat-intelligence", "osint", "machine-learning", "blue-team", "soc", "build-in-public", "french-tech"]
 summary: "Tour d'horizon complet de Bojemoi Lab : 2 nœuds Docker Swarm, 50+ services, un pipeline de scan réseau massif, un orchestrateur d'attaque LLM autonome et un stack d'observabilité full."
@@ -13,7 +13,7 @@ ShowReadingTime: true
 
 J'ai construit Bojemoi Lab brique par brique depuis plusieurs mois. Il est temps de documenter ce que ça donne vraiment — pas juste un composant, mais l'ensemble du système.
 
-Voici l'architecture complète — mise à jour octobre 2026.
+Voici l'architecture complète — mise à jour novembre 2026.
 
 ---
 
@@ -56,8 +56,8 @@ meta-68 fait tourner deux instances Ollama en parallèle, une par GPU :
 
 | Service | GPU | Modèles | Usage |
 |---------|-----|---------|-------|
-| `ollama_ollama` | RTX 3060 (12 GB) | phi4:14B, qwen2.5:3b | MyAI orchestrateur principal |
-| `ollama_ollama-judge` | T400 (4 GB) | qwen2.5:3b | LLM judge — valide les outputs MyAI |
+| `ollama_ollama` | RTX 3060 (12 GB) | qwen2.5-coder-exploit:14b (fine-tuné), qwen25-coder-exploit:3b | MyAI orchestrateur principal + Plugin-Forge |
+| `ollama_ollama-judge` | T400 (4 GB) | qwen2.5:3b | LLM judge (valide outputs MyAI), alert-agent |
 
 `NVIDIA_VISIBLE_DEVICES` isole chaque container sur son GPU. `KEEP_ALIVE=10m` décharge les modèles après inactivité.
 
@@ -159,6 +159,8 @@ REPORT → DefectDojo
 
 Les plugins sont montés depuis `/opt/bojemoi/volumes/myai-plugins/` (bind-mount meta-68). Auto-sync meta-76→meta-68 via rsync (cron `*/5 * * * *` + git post-commit hook).
 
+Plugins système (built-in) :
+
 | Plugin | Type | Description |
 |--------|------|-------------|
 | `nuclei` | network | Scan Nuclei via API HTTP |
@@ -169,6 +171,8 @@ Les plugins sont montés depuis `/opt/bojemoi/volumes/myai-plugins/` (bind-mount
 | `sliver` | post-exploit | Génération + déploiement implants Sliver |
 | `php_uaf` | exploit | CVE-2026-109618 PHP 8.3.x OOM longjmp UAF |
 | `uzi` | exploit | Metasploit RPC exploitation |
+
+Plugins CVE générés par Plugin-Forge : **33+** (voir section Plugin-Forge ci-dessous).
 
 **ThreadPoolExecutor :** `max_workers=16` (I/O-bound — Ollama HTTP, psycopg2, subprocess). Valeur initiale de 4 causait une famine : les LLM calls (30-60s) saturaient le pool, bloquant même les updates DB (<1ms).
 
@@ -216,11 +220,45 @@ Scrute les flux RSS ANSSI et croise avec une watchlist de composants du lab. Ale
 
 #### alert-agent — Alertes intelligentes
 
-Service Python qui reçoit les alertes Prometheus et les fait analyser par Claude Haiku (`LLM_BACKEND=claude`). Évalue la sévérité dynamiquement et envoie vers `@bojemoi_ptaas` avec emoji contextuel.
+Service Python qui reçoit les alertes Prometheus et les fait analyser par `qwen2.5:3b` sur `ollama-judge` (`LLM_BACKEND=ollama`, T400). Évalue la sévérité dynamiquement et envoie vers `@bojemoi_ptaas` avec emoji contextuel. Backend switchable : `claude` / `kimi` / `ollama`.
 
 #### ml-threat-intel — Scoring ML
 
 API FastAPI classifiant les IoC (malware, C2, phishing, scanner) avec un modèle ML + enrichissement OSINT multi-sources.
+
+---
+
+### Plugin-Forge — Génération autonome de plugins CVE
+
+Service FastAPI (`plugin-forge_plugin-forge`) qui surveille le flux NVD toutes les 6h, génère automatiquement des plugins MyAI pour les nouvelles CVEs via LLM, et les soumet à review via Telegram.
+
+**Pipeline :**
+
+```
+NVD API (keywordSearch: php, apache, nginx, wordpress, openssh…)
+    ↓
+Filtre : CVSS ≥ 7.0, nouvelles CVEs (dédup via DB)
+    ↓
+PoC fetch (GitHub/exploit-db si disponible)
+    ↓
+qwen2.5-coder-exploit:14b → génération plugin Python
+    ↓
+Telegram @bojemoi_ptaas → message avec boutons [✅ Deploy] [❌ Drop]
+    ↓
+Clic mobile → long-polling asyncio intercepte le callback
+    ↓
+Deploy : plugin écrit dans /plugins/ + rsync meta-68 (hot-reload MyAI)
+```
+
+**Review mobile via Telegram Inline Buttons :**
+
+Le message de notification inclut `InlineKeyboardMarkup`. Un clic sur **[✅ Deploy]** depuis n'importe quel appareil déclenche le déploiement complet + sync meta-68, sans accès terminal. Le message est édité en place pour afficher le résultat (`🚀 Déployé` ou `🗑️ Supprimé`).
+
+Le polling Telegram (`getUpdates` long-polling, timeout=25s) tourne en tâche asyncio background au démarrage du service.
+
+**DB :** table `plugin_forge` dans `myai` — statuts `pending → generating → generated → deployed`, `tg_message_id` pour édition du message.
+
+**Plugins générés à ce jour : 33+** (tous les CVEs score ≥ 7.0 des 7 derniers jours, semaine de novembre 2026).
 
 ---
 
@@ -296,29 +334,32 @@ Services → logs (stdout) → Alloy collector → Loki → Grafana explore
 
 ---
 
-## État en octobre 2026
+## État en novembre 2026
 
 | Métrique | Valeur |
 |----------|--------|
 | Nœuds Swarm | 2 (1 manager + 1 worker) |
-| Stacks Docker | 14 |
+| Stacks Docker | 15 |
 | Services actifs | ~50 |
 | Hôtes scannés en DB | 6,15M |
 | Services réseau en DB | 6,8M |
 | Taille PostgreSQL | ~5 GB |
-| Images Docker custom | 35+ |
+| Images Docker custom | 36+ |
 | GPU | RTX 3060 12 GB + T400 4 GB |
-| Modèles LLM actifs | phi4:14B, qwen2.5:3b ×2 |
+| Modèles LLM actifs | qwen2.5-coder-exploit:14b, qwen25-coder-exploit:3b, qwen2.5:3b ×2 |
 | Findings DefectDojo | 35 000+ |
-| Plugins MyAI | 8 (hot-reload) |
+| Plugins MyAI système | 8 (hot-reload) |
+| Plugins MyAI CVE (Plugin-Forge) | 33+ (auto-générés + approuvés via Telegram) |
 
 ---
 
 ## Et maintenant ?
 
-MyAI tourne en continu — campaign-dispatcher dispatch des cibles toutes les 2 minutes, phi4 planifie les attaques, les plugins exécutent et les findings remontent automatiquement dans DefectDojo.
+MyAI tourne en continu — campaign-dispatcher dispatch des cibles toutes les 2 minutes, `qwen2.5-coder-exploit:14b` (fine-tuné) planifie les attaques, les plugins exécutent et les findings remontent automatiquement dans DefectDojo.
 
-La prochaine étape : améliorer le taux de findings Critical (actuellement dominé par Info/Medium) en affinant la sélection des cibles (hosts avec CVE connus) et les seuils d'exploitation.
+Plugin-Forge surveille le flux NVD toutes les 6h et génère automatiquement de nouveaux plugins. L'approbation se fait depuis mobile en un clic via Telegram — le plugin est déployé et synced sur meta-68 en quelques secondes.
+
+La prochaine étape : améliorer le taux de findings Critical (actuellement dominé par Info/Medium) en enrichissant les plugins CVE générés avec des PoCs validés et en affinant la sélection des cibles (hosts exposant exactement les versions vulnérables).
 
 Build in public. Tout est versionné sur Gitea.
 
